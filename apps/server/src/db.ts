@@ -25,7 +25,8 @@ export type PersistedEventType =
   | "ai_recommendation"
   | "ai_decision"
   | "boost"
-  | "session_reset";
+  | "session_reset"
+  | "playback_mode";
 
 export type PersistResult = "stored" | "duplicate";
 

@@ -5,6 +5,9 @@ import {
   MAX_BOOSTS_PER_TRACK,
   MOODS,
   type LatestEvent,
+  type PlaybackMode,
+  type PlaybackReportEvent,
+  type PlaybackState,
   type Mood,
   type QueueItem,
   type SessionState,
@@ -20,6 +23,8 @@ const RATE_LIMIT = 30;
 const ACTIVITY_WINDOW_MS = 30_000;
 const MAX_SEEN_EVENTS = 20_000;
 const QUEST_BASE_GOAL = 100;
+/** A player page counts as online if it reported within this window. */
+const PLAYER_ONLINE_MS = 15_000;
 
 // Weights feeding the activity half of the energy score.
 const ACTIVITY_WEIGHT = { vote: 3, mood: 2, tap: 1 } as const;
@@ -105,6 +110,18 @@ export class SessionStore {
   private latestEvent: LatestEvent | null;
   private listeners = new Set<() => void>();
   private energyHistory: { at: number; score: number }[] = [];
+  private playbackMode: PlaybackMode = "dj";
+  private playback: Omit<PlaybackState, "mode" | "playerOnline"> = {
+    status: "idle",
+    trackId: null,
+    round: 0,
+    startedAt: null,
+    durationMs: null,
+    source: null,
+    message: null,
+  };
+  private playerLastSeen = 0;
+  private playerWasOnline = false;
   private now: () => number;
   private persist: Persist;
 
@@ -163,6 +180,7 @@ export class SessionStore {
         intensity: intensityForEnergy(this.energyScore),
       },
       visualMode: this.hostVisual ? "host" : "auto",
+      playback: { ...this.playback, mode: this.playbackMode, playerOnline: this.playerOnline() },
       crowdQuest: {
         label: `Quest ${this.questLevel}: send ${this.questGoal()} hype taps`,
         progress: this.questProgress,
@@ -304,6 +322,98 @@ export class SessionStore {
     return { status: "accepted", state: this.getState() };
   }
 
+  /** Host action: auto (songs follow each other) or DJ picks (host starts each song). Saved and replayed. */
+  setPlaybackMode(mode: PlaybackMode): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const saved = await this.persistHostAction("playback_mode", { mode });
+      if (saved) return saved;
+      this.playbackMode = mode;
+      this.change({
+        type: "playback.mode",
+        message: mode === "auto" ? "Auto play on — songs follow the crowd's queue" : "DJ picks — the host starts each song",
+      });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /**
+   * From the player page on the DJ laptop. Reports about anything other than the current track
+   * and round are ignored (stale tab, duplicate report), so a song can only end once.
+   * In auto mode, "ended" starts the next song.
+   */
+  async reportPlayback(input: {
+    event: PlaybackReportEvent;
+    trackId: string;
+    round: number;
+    positionMs?: number;
+    durationMs?: number;
+    source?: string;
+    message?: string;
+  }): Promise<EventOutcome> {
+    this.playerLastSeen = this.now();
+    const current = this.nowPlaying;
+    const currentRound = current ? (this.plays.get(current.id) ?? 0) : 0;
+    if (!current || current.id !== input.trackId || currentRound !== input.round) {
+      this.syncPlayerOnline();
+      return this.reject("Not the current track — report ignored", 409);
+    }
+    const startedAt = new Date(this.now() - Math.max(0, input.positionMs ?? 0)).toISOString();
+    switch (input.event) {
+      case "started":
+      case "progress": {
+        const wasPlaying = this.playback.status === "playing";
+        const drift = this.playback.startedAt ? Math.abs(Date.parse(this.playback.startedAt) - Date.parse(startedAt)) : Infinity;
+        this.playback = {
+          ...this.playback,
+          status: "playing",
+          startedAt: wasPlaying && drift < 2_000 ? this.playback.startedAt : startedAt,
+          durationMs: input.durationMs ?? this.playback.durationMs,
+          source: input.source ?? this.playback.source,
+          message: null,
+        };
+        // Progress pings only broadcast when something visible changed.
+        if (!wasPlaying || drift >= 2_000 || !this.playerWasOnline) {
+          this.playerWasOnline = true;
+          this.bump();
+        }
+        return { status: "accepted", state: this.getState() };
+      }
+      case "ended":
+      case "error": {
+        if (this.playback.status === "ended") return { status: "duplicate", state: this.getState() };
+        const failed = input.event === "error";
+        if (this.playbackMode === "auto") {
+          const next = await this.advanceAuto();
+          if (next.status === "accepted") return next;
+        }
+        this.playback = {
+          ...this.playback,
+          status: failed ? "error" : "ended",
+          message: failed ? (input.message ?? "Playback failed").slice(0, 200) : null,
+        };
+        this.change({
+          type: failed ? "playback.error" : "playback.ended",
+          message: failed ? `Couldn't play ${current.title}` : `${current.title} finished — host picks the next song`,
+        });
+        return { status: "accepted", state: this.getState() };
+      }
+    }
+  }
+
+  /** Auto mode: the top of the queue, or else the least-recently-played other track. */
+  private advanceAuto(): Promise<EventOutcome> {
+    return this.exclusive(() => {
+      const [top] = this.buildQueue();
+      const fallback = this.catalog
+        .map((t, idx) => ({ t, idx, played: this.lastPlayedAt.get(t.id) ?? 0 }))
+        .filter(({ t }) => t.id !== this.nowPlaying?.id)
+        .sort((a, b) => a.played - b.played || a.idx - b.idx)[0]?.t.id;
+      const nextId = top?.trackId ?? fallback;
+      if (!nextId) return Promise.resolve(this.reject("Nothing to play", 409));
+      return this.advanceNow(nextId);
+    });
+  }
+
   /** Host action: play the top-voted track next, or a specific catalog track. */
   advance(trackId?: string): Promise<EventOutcome> {
     return this.exclusive(() => this.advanceNow(trackId));
@@ -334,6 +444,14 @@ export class SessionStore {
     const now = this.now();
     this.energyHistory.push({ at: now, score: this.energyScore });
     this.energyHistory = this.energyHistory.filter((e) => now - e.at <= 120_000);
+    const playerFlipped = this.playerOnline() !== this.playerWasOnline;
+    if (playerFlipped) {
+      this.playerWasOnline = !this.playerWasOnline;
+      if (this.energyScore === before) {
+        this.bump();
+        return true;
+      }
+    }
     if (this.energyScore === before) return false;
     this.bump();
     return true;
@@ -425,6 +543,9 @@ export class SessionStore {
             this.applyBoost(meta.trackId);
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
           }
+          break;
+        case "playback_mode":
+          if (meta.mode === "auto" || meta.mode === "dj") this.playbackMode = meta.mode;
           break;
         case "session_reset":
           this.clearRunState();
@@ -555,7 +676,7 @@ export class SessionStore {
 
   /** Returns a rejection if the host action could not be saved; otherwise null. */
   private async persistHostAction(
-    eventType: "host_visual" | "track_advance" | "session_reset",
+    eventType: "host_visual" | "track_advance" | "session_reset" | "playback_mode",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {
@@ -609,6 +730,16 @@ export class SessionStore {
     this.votes.delete(track.id);
     this.boosts.delete(track.id);
     this.plays.set(track.id, (this.plays.get(track.id) ?? 0) + 1);
+    // The player page sees the new nowPlaying and starts it, then reports "started".
+    this.playback = {
+      status: "loading",
+      trackId: track.id,
+      round: this.plays.get(track.id)!,
+      startedAt: null,
+      durationMs: null,
+      source: null,
+      message: null,
+    };
     return track.title;
   }
 
@@ -627,6 +758,20 @@ export class SessionStore {
     this.questLevel = 1;
     this.questProgress = 0;
     this.hostVisual = null;
+    this.playback = { status: "idle", trackId: null, round: 0, startedAt: null, durationMs: null, source: null, message: null };
+  }
+
+  private playerOnline(): boolean {
+    return this.now() - this.playerLastSeen < PLAYER_ONLINE_MS;
+  }
+
+  /** Broadcast when the player page appears or disappears. */
+  private syncPlayerOnline() {
+    const online = this.playerOnline();
+    if (online !== this.playerWasOnline) {
+      this.playerWasOnline = online;
+      this.bump();
+    }
   }
 
   private markSeen(eventId: string) {

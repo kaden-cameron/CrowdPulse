@@ -14,6 +14,7 @@ Use this to rehearse and run the 3-minute demo. Rehearse it **twice in a row, wi
 4. **Screens:**
    - **Projector:** `/stage/demo`. Check the QR code shows the public URL, not `localhost`.
    - **Laptop:** `/host/demo`, signed in as the host. Have a private window open on the same page for the security beat.
+   - **Speakers:** `/player/demo` on the laptop plugged into the PA. Sign in, press **Start audio**, and check the host page shows "Player online". Choose **Auto play** or **DJ picks**.
    - **Terminal:** the TigerData SQL editor with `apps/server/sql/demo-queries.sql` loaded.
    - **Two phones**, one on cellular data, plus the short URL printed on paper.
    - **Devnet:** if you're showing Solana, Phantom set to devnet and funded, with Solana Explorer ready.
@@ -25,7 +26,7 @@ Use this to rehearse and run the 3-minute demo. Rehearse it **twice in a row, wi
 | 0:00–0:25 | Judge scans the QR, picks a mood, taps **Continue to vote** | "No app, no account: scan and you're in." | Their phone shows the session name; the stage crowd count goes up |
 | 0:25–0:55 | Judge and teammate vote for different tracks; judge taps **Hype tap** | "Every vote is checked on the server, then pushed to every screen." | "Up next" reorders and the energy meter climbs, with no refresh |
 | 0:55–1:25 | Host page **Live analytics**, then run *Latest events* in the SQL editor | "That vote is a row in TigerData. The dashboard reads the same table." | The SQL row matches the vote; "Latest persisted event" advances; hatched bars show what isn't aggregated yet |
-| 1:25–1:55 | **Gemini AI DJ** → *Raise energy* → **Get recommendation** → read the reason → **Approve & apply** | "Gemini sees a crowd summary and proposes. The server checks it. I decide." | The reason cites crowd data; the baseline sits beside it; response ID and latency shown; the stage theme changes |
+| 1:25–1:55 | **Gemini AI DJ** → *Raise energy* → **Get recommendation** → read the reason → **Approve & apply** | "Gemini sees a crowd summary and proposes. The server checks it. I decide." | The reason cites crowd data; the baseline sits beside it; response ID and latency shown; the stage theme changes **and the speakers switch to that song** |
 | 1:55–2:20 | (If ready) Phone: ⚡ on a track → pay with Phantom (devnet) | "Optional boost on Solana devnet, test SOL only. It only counts once the server verifies it on-chain." | Pending → verified; Explorer link; ⚡ on the stage queue |
 | 2:20–2:40 | In the private window, run the `curl` from the README security demo | "Attendees can't touch host controls. The server enforces it, not the UI." | 401 (or 403 for a signed-in non-host); stage unchanged |
 | 2:40–3:00 | Show `evidence/e2e/latest.md` and the load-test result | "Here's what we measured, and what we didn't." | PASS/SKIP table with real numbers |

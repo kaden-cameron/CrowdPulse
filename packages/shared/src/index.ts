@@ -78,6 +78,7 @@ export interface SessionState {
   moods: Record<Mood, number>;
   visualState: VisualState;
   visualMode: VisualMode;
+  playback: PlaybackState;
   crowdQuest: {
     label: string;
     progress: number;
@@ -153,6 +154,31 @@ export const THEME_ALLOWLIST: VisualTheme[] = [
 export const MOODS: Mood[] = ["chill", "hyped", "focused", "wild"];
 
 export const MAX_TAPS_PER_BATCH = 30;
+
+// --- Playback (the player page on the DJ laptop follows nowPlaying and reports back) ---
+
+/** "auto": when a song ends, the next one starts by itself. "dj": nothing starts until the host picks. */
+export type PlaybackMode = "auto" | "dj";
+export const PLAYBACK_MODES: PlaybackMode[] = ["auto", "dj"];
+
+export interface PlaybackState {
+  mode: PlaybackMode;
+  /** loading = chosen, waiting for the player to start it; ended = finished, waiting for the host (DJ mode). */
+  status: "idle" | "loading" | "playing" | "ended" | "error";
+  trackId: string | null;
+  /** The track's round when it was chosen; reports for an older round are ignored. */
+  round: number;
+  /** Server time the current track started (adjusted for the player's reported position). */
+  startedAt: string | null;
+  durationMs: number | null;
+  /** What the player is playing from, e.g. "file" or "generated". */
+  source: string | null;
+  /** A player page has reported in the last 15 seconds. */
+  playerOnline: boolean;
+  message: string | null;
+}
+
+export type PlaybackReportEvent = "started" | "progress" | "ended" | "error";
 
 /** What the host is aiming for; sent to Gemini as context. */
 export type HostTarget = "raise_energy" | "hold_steady" | "cool_down";

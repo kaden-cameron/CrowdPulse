@@ -12,7 +12,7 @@ import { ConnectionBadge } from "../components/ConnectionBadge";
 import { useHostAccess } from "../components/HostAccess";
 import { useMetrics } from "../hooks/useMetrics";
 import { useSessionSocket } from "../hooks/useSessionSocket";
-import { hostAdvance, hostReset, hostSetVisual } from "../lib/host";
+import { hostAdvance, hostPlaybackMode, hostReset, hostSetVisual } from "../lib/host";
 
 
 export function HostPage() {
@@ -109,6 +109,21 @@ export function HostPage() {
           tracks={state?.tracks ?? []}
         />
 
+        <PlaybackCard
+          sessionCode={sessionCode}
+          state={state}
+          busy={busy}
+          ready={access.ready}
+          onMode={(mode) =>
+            run(mode === "auto" ? "Auto play on" : "DJ picks on", async () =>
+              hostPlaybackMode(sessionCode, await access.getHeaders(), mode),
+            )
+          }
+          onPlayNext={() =>
+            run("Playing the top-voted track", async () => hostAdvance(sessionCode, await access.getHeaders()))
+          }
+        />
+
         <div className="host-block">
           <h2>Stage controls</h2>
           {!access.ready && (
@@ -170,18 +185,6 @@ export function HostPage() {
               }
             >
               Back to auto
-            </button>
-            <button
-              type="button"
-              className="btn ghost"
-              disabled={busy || !access.ready}
-              onClick={() =>
-                run("Playing the top-voted track", async () =>
-                  hostAdvance(sessionCode, await access.getHeaders()),
-                )
-              }
-            >
-              Play next ▶
             </button>
             <button
               type="button"
@@ -269,7 +272,7 @@ export function HostPage() {
   );
 }
 
-function HostSignIn() {
+export function HostSignIn() {
   const access = useHostAccess();
 
   if (access.mode === "loading") return <p className="host-sub">Loading sign-in…</p>;
@@ -311,6 +314,81 @@ function HostSignIn() {
         </button>
       )}
       {access.error && <p className="feedback feedback-rejected">{access.error}</p>}
+    </div>
+  );
+}
+
+function PlaybackCard({
+  sessionCode,
+  state,
+  busy,
+  ready,
+  onMode,
+  onPlayNext,
+}: {
+  sessionCode: string;
+  state: SessionState | null;
+  busy: boolean;
+  ready: boolean;
+  onMode: (mode: "auto" | "dj") => void;
+  onPlayNext: () => void;
+}) {
+  const pb = state?.playback;
+  const statusText: Record<string, string> = {
+    idle: "Nothing chosen yet",
+    loading: "Starting on the player…",
+    playing: "Playing",
+    ended: "Finished — pick the next song",
+    error: "Couldn't play",
+  };
+  return (
+    <div className="host-block">
+      <div className="analytics-head">
+        <h2>Music playback</h2>
+        <span className={`player-light ${pb?.playerOnline ? "on" : "off"}`}>
+          {pb?.playerOnline ? "● Player online" : "○ Player offline"}
+        </span>
+      </div>
+      {!pb?.playerOnline && (
+        <p className="host-sub">
+          Open{" "}
+          <Link to={`/player/${sessionCode}`} target="_blank">
+            /player/{sessionCode}
+          </Link>{" "}
+          on the laptop connected to the speakers and press Start audio.
+        </p>
+      )}
+      <div className="target-row two">
+        {(["auto", "dj"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            className={`mood-chip ${pb?.mode === m ? "selected" : ""}`}
+            aria-pressed={pb?.mode === m}
+            disabled={busy || !ready}
+            onClick={() => onMode(m)}
+          >
+            <span className="mood-label">{m === "auto" ? "Auto play" : "DJ picks"}</span>
+            <span className="mood-hint">
+              {m === "auto" ? "Next song starts when one ends" : "Host starts every song"}
+            </span>
+          </button>
+        ))}
+      </div>
+      <p className="host-sub">
+        {state?.nowPlaying ? (
+          <>
+            <strong>{state.nowPlaying.title}</strong> — {statusText[pb?.status ?? "idle"]}
+            {pb?.source && pb.status === "playing" && ` (${pb.source === "file" ? "audio file" : "generated demo track"})`}
+          </>
+        ) : (
+          "Nothing playing yet."
+        )}
+      </p>
+      {pb?.status === "error" && pb.message && <p className="feedback feedback-rejected">{pb.message}</p>}
+      <button type="button" className="btn primary" disabled={busy || !ready} onClick={onPlayNext}>
+        Play next ▶
+      </button>
     </div>
   );
 }

@@ -1,6 +1,8 @@
 import type {
   AiStatus,
   HostTarget,
+  PlaybackMode,
+  PlaybackReportEvent,
   Recommendation,
   SessionState,
   VisualState,
@@ -66,4 +68,30 @@ export async function decideRecommendation(
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
   return data as { recommendation: Recommendation; state?: SessionState };
+}
+
+export const hostPlaybackMode = (sessionId: string, auth: HostHeaders, mode: PlaybackMode) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/mode`, auth, { mode });
+
+export interface PlaybackReport {
+  event: PlaybackReportEvent;
+  trackId: string;
+  round: number;
+  positionMs?: number;
+  durationMs?: number;
+  source?: "file" | "generated" | "spotify";
+  message?: string;
+}
+
+/** From the player page. 409 just means the server has moved on to another track. */
+export async function reportPlayback(sessionId: string, auth: HostHeaders, report: PlaybackReport) {
+  const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/report`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...auth },
+    body: JSON.stringify(report),
+  });
+  if (res.status === 409) return { stale: true as const };
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Report failed (${res.status})`);
+  return { stale: false as const };
 }

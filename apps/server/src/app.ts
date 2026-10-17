@@ -3,11 +3,13 @@ import express, { type RequestHandler } from "express";
 import { z } from "zod";
 import {
   HOST_TARGETS,
+  PLAYBACK_MODES,
   MAX_TAPS_PER_BATCH,
   MOODS,
   THEME_ALLOWLIST,
   type EventResultMessage,
   type HostTarget,
+  type PlaybackMode,
   type VisualTheme,
   type Mood,
 } from "@crowdpulse/shared";
@@ -248,6 +250,52 @@ export function createApp(options: AppOptions) {
     recommenders.get(req.params.id)?.clear();
     log({ kind: "host.reset", sessionId: req.params.id, outcome: "accepted" });
     res.json(outcome);
+  });
+
+  // --- Playback: the player page on the DJ laptop reports; the host picks auto vs DJ mode ---
+  const ModeSchema = z.object({ mode: z.enum(PLAYBACK_MODES as [PlaybackMode, ...PlaybackMode[]]) }).strict();
+  const ReportSchema = z
+    .object({
+      event: z.enum(["started", "progress", "ended", "error"]),
+      trackId: z.string().max(64),
+      round: z.number().int().min(0),
+      positionMs: z.number().min(0).max(24 * 3_600_000).optional(),
+      durationMs: z.number().min(0).max(24 * 3_600_000).optional(),
+      source: z.enum(["file", "generated", "spotify"]).optional(),
+      message: z.string().max(200).optional(),
+    })
+    .strict();
+
+  app.post("/api/host/sessions/:id/playback/mode", ...requireHost, hostSession, async (req, res) => {
+    const parsed = ModeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid playback mode" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.setPlaybackMode(parsed.data.mode);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    log({ kind: "host.playback_mode", sessionId: req.params.id, mode: parsed.data.mode });
+    res.json(outcome);
+  });
+
+  app.post("/api/host/sessions/:id/playback/report", ...requireHost, hostSession, async (req, res) => {
+    const parsed = ReportSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid playback report" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.reportPlayback(parsed.data);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    if (parsed.data.event !== "progress") {
+      log({ kind: "playback", sessionId: req.params.id, event: parsed.data.event, trackId: parsed.data.trackId });
+    }
+    res.json({ status: outcome.status, playback: outcome.state.playback, nowPlaying: outcome.state.nowPlaying });
   });
 
   app.post("/api/host/sessions/:id/advance", ...requireHost, hostSession, async (req, res) => {

@@ -75,6 +75,7 @@ export function StagePage() {
                 ? `${state.nowPlaying.title} — ${state.nowPlaying.artist}`
                 : "Waiting for the first pick"}
             </p>
+            <SongProgress state={state} />
           </div>
         </div>
 
@@ -141,5 +142,22 @@ export function StagePage() {
         </div>
       )}
     </main>
+  );
+}
+
+/** Progress of the current song, from the player's reports (only while it's actually playing). */
+function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionState | null }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, []);
+  const pb = state?.playback;
+  if (!pb || pb.status !== "playing" || !pb.startedAt || !pb.durationMs) return null;
+  const pct = Math.min(100, ((now - Date.parse(pb.startedAt)) / pb.durationMs) * 100);
+  return (
+    <div className="song-progress" aria-hidden>
+      <div style={{ width: `${pct}%` }} />
+    </div>
   );
 }

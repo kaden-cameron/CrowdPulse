@@ -23,6 +23,7 @@ npm test           # server + web tests
 | Attendee | http://localhost:5173/join/demo |
 | Stage (projector) | http://localhost:5173/stage/demo |
 | Host | http://localhost:5173/host/demo (dev host key: `local-dev-host-key`) |
+| Player (speakers) | http://localhost:5173/player/demo |
 
 QR/onboarding: the stage shows a QR for its own origin, so open the stage at `http://<LAN-IP>:5173/stage/demo` when phones need to scan it. Vite listens on all interfaces.
 
@@ -113,6 +114,10 @@ The host page reads these public values from `GET /api/auth/config`. It signs in
 **Security demo (AU-03):** open `/host/demo` signed in as a host. In a private window, try `curl -X POST <url>/api/host/sessions/demo/visual -H 'content-type: application/json' -d '{"visual":{"theme":"sunset","intensity":1}}'` → 401. Signed in as a user without the Host role → 403. In both cases the stage doesn't change. Then do it from the host dashboard and it works.
 
 **Secret scan (AU-07 / VU-05):** `npm run build && npm run scan:secrets` scans the built bundle and every non-ignored repo file for API keys, database URLs with passwords, private keys, keypair arrays, JWTs and real `.env` values.
+
+## Music playback
+
+Open **`/player/demo`** on the laptop plugged into the speakers, sign in as host, and press **Start audio**. It plays whatever CrowdPulse picks: the host's "Play next", an approved Gemini recommendation, or, in **Auto play**, the next song in the queue as soon as one ends. **DJ picks** mode waits for the host after each song. Tracks play from audio files you add to `apps/web/public/audio/` (only music you're allowed to play in public), or as **generated demo tracks** built from each track's BPM, energy and genre. Details, and how Spotify would plug in later: [docs/10_MUSIC_PLAYBACK.md](docs/10_MUSIC_PLAYBACK.md).
 
 ## Testing and judge demo (Doc 08)
 

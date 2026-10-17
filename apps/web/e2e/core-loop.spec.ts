@@ -133,3 +133,40 @@ test("Vote buttons come back after a track plays, and a new run starts fresh on 
   await expect(phone.getByRole("button", { name: "Vote: Spanish Moss" })).toBeEnabled();
   await expect(phone.getByText(/Rejected:/)).toHaveCount(0);
 });
+
+test("Music: the player plays the host's pick, auto mode moves on by itself, DJ mode waits", async ({ browser, request }) => {
+  const host = { "x-host-key": HOST_KEY };
+  const state = async () => (await (await request.get("/api/sessions/demo/state")).json()) as {
+    nowPlaying: { trackId: string } | null;
+    playback: { status: string; source: string | null; playerOnline: boolean; mode: string };
+  };
+
+  // The laptop plugged into the speakers: sign in, then press Start audio (browsers need a click).
+  const laptop = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
+  await laptop.goto("/player/demo?demoSeconds=4");
+  await laptop.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await laptop.getByRole("button", { name: /Start audio/ }).click();
+  await expect(laptop.getByText("Nothing playing")).toBeVisible();
+
+  // Auto play, a crowd favourite, and the host starts the music.
+  expect((await request.post("/api/host/sessions/demo/playback/mode", { headers: host, data: { mode: "auto" } })).status()).toBe(200);
+  await request.post("/api/sessions/demo/votes", {
+    data: { sessionId: "demo", trackId: "track_05", eventId: randomUUID(), participantId: "participant_music1" },
+  });
+  expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
+
+  await expect(laptop.locator(".player-title")).toHaveText("Voltage Swamp");
+  await expect.poll(async () => (await state()).playback).toMatchObject({ status: "playing", source: "generated", playerOnline: true });
+  await laptop.screenshot({ path: evidence("player-playing.png") });
+
+  // ~4s later the song ends and auto mode starts another one with no host action.
+  await expect.poll(async () => (await state()).nowPlaying?.trackId, { timeout: 12_000 }).not.toBe("track_05");
+  await expect.poll(async () => (await state()).playback.status, { timeout: 8_000 }).toBe("playing");
+
+  // DJ picks: when this song ends, nothing else starts.
+  expect((await request.post("/api/host/sessions/demo/playback/mode", { headers: host, data: { mode: "dj" } })).status()).toBe(200);
+  const current = (await state()).nowPlaying?.trackId;
+  await expect.poll(async () => (await state()).playback.status, { timeout: 12_000 }).toBe("ended");
+  expect((await state()).nowPlaying?.trackId).toBe(current);
+  await expect(laptop.getByText("Song finished")).toBeVisible();
+});

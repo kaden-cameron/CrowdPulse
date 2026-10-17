@@ -1330,3 +1330,68 @@ code {
   margin-top: 0.35rem;
   font-size: 0.7rem;
 }
+
+/* Music playback */
+.target-row.two {
+  grid-template-columns: repeat(2, 1fr);
+  margin: 0.75rem 0;
+}
+
+.player-light {
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.player-light.on {
+  color: var(--ok);
+}
+
+.player-light.off {
+  color: var(--warn);
+}
+
+.player-block {
+  text-align: left;
+}
+
+.player-start {
+  font-size: 1.2rem;
+  padding: 1.2rem;
+}
+
+.player-title {
+  margin: 0.25rem 0 0;
+  font-family: var(--font-display);
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  font-weight: 700;
+}
+
+.player-progress {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.75rem;
+  align-items: center;
+  margin: 1rem 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.song-progress {
+  width: min(420px, 70vw);
+  height: 4px;
+  margin: 0.6rem auto 0;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.15);
+  overflow: hidden;
+}
+
+.song-progress > div {
+  height: 100%;
+  background: var(--cyan);
+  transition: width 1s linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .song-progress > div {
+    transition: none !important;
+  }
+}

@@ -3,6 +3,7 @@ import { AuthCallbackPage, HostAccessProvider } from "./components/HostAccess";
 import { HostPage } from "./pages/HostPage";
 import { JoinPage } from "./pages/JoinPage";
 import { LandingPage } from "./pages/LandingPage";
+import { PlayerPage } from "./pages/PlayerPage";
 import { StagePage } from "./pages/StagePage";
 
 /**
@@ -27,6 +28,7 @@ export function AppRoutes() {
       <Route path="/stage/:sessionCode" element={<StagePage />} />
       <Route element={<HostAccessLayout />}>
         <Route path="/host/:sessionCode" element={<HostPage />} />
+        <Route path="/player/:sessionCode" element={<PlayerPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

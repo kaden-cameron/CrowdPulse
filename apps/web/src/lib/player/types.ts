@@ -1,0 +1,34 @@
+// The player contract. CrowdPulse decides what plays (votes, boosts, Gemini, host); a player
+// makes sound and reports back. LocalPlayer plays audio files or generated demo tracks on the
+// DJ laptop; a Spotify Connect player can implement the same interface later.
+
+export interface PlayableTrack {
+  id: string;
+  title: string;
+  artist: string;
+  genre: string;
+  bpm: number;
+  /** 0–1 */
+  energy: number;
+}
+
+export type PlaybackSource = "file" | "generated" | "spotify";
+
+export interface StartedInfo {
+  durationMs: number;
+  source: PlaybackSource;
+  /** Set when a file couldn't be played and the generated version was used instead. */
+  note?: string;
+}
+
+export interface PlayerAdapter {
+  /** Must run inside a click/tap handler: browsers only allow audio after a user gesture. */
+  unlock(): Promise<void>;
+  /** Crossfades from whatever is playing into this track. */
+  play(track: PlayableTrack, opts?: { startAtMs?: number }): Promise<StartedInfo>;
+  stop(): void;
+  setVolume(v: number): void;
+  positionMs(): number;
+  /** Called once when the current track finishes on its own (not when stopped or replaced). */
+  onEnded(cb: () => void): void;
+}
