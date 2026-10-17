@@ -14,3 +14,5 @@ apps/server/data/
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
+test-results
+playwright-report

@@ -124,6 +124,11 @@ export function StagePage() {
                 <span>{state?.participants ?? 0} in the crowd</span>
               </p>
             </div>
+            {!!state?.simulatedParticipants && (
+              <p className="demo-data-badge" role="note">
+                Demo data · {state.simulatedParticipants} simulated attendees
+              </p>
+            )}
           </section>
         </footer>
       </div>

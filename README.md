@@ -114,6 +114,15 @@ The host page reads these public values from `GET /api/auth/config`. It signs in
 
 **Secret scan (AU-07 / VU-05):** `npm run build && npm run scan:secrets` scans the built bundle and every non-ignored repo file for API keys, database URLs with passwords, private keys, keypair arrays, JWTs and real `.env` values.
 
+## Testing and judge demo (Doc 08)
+
+The runbook is **[docs/08_JUDGE_DEMO.md](docs/08_JUDGE_DEMO.md)**: the 3-minute script, recovery steps when something breaks, and the go/no-go checklist. Evidence and the master tracker live in [evidence/](evidence/README.md).
+
+- `npm run e2e:browser` runs Playwright against an isolated local stack. It checks that a phone can join and vote and the stage updates, that a vote made offline is sent once on reconnect, that the host's theme change reaches the stage, that an attendee gets a 401, and that simulated traffic is labeled. It saves screenshots to `evidence/frontend/`.
+- `npm run e2e:check -- --url <url> [--host-token …] [--reset]` runs E2E-01 to 12 plus fault checks against any deployment. It reports PASS/FAIL/SKIP, each SKIP with a reason, and writes `evidence/e2e/latest.md`.
+- `npm run demo:crowd -- --url <url> --people 20 --seconds 45` simulates attendees (IDs start with `sim_`). The stage and host page show **Demo data**.
+- **Start new run ↺** on the host page (or `POST /api/host/sessions/:id/reset`) starts a fresh run. It's saved as a `session_reset` event, so restarts and dashboard counts begin from there, and earlier history stays in TigerData.
+
 ## Architecture (current)
 
 ```

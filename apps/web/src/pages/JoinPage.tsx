@@ -155,7 +155,7 @@ export function JoinPage() {
                 <div>
                   <p className="track-title">{track.title}</p>
                   <p className="track-meta">
-                    {track.artist} · {track.votes} votes
+                    {track.artist} · {track.votes} {track.votes === 1 ? "vote" : "votes"}
                     {track.boosts > 0 && ` · ⚡${track.boosts}`} · {track.status}
                   </p>
                 </div>

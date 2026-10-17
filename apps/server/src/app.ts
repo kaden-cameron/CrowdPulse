@@ -231,6 +231,17 @@ export function createApp(options: AppOptions) {
     res.json(outcome);
   });
 
+  app.post("/api/host/sessions/:id/reset", ...requireHost, hostSession, async (req, res) => {
+    const outcome = await sessions.get(req.params.id)!.reset();
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    recommenders.get(req.params.id)?.clear();
+    log({ kind: "host.reset", sessionId: req.params.id, outcome: "accepted" });
+    res.json(outcome);
+  });
+
   app.post("/api/host/sessions/:id/advance", ...requireHost, hostSession, async (req, res) => {
     const outcome = await sessions.get(req.params.id)!.advance();
     if (outcome.status === "rejected") {

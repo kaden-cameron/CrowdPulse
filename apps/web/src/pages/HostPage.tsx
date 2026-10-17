@@ -12,7 +12,7 @@ import { ConnectionBadge } from "../components/ConnectionBadge";
 import { useHostAccess } from "../components/HostAccess";
 import { useMetrics } from "../hooks/useMetrics";
 import { useSessionSocket } from "../hooks/useSessionSocket";
-import { hostAdvance, hostSetVisual } from "../lib/host";
+import { hostAdvance, hostReset, hostSetVisual } from "../lib/host";
 
 
 export function HostPage() {
@@ -78,6 +78,11 @@ export function HostPage() {
           <div>
             <span className="metric-label">Crowd</span>
             <strong>{state?.participants ?? "—"}</strong>
+            {!!state?.simulatedParticipants && (
+              <span className="demo-data-badge small">
+                Demo data · {state.simulatedParticipants} simulated
+              </span>
+            )}
           </div>
           <div>
             <span className="metric-label">Theme</span>
@@ -177,6 +182,24 @@ export function HostPage() {
               }
             >
               Play next ▶
+            </button>
+            <button
+              type="button"
+              className="btn ghost"
+              disabled={busy || !access.ready}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    "Start a new run? Votes, moods, the queue and stage settings reset. Saved history is kept.",
+                  )
+                ) {
+                  run("New run started", async () =>
+                    hostReset(sessionCode, await access.getHeaders()),
+                  );
+                }
+              }}
+            >
+              Start new run ↺
             </button>
           </div>
           <div role="status" aria-live="polite">

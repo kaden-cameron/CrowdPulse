@@ -1311,3 +1311,22 @@ code {
   color: #b7c9c6;
   overflow-wrap: anywhere;
 }
+
+/* Simulated data is always labelled (Doc 00 §5) */
+.demo-data-badge {
+  display: inline-block;
+  margin: 0.6rem 0 0;
+  padding: 0.2rem 0.6rem;
+  border-radius: 999px;
+  border: 1px dashed var(--warn);
+  color: var(--warn);
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.demo-data-badge.small {
+  display: block;
+  width: fit-content;
+  margin-top: 0.35rem;
+  font-size: 0.7rem;
+}

@@ -113,6 +113,16 @@ export class SessionSocket {
     this.raw(message);
   }
 
+  /**
+   * The device lost its network. Browsers don't close an open WebSocket when that happens,
+   * so close it ourselves: the UI shows "Disconnected/Reconnecting" right away and the
+   * normal reconnect loop takes over (queued events stay in the outbox).
+   */
+  dropForOffline() {
+    if (this.intentionalClose) return;
+    if (this.ws && this.ws.readyState <= WebSocket.OPEN) this.ws.close();
+  }
+
   /** Reconnect immediately (e.g. when the device comes back online). */
   reconnectNow() {
     if (this.intentionalClose) return;

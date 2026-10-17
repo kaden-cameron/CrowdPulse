@@ -54,6 +54,9 @@ export type EventOutcome =
   | { status: "rejected"; reason: string; httpStatus: number };
 
 type CatalogTrack = Omit<Track, "votes" | "status" | "boosts">;
+
+/** Participant IDs from the demo crowd simulator start with this; the UI labels them "Demo data". */
+export const SIMULATED_PREFIX = "sim_";
 type Rejection = Extract<EventOutcome, { status: "rejected" }>;
 type Plan = {
   record: Pick<EventRecord, "eventType" | "value" | "metadata">;
@@ -131,6 +134,7 @@ export class SessionStore {
       version: this.version,
       energyScore: this.energyScore,
       participants: this.participants.size,
+      simulatedParticipants: [...this.participants].filter((p) => p.startsWith(SIMULATED_PREFIX)).length,
       nowPlaying: this.nowPlaying ? this.toQueueItem(this.nowPlaying) : null,
       queue,
       tracks: this.catalog.map((t) => ({
@@ -310,6 +314,19 @@ export class SessionStore {
     return true;
   }
 
+  /**
+   * Host action: start a fresh run of the demo. Saved as a `session_reset` event so a
+   * restart (replay) and the dashboard metrics also start from here. Old rows stay in the
+   * database for audit — no manual database edits needed between rehearsals.
+   */
+  async reset(): Promise<EventOutcome> {
+    const saved = await this.persistHostAction("session_reset", {});
+    if (saved) return saved;
+    this.clearRunState();
+    this.change({ type: "session.reset", message: "New run started — waiting for the crowd" });
+    return { status: "accepted", state: this.getState() };
+  }
+
   catalogTracks(): readonly CatalogTrack[] {
     return this.catalog;
   }
@@ -376,6 +393,10 @@ export class SessionStore {
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
           }
           break;
+        case "session_reset":
+          this.clearRunState();
+          applied = 0;
+          continue;
         case "host_visual":
           this.hostVisual = (meta.visual as VisualState | null) ?? null;
           break;
@@ -447,7 +468,7 @@ export class SessionStore {
 
   /** Returns a rejection if the host action could not be saved; otherwise null. */
   private async persistHostAction(
-    eventType: "host_visual" | "track_advance",
+    eventType: "host_visual" | "track_advance" | "session_reset",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {
@@ -499,6 +520,21 @@ export class SessionStore {
     this.votes.delete(track.id);
     this.boosts.delete(track.id);
     return track.title;
+  }
+
+  /** Clears everything a demo run builds up. Seen event IDs are kept so dedupe still holds. */
+  private clearRunState() {
+    this.votes.clear();
+    this.boosts.clear();
+    this.lastPlayedAt.clear();
+    this.nowPlaying = null;
+    this.moods.clear();
+    this.participants.clear();
+    this.activity = [];
+    this.energyHistory = [];
+    this.questLevel = 1;
+    this.questProgress = 0;
+    this.hostVisual = null;
   }
 
   private markSeen(eventId: string) {

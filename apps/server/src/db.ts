@@ -24,7 +24,8 @@ export type PersistedEventType =
   | "energy_sample"
   | "ai_recommendation"
   | "ai_decision"
-  | "boost";
+  | "boost"
+  | "session_reset";
 
 export type PersistResult = "stored" | "duplicate";
 
@@ -246,6 +247,15 @@ export class Database {
     const t0 = performance.now();
     const window = `${Math.max(1, Math.min(60, windowMinutes))} minutes`;
 
+    // Counts cover the current run only (since the last host reset); time buckets use the window.
+    const since: Date = await this.pool
+      .query(
+        `SELECT COALESCE(MAX(time), '-infinity'::timestamptz) AS since
+         FROM crowd_events WHERE session_id = $1 AND event_type = 'session_reset'`,
+        [sessionId],
+      )
+      .then((r) => r.rows[0].since);
+
     const [summary, byTrack, agg] = await Promise.all([
       this.pool.query(
         `SELECT
@@ -253,15 +263,15 @@ export class Database {
            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '10 seconds') AS last10s,
            COUNT(*) AS total
          FROM crowd_events
-         WHERE session_id = $1 AND event_type IN ('vote', 'mood', 'tap', 'boost')`,
-        [sessionId],
+         WHERE session_id = $1 AND event_type IN ('vote', 'mood', 'tap', 'boost') AND time > $2`,
+        [sessionId, since],
       ),
       this.pool.query(
         `SELECT metadata->>'trackId' AS track_id, COUNT(*)::int AS votes
          FROM crowd_events
-         WHERE session_id = $1 AND event_type = 'vote'
+         WHERE session_id = $1 AND event_type = 'vote' AND time > $2
          GROUP BY 1 ORDER BY votes DESC, track_id`,
-        [sessionId],
+        [sessionId, since],
       ),
       this.pool.query(
         `SELECT bucket, event_count, votes, taps, avg_energy

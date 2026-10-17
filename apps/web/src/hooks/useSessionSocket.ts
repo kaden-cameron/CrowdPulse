@@ -92,7 +92,9 @@ export function useSessionSocket(
     socket.connect();
 
     const onOnline = () => socket.reconnectNow();
+    const onOffline = () => socket.dropForOffline();
     window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
 
     // Hype taps are batched so a frantic tapper sends ~1 message per second.
     const flush = window.setInterval(() => {
@@ -111,6 +113,7 @@ export function useSessionSocket(
     return () => {
       cancelled = true;
       window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
       window.clearInterval(flush);
       socket.close();
       socketRef.current = null;

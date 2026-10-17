@@ -172,6 +172,12 @@ export class RecommendationService {
     return this.history;
   }
 
+  /** Called on a session reset so a new demo run starts with no stale proposals. */
+  clear() {
+    this.history = [];
+    this.lastError = null;
+  }
+
   /**
    * Builds the summary, calls the model, and validates the result. Never touches stage
    * state — only an explicit host approval does that. Votes are unaffected by AI failures.

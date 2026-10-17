@@ -22,6 +22,9 @@ async function hostPost(path: string, auth: HostHeaders, body: object = {}) {
 export const hostSetVisual = (sessionId: string, auth: HostHeaders, visual: VisualState | null) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/visual`, auth, { visual });
 
+export const hostReset = (sessionId: string, auth: HostHeaders) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/reset`, auth);
+
 export const hostAdvance = (sessionId: string, auth: HostHeaders) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/advance`, auth);
 
