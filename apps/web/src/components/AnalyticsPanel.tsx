@@ -122,11 +122,11 @@ export function AnalyticsPanel({
       <EventsChart buckets={filled} />
       <EnergyChart buckets={filled} />
 
-      <h3 className="chart-title">Votes by track · all time (SQL)</h3>
+      <h3 className="chart-title">Open votes by track · this run (SQL)</h3>
       {metrics.votesByTrack.length ? (
         <VotesBars rows={metrics.votesByTrack.map((r) => ({ label: titles.get(r.trackId) ?? r.trackId, value: r.votes }))} />
       ) : (
-        <p className="host-sub">No votes persisted yet.</p>
+        <p className="host-sub">No open votes in this run.</p>
       )}
 
       <details className="chart-table">

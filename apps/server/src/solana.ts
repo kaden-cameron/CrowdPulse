@@ -58,7 +58,10 @@ interface ParsedInstruction {
 }
 
 export interface BoostVerifierOptions {
+  /** RPC the server verifies against. May contain a provider API key — never sent to browsers. */
   rpcUrl: string;
+  /** RPC browsers use to fetch a blockhash. Must be public (no key). Defaults to the public devnet RPC. */
+  publicRpcUrl?: string;
   /** Public devnet address that receives boost payments. Not a secret. */
   recipient: string | null;
   lamports: number;
@@ -101,6 +104,7 @@ export class BoostVerifier {
     const session = this.opts.sessions.get(sessionId);
     if (!session) return { error: "Unknown session", status: 404 };
     if (!session.catalogTracks().some((t) => t.id === trackId)) return { error: "Unknown track ID", status: 400 };
+    if (session.isPlaying(trackId)) return { error: "Track is already playing", status: 409 };
     this.sweep();
     const intentId = randomUUID();
     const intent: BoostIntent = {
@@ -108,7 +112,7 @@ export class BoostVerifier {
       sessionId,
       trackId,
       cluster: "devnet",
-      rpcUrl: this.opts.rpcUrl,
+      rpcUrl: this.opts.publicRpcUrl ?? DEFAULT_DEVNET_RPC,
       recipient: this.opts.recipient,
       lamports: this.opts.lamports,
       memo: `crowdpulse:${sessionId}:${trackId}:${intentId}`,

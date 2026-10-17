@@ -87,6 +87,7 @@ if ((process.env.SOLANA_CLUSTER ?? "devnet") !== "devnet") {
 const boosts = process.env.BOOST_RECIPIENT
   ? new BoostVerifier({
       rpcUrl: process.env.SOLANA_RPC_URL || DEFAULT_DEVNET_RPC,
+      publicRpcUrl: process.env.SOLANA_PUBLIC_RPC_URL || DEFAULT_DEVNET_RPC,
       recipient: process.env.BOOST_RECIPIENT,
       lamports: Number(process.env.BOOST_LAMPORTS ?? 1_000_000),
       sessions,
@@ -195,8 +196,14 @@ wss.on("connection", (ws, req) => {
     }
 
     // Events are applied via the same validated path as HTTP; state broadcasts via onChange.
-    const { result } = await handleEvent(msg, ip, "ws");
-    send(ws, result);
+    // A bug here must not take the whole server (and every connected screen) down.
+    try {
+      const { result } = await handleEvent(msg, ip, "ws");
+      send(ws, result);
+    } catch (err) {
+      log({ kind: "ws.handler_error", message: (err as Error).message });
+      send(ws, { type: "error", code: "server_error", message: "Could not process that event — please retry" });
+    }
   });
 });
 
@@ -243,6 +250,10 @@ async function shutdown(signal: string) {
   process.exit(0);
 }
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
+// Log stray async errors instead of crashing mid-demo (Node's default is to exit).
+process.on("unhandledRejection", (reason) => {
+  log({ kind: "unhandled_rejection", message: reason instanceof Error ? reason.message : String(reason) });
+});
 process.on("SIGINT", () => void shutdown("SIGINT"));
 
 server.listen(PORT, () => {

@@ -35,6 +35,7 @@ export function BoostPanel({
   trackId,
   trackTitle,
   config,
+  blockedReason = null,
   onState,
   onClose,
 }: {
@@ -42,6 +43,8 @@ export function BoostPanel({
   trackId: string;
   trackTitle: string;
   config: BoostConfig;
+  /** Set when boosting no longer makes sense (e.g. the track started playing). */
+  blockedReason?: string | null;
   onState: (s: SessionState) => void;
   onClose: () => void;
 }) {
@@ -105,7 +108,13 @@ export function BoostPanel({
       {phase.kind === "loading" && <p className="track-meta">Preparing boost…</p>}
       {phase.kind === "error" && <p className="feedback feedback-rejected">{phase.message}</p>}
 
-      {phase.kind === "ready" && (
+      {phase.kind === "ready" && blockedReason && (
+        <p className="feedback feedback-warn" role="status">
+          {blockedReason}
+        </p>
+      )}
+
+      {phase.kind === "ready" && !blockedReason && (
         <>
           {wallet ? (
             <button type="button" className="btn primary wide" onClick={() => pay(phase.intent)}>

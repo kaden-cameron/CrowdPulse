@@ -21,14 +21,19 @@ export function JoinPage() {
     status,
     error,
     lastMessageAt,
-    votes,
+    voteFor,
+    voteRejection,
     applyState,
     setMood,
     submitVote,
     tap,
   } = useSessionSocket(sessionCode, "attendee");
 
-  const [step, setStep] = useState<"join" | "vote">("join");
+  // Which run this phone joined. A host "Start new run" bumps state.run, which sends everyone
+  // back to the mood step for the new run.
+  const [joinedRun, setJoinedRun] = useState<number | null>(null);
+  const step: "join" | "vote" = state && joinedRun === state.run ? "vote" : "join";
+  const newRun = joinedRun !== null && state !== null && joinedRun !== state.run;
   const [mood, setMoodLocal] = useState<Mood | null>(null);
   const [myTaps, setMyTaps] = useState(0);
   const [boostConfig, setBoostConfig] = useState<BoostConfig | null>(null);
@@ -43,7 +48,7 @@ export function JoinPage() {
   function continueToVote() {
     if (!mood) return;
     setMood(mood);
-    setStep("vote");
+    setJoinedRun(state?.run ?? null);
   }
 
   function onTap() {
@@ -52,10 +57,8 @@ export function JoinPage() {
     navigator.vibrate?.(10);
   }
 
-  // Latest rejection reason across tracks, shown once above the list.
-  const rejection = Object.values(votes).find(
-    (v) => v.feedback === "rejected",
-  )?.reason;
+  // Latest rejection that still applies, shown once above the list.
+  const rejection = voteRejection;
   const offline = status !== "connected";
 
   if (status === "not_found") {
@@ -88,6 +91,11 @@ export function JoinPage() {
 
       {step === "join" ? (
         <section className="join-panel">
+          {newRun && (
+            <p className="feedback feedback-pending" role="status">
+              A new run just started — pick your mood to jump back in.
+            </p>
+          )}
           <p className="session-kicker">You&apos;re joining</p>
           <h1>{state?.sessionName ?? "Loading session…"}</h1>
           <p className="privacy-note">
@@ -116,7 +124,7 @@ export function JoinPage() {
           <button
             type="button"
             className="btn primary wide"
-            disabled={!mood}
+            disabled={!mood || !state}
             onClick={continueToVote}
           >
             Continue to vote
@@ -170,7 +178,7 @@ export function JoinPage() {
                   </button>
                 )}
                 <VoteButton
-                  feedback={votes[track.id]?.feedback ?? "idle"}
+                  feedback={voteFor(track.id)?.feedback ?? "idle"}
                   trackTitle={track.title}
                   disabled={track.status === "playing"}
                   onVote={() => submitVote(track.id)}
@@ -186,6 +194,11 @@ export function JoinPage() {
               trackId={boostTrack}
               trackTitle={state?.tracks.find((t) => t.id === boostTrack)?.title ?? boostTrack}
               config={boostConfig}
+              blockedReason={
+                state?.tracks.find((t) => t.id === boostTrack)?.status === "playing"
+                  ? "This track just started playing, so boosting it now would have no effect."
+                  : null
+              }
               onState={applyState}
               onClose={() => setBoostTrack(null)}
             />

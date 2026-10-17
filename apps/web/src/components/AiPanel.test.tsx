@@ -31,8 +31,8 @@ const rec = (overrides: Partial<Recommendation> = {}): Recommendation => ({
 });
 
 const tracks = [
-  { id: "track_07", title: "Stage Lightning", artist: "DJ Hydra", genre: "dnb", bpm: 174, energy: 0.95, votes: 0, boosts: 0, status: "open" as const },
-  { id: "track_02", title: "Midnight Cypress", artist: "Lake Beat", genre: "lofi", bpm: 84, energy: 0.2, votes: 4, boosts: 0, status: "queued" as const },
+  { id: "track_07", title: "Stage Lightning", artist: "DJ Hydra", genre: "dnb", bpm: 174, energy: 0.95, votes: 0, boosts: 0, round: 0, status: "open" as const },
+  { id: "track_02", title: "Midnight Cypress", artist: "Lake Beat", genre: "lofi", bpm: 84, energy: 0.2, votes: 4, boosts: 0, round: 0, status: "queued" as const },
 ];
 
 function mockFetch(recommendation: Recommendation, configured = true) {

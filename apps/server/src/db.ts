@@ -266,10 +266,20 @@ export class Database {
          WHERE session_id = $1 AND event_type IN ('vote', 'mood', 'tap', 'boost') AND time > $2`,
         [sessionId, since],
       ),
+      // Open votes per track, matching the live queue: votes since the last reset and since the
+      // track last started playing (playing a track clears its votes).
       this.pool.query(
-        `SELECT metadata->>'trackId' AS track_id, COUNT(*)::int AS votes
-         FROM crowd_events
-         WHERE session_id = $1 AND event_type = 'vote' AND time > $2
+        `WITH plays AS (
+           SELECT metadata->>'trackId' AS track_id, MAX(time) AS played_at
+           FROM crowd_events
+           WHERE session_id = $1 AND event_type = 'track_advance' AND time > $2
+           GROUP BY 1
+         )
+         SELECT v.metadata->>'trackId' AS track_id, COUNT(*)::int AS votes
+         FROM crowd_events v
+         LEFT JOIN plays p ON p.track_id = v.metadata->>'trackId'
+         WHERE v.session_id = $1 AND v.event_type = 'vote' AND v.time > $2
+           AND (p.played_at IS NULL OR v.time > p.played_at)
          GROUP BY 1 ORDER BY votes DESC, track_id`,
         [sessionId, since],
       ),

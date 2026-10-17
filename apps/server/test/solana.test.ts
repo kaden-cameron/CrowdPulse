@@ -234,3 +234,15 @@ describe("Solana devnet boosts", () => {
     expect(boostsOn(restored, "track_06")).toBe(0);
   });
 });
+
+describe("boost intents for the playing track", () => {
+  it("are refused, and the browser gets the public RPC, not the server's", async () => {
+    await store.advance("track_05");
+    const res = await request(app)
+      .post("/api/sessions/demo/boosts/intents")
+      .send({ trackId: "track_05", participantId: "participant_boost1" });
+    expect(res.status).toBe(409);
+    const ok = await intent("track_01");
+    expect(ok.rpcUrl).toBe("https://api.devnet.solana.com");
+  });
+});

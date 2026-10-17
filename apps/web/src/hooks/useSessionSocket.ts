@@ -14,7 +14,16 @@ import {
   SessionSocket,
 } from "../lib/ws";
 
-export type TrackVote = { feedback: VoteFeedback; reason?: string };
+export type TrackVote = { feedback: VoteFeedback; reason?: string; at: number };
+
+/**
+ * A vote button's identity: run + track + round. A new run (host "Start new run") or a track that
+ * has played again gets a fresh key, so old "Voted ✓" / "Rejected" states don't stick.
+ */
+function voteKey(state: SessionState | null, trackId: string): string {
+  const round = state?.tracks.find((t) => t.id === trackId)?.round ?? 0;
+  return `${state?.run ?? 0}:${trackId}:${round}`;
+}
 
 const TAP_FLUSH_MS = 1000;
 
@@ -28,7 +37,7 @@ export function useSessionSocket(
   const [lastMessageAt, setLastMessageAt] = useState<number | null>(null);
   const [votes, setVotes] = useState<Record<string, TrackVote>>({});
   const socketRef = useRef<SessionSocket | null>(null);
-  // eventId -> trackId, so results map back to the right vote button.
+  // eventId -> vote key, so results map back to the right vote button.
   const pendingVotes = useRef(new Map<string, string>());
   const pendingTaps = useRef(0);
 
@@ -62,8 +71,8 @@ export function useSessionSocket(
           setError("Couldn't save to the database — retrying…");
           return;
         }
-        const trackId = pendingVotes.current.get(result.eventId);
-        if (!trackId) {
+        const key = pendingVotes.current.get(result.eventId);
+        if (!key) {
           if (result.status === "rejected" && result.reason !== "Rate limit exceeded") {
             setError(result.reason ?? "Request rejected");
           }
@@ -74,9 +83,10 @@ export function useSessionSocket(
         const already = result.reason === "Already voted for this track";
         setVotes((v) => ({
           ...v,
-          [trackId]: {
+          [key]: {
             feedback: already ? "duplicate" : result.status,
             reason: result.reason,
+            at: Date.now(),
           },
         }));
       },
@@ -93,8 +103,22 @@ export function useSessionSocket(
 
     const onOnline = () => socket.reconnectNow();
     const onOffline = () => socket.dropForOffline();
+    // Phones suspend background tabs and can kill the socket without telling the page.
+    // After more than a few seconds away, reconnect on return so state is current.
+    let hiddenAt: number | null = null;
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+      } else if (hiddenAt !== null && Date.now() - hiddenAt > 5000) {
+        hiddenAt = null;
+        socket.refresh();
+      } else {
+        hiddenAt = null;
+      }
+    };
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
+    document.addEventListener("visibilitychange", onVisibility);
 
     // Hype taps are batched so a frantic tapper sends ~1 message per second.
     const flush = window.setInterval(() => {
@@ -114,6 +138,7 @@ export function useSessionSocket(
       cancelled = true;
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
+      document.removeEventListener("visibilitychange", onVisibility);
       window.clearInterval(flush);
       socket.close();
       socketRef.current = null;
@@ -132,8 +157,9 @@ export function useSessionSocket(
 
   function submitVote(trackId: string) {
     const eventId = createEventId();
-    pendingVotes.current.set(eventId, trackId);
-    setVotes((v) => ({ ...v, [trackId]: { feedback: "pending" } }));
+    const key = voteKey(state, trackId);
+    pendingVotes.current.set(eventId, key);
+    setVotes((v) => ({ ...v, [key]: { feedback: "pending", at: Date.now() } }));
     socketRef.current?.sendEvent({
       type: "vote.submit",
       sessionId,
@@ -147,12 +173,25 @@ export function useSessionSocket(
     pendingTaps.current += 1;
   }
 
+  /** This phone's vote state for a track in the current run and round. */
+  function voteFor(trackId: string): TrackVote | undefined {
+    return votes[voteKey(state, trackId)];
+  }
+
+  /** Most recent rejection that still applies (current run/round only). */
+  const currentKeys = new Set((state?.tracks ?? []).map((t) => voteKey(state, t.id)));
+  const voteRejection =
+    Object.entries(votes)
+      .filter(([k, v]) => currentKeys.has(k) && v.feedback === "rejected")
+      .sort((a, b) => b[1].at - a[1].at)[0]?.[1].reason ?? null;
+
   return {
     state,
     status,
     error,
     lastMessageAt,
-    votes,
+    voteFor,
+    voteRejection,
     applyState,
     setMood,
     submitVote,

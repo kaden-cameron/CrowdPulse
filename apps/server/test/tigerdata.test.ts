@@ -85,6 +85,25 @@ describe.skipIf(!url)("TigerData integration (Doc 03)", () => {
     expect(b.totalEvents).toBe(4); // 3 bucketed + 1 recent; energy samples excluded
   });
 
+  it("open votes by track match the live queue: votes for a track that played are excluded", async () => {
+    const id = `test-q-${randomUUID().slice(0, 8)}`;
+    try {
+      const live = new SessionStore(id, "Queue test", { persist: db.persist.bind(db) });
+      await live.submitVote({ trackId: "track_02", eventId: randomUUID(), participantId: "participant_q1" });
+      await live.submitVote({ trackId: "track_02", eventId: randomUUID(), participantId: "participant_q2" });
+      await live.submitVote({ trackId: "track_05", eventId: randomUUID(), participantId: "participant_q1" });
+      await live.advance("track_02"); // clears track_02's votes live
+      await live.submitVote({ trackId: "track_02", eventId: randomUUID(), participantId: "participant_q3" }); // new round
+      const m = await db.metrics(id);
+      const fromSql = Object.fromEntries(m.votesByTrack.map((r) => [r.trackId, r.votes]));
+      const fromLive = Object.fromEntries(live.getState().tracks.filter((t) => t.votes).map((t) => [t.id, t.votes]));
+      expect(fromSql).toEqual(fromLive);
+      expect(fromSql).toEqual({ track_02: 1, track_05: 1 });
+    } finally {
+      await db.deleteSession(id);
+    }
+  });
+
   it("restores a session from TigerData after a restart", async () => {
     const id = `test-r-${randomUUID().slice(0, 8)}`;
     try {

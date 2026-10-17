@@ -105,3 +105,31 @@ test("Simulated crowd traffic is labelled as demo data on the stage", async ({ b
   });
   await expect(stage.getByText("Demo data · 1 simulated attendees")).toBeVisible();
 });
+
+test("Vote buttons come back after a track plays, and a new run starts fresh on every phone", async ({ browser, request }) => {
+  const host = { "x-host-key": HOST_KEY };
+  const phone = await openPhone(browser);
+
+  await phone.getByRole("button", { name: "Vote: Stage Lightning" }).click();
+  await expect(phone.getByRole("button", { name: "Voted ✓: Stage Lightning" })).toBeDisabled();
+
+  // Host plays Stage Lightning, then another track: Stage Lightning is votable again.
+  expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
+  await request.post("/api/sessions/demo/votes", {
+    data: { sessionId: "demo", trackId: "track_01", eventId: randomUUID(), participantId: "participant_other2" },
+  });
+  expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
+  await expect(phone.getByRole("button", { name: "Vote: Stage Lightning" })).toBeEnabled();
+
+  // The playing track can't be voted on from the page.
+  await expect(phone.getByRole("button", { name: "Vote: Gator Glow" })).toBeDisabled();
+
+  // "Start new run" sends the phone back to pick a mood, with fresh buttons.
+  await phone.getByRole("button", { name: "Vote: Spanish Moss" }).click();
+  await expect(phone.getByRole("button", { name: "Voted ✓: Spanish Moss" })).toBeVisible();
+  expect((await request.post("/api/host/sessions/demo/reset", { headers: host })).status()).toBe(200);
+  await expect(phone.getByText(/new run just started/)).toBeVisible();
+  await phone.getByRole("button", { name: "Continue to vote" }).click();
+  await expect(phone.getByRole("button", { name: "Vote: Spanish Moss" })).toBeEnabled();
+  await expect(phone.getByText(/Rejected:/)).toHaveCount(0);
+});

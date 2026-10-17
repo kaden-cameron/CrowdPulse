@@ -123,6 +123,25 @@ export class SessionSocket {
     if (this.ws && this.ws.readyState <= WebSocket.OPEN) this.ws.close();
   }
 
+  /**
+   * Replace the connection with a fresh one now. Used when a phone wakes a backgrounded tab:
+   * iOS may have silently killed the socket while the badge still says "Live". The new
+   * connection gets a full snapshot and resends anything in the outbox.
+   */
+  refresh() {
+    if (this.intentionalClose) return;
+    if (this.reconnectTimer != null) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    const old = this.ws;
+    if (old) {
+      old.onclose = null;
+      old.onmessage = null;
+      old.close();
+    }
+    this.attempt = 0;
+    this.connect();
+  }
+
   /** Reconnect immediately (e.g. when the device comes back online). */
   reconnectNow() {
     if (this.intentionalClose) return;
@@ -183,19 +202,28 @@ export function createEventId(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
+// Kept in memory too: if storage is blocked (private mode, some in-app QR browsers), the ID must
+// still be stable for this page, or every request would count as a new attendee.
+let participantIdCache: string | null = null;
+
 /** Anonymous, random per-browser participant token. No personal data. */
 export function getParticipantId(): string {
+  if (participantIdCache) return participantIdCache;
   const key = "crowdpulse.participant";
-  const fresh = () => `p_${createEventId().replaceAll("-", "")}`;
   try {
-    const existing = localStorage.getItem(key);
-    if (existing) return existing;
-    const id = fresh();
-    localStorage.setItem(key, id);
-    return id;
+    participantIdCache = localStorage.getItem(key);
   } catch {
-    return fresh();
+    /* storage blocked */
   }
+  if (!participantIdCache) {
+    participantIdCache = `p_${createEventId().replaceAll("-", "")}`;
+    try {
+      localStorage.setItem(key, participantIdCache);
+    } catch {
+      /* storage blocked — the in-memory ID still holds for this page */
+    }
+  }
+  return participantIdCache;
 }
 
 /** Accept newer state only, unless the server restarted (new epoch). */

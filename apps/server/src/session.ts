@@ -53,7 +53,7 @@ export type EventOutcome =
   | { status: "accepted" | "duplicate"; state: SessionState }
   | { status: "rejected"; reason: string; httpStatus: number };
 
-type CatalogTrack = Omit<Track, "votes" | "status" | "boosts">;
+type CatalogTrack = Omit<Track, "votes" | "status" | "boosts" | "round">;
 
 /** Participant IDs from the demo crowd simulator start with this; the UI labels them "Demo data". */
 export const SIMULATED_PREFIX = "sim_";
@@ -85,8 +85,15 @@ export class SessionStore {
   private moods = new Map<string, Mood>(); // participantId -> latest mood
   private participants = new Set<string>();
   private seenEventIds = new Set<string>();
-  private inflight = new Set<string>();
+  /** Events being saved right now, so a retry can wait for the real result. */
+  private inflight = new Map<string, Promise<EventOutcome>>();
   private reservations = new Set<string>();
+  private plays = new Map<string, number>(); // trackId -> times started playing this run
+  private run = 1;
+  // Concurrency gate: events run concurrently; host actions run alone (see exclusive()).
+  private activeEvents = 0;
+  private exclusiveLock: Promise<void> | null = null;
+  private idleWaiters: (() => void)[] = [];
   private clientHits = new Map<string, number[]>();
   private activity: { at: number; weight: number }[] = [];
   private questLevel = 1;
@@ -132,6 +139,7 @@ export class SessionStore {
       sessionName: this.sessionName,
       epoch: EPOCH,
       version: this.version,
+      run: this.run,
       energyScore: this.energyScore,
       participants: this.participants.size,
       simulatedParticipants: [...this.participants].filter((p) => p.startsWith(SIMULATED_PREFIX)).length,
@@ -141,6 +149,7 @@ export class SessionStore {
         ...t,
         votes: this.voteCount(t.id),
         boosts: this.boostCount(t.id),
+        round: this.plays.get(t.id) ?? 0,
         status:
           this.nowPlaying?.id === t.id
             ? "playing"
@@ -251,6 +260,14 @@ export class SessionStore {
           metadata: { trackId: track.id, signature: input.signature },
         },
         commit: () => {
+          // Paid and verified, so it's recorded either way — but a boost for the track that is
+          // already playing must not put it back in the queue.
+          if (this.nowPlaying?.id === track.id) {
+            return {
+              weight: ACTIVITY_WEIGHT.vote,
+              event: { type: "boost.verified", message: `Boost verified for ${track.title} (already playing — no queue effect)` },
+            };
+          }
           const capped = this.applyBoost(track.id);
           return {
             weight: ACTIVITY_WEIGHT.vote,
@@ -267,7 +284,11 @@ export class SessionStore {
   }
 
   /** Host action. `null` returns the stage to auto (energy-driven) mode. */
-  async setVisual(visual: VisualState | null): Promise<EventOutcome> {
+  setVisual(visual: VisualState | null): Promise<EventOutcome> {
+    return this.exclusive(() => this.setVisualNow(visual));
+  }
+
+  private async setVisualNow(visual: VisualState | null): Promise<EventOutcome> {
     const next = visual
       ? { theme: visual.theme, intensity: clamp(visual.intensity, 0, 1) }
       : null;
@@ -284,7 +305,11 @@ export class SessionStore {
   }
 
   /** Host action: play the top-voted track next, or a specific catalog track. */
-  async advance(trackId?: string): Promise<EventOutcome> {
+  advance(trackId?: string): Promise<EventOutcome> {
+    return this.exclusive(() => this.advanceNow(trackId));
+  }
+
+  private async advanceNow(trackId?: string): Promise<EventOutcome> {
     let nextId: string;
     if (trackId) {
       if (!this.catalog.some((t) => t.id === trackId)) return this.reject("Unknown track ID", 400);
@@ -319,12 +344,20 @@ export class SessionStore {
    * restart (replay) and the dashboard metrics also start from here. Old rows stay in the
    * database for audit — no manual database edits needed between rehearsals.
    */
-  async reset(): Promise<EventOutcome> {
+  reset(): Promise<EventOutcome> {
+    return this.exclusive(() => this.resetNow());
+  }
+
+  private async resetNow(): Promise<EventOutcome> {
     const saved = await this.persistHostAction("session_reset", {});
     if (saved) return saved;
     this.clearRunState();
     this.change({ type: "session.reset", message: "New run started — waiting for the crowd" });
     return { status: "accepted", state: this.getState() };
+  }
+
+  isPlaying(trackId: string): boolean {
+    return this.nowPlaying?.id === trackId;
   }
 
   catalogTracks(): readonly CatalogTrack[] {
@@ -388,7 +421,7 @@ export class SessionStore {
           this.activity.push({ at, weight: ACTIVITY_WEIGHT.tap * (Number(r.value) || 0) });
           break;
         case "boost":
-          if (typeof meta.trackId === "string") {
+          if (typeof meta.trackId === "string" && this.nowPlaying?.id !== meta.trackId) {
             this.applyBoost(meta.trackId);
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
           }
@@ -421,49 +454,103 @@ export class SessionStore {
    * Validate → dedupe → rate-limit → plan → persist → apply → broadcast.
    * State only changes after the database confirms the write.
    */
-  private async handleEvent(
+  private handleEvent(
     input: { eventId: string; participantId: string },
     plan: () => Plan | Rejection,
   ): Promise<EventOutcome> {
     // Idempotency: a retried event ID returns current state without being counted again.
-    if (this.seenEventIds.has(input.eventId) || this.inflight.has(input.eventId)) {
-      return { status: "duplicate", state: this.getState() };
+    if (this.seenEventIds.has(input.eventId)) {
+      return Promise.resolve({ status: "duplicate", state: this.getState() });
     }
-    if (!this.allowRequest(input.participantId)) {
-      return this.reject("Rate limit exceeded", 429);
+    // A retry of an event that is still being saved waits for that save and gets its answer.
+    // Replying "duplicate" straight away would make the client drop it — and if the original
+    // save then failed, the event would be lost.
+    const pending = this.inflight.get(input.eventId);
+    if (pending) {
+      return pending.then((o) => (o.status === "accepted" ? { status: "duplicate", state: this.getState() } : o));
     }
-    const p = plan();
-    if ("status" in p) return p;
-    if (p.reservation && this.reservations.has(p.reservation)) {
-      return this.reject("Already voted for this track", 409);
-    }
+    const outcome = this.runEvent(input, plan);
+    this.inflight.set(input.eventId, outcome);
+    const done = () => this.inflight.delete(input.eventId);
+    outcome.then(done, done);
+    return outcome;
+  }
 
-    this.inflight.add(input.eventId);
-    if (p.reservation) this.reservations.add(p.reservation);
-    let result: PersistResult;
+  private async runEvent(
+    input: { eventId: string; participantId: string },
+    plan: () => Plan | Rejection,
+  ): Promise<EventOutcome> {
+    await this.enterShared();
     try {
-      result = await this.persist({
-        eventId: input.eventId,
-        sessionId: this.sessionId,
-        participantId: input.participantId,
-        ...p.record,
-      });
-    } catch (err) {
-      log({ kind: "db.persist_failed", sessionId: this.sessionId, eventId: input.eventId, message: (err as Error).message });
-      return this.reject("Could not save event — please retry", 503);
+      if (!this.allowRequest(input.participantId)) {
+        return this.reject("Rate limit exceeded", 429);
+      }
+      // Host actions can't run between plan() and commit(), so the checks made here still hold
+      // when the event is applied, and the database order matches the order state changed.
+      const p = plan();
+      if ("status" in p) return p;
+      if (p.reservation && this.reservations.has(p.reservation)) {
+        return this.reject("Already voted for this track", 409);
+      }
+
+      if (p.reservation) this.reservations.add(p.reservation);
+      let result: PersistResult;
+      try {
+        result = await this.persist({
+          eventId: input.eventId,
+          sessionId: this.sessionId,
+          participantId: input.participantId,
+          ...p.record,
+        });
+      } catch (err) {
+        log({ kind: "db.persist_failed", sessionId: this.sessionId, eventId: input.eventId, message: (err as Error).message });
+        return this.reject("Could not save event — please retry", 503);
+      } finally {
+        if (p.reservation) this.reservations.delete(p.reservation);
+      }
+
+      this.markSeen(input.eventId);
+      if (result === "duplicate") return { status: "duplicate", state: this.getState() };
+
+      const { weight, event } = p.commit();
+      this.participants.add(input.participantId);
+      this.activity.push({ at: this.now(), weight });
+      this.change(event);
+      return { status: "accepted", state: this.getState() };
     } finally {
-      this.inflight.delete(input.eventId);
-      if (p.reservation) this.reservations.delete(p.reservation);
+      this.leaveShared();
     }
+  }
 
-    this.markSeen(input.eventId);
-    if (result === "duplicate") return { status: "duplicate", state: this.getState() };
+  private async enterShared() {
+    while (this.exclusiveLock) await this.exclusiveLock;
+    this.activeEvents++;
+  }
 
-    const { weight, event } = p.commit();
-    this.participants.add(input.participantId);
-    this.activity.push({ at: this.now(), weight });
-    this.change(event);
-    return { status: "accepted", state: this.getState() };
+  private leaveShared() {
+    this.activeEvents--;
+    if (this.activeEvents === 0) {
+      const waiters = this.idleWaiters;
+      this.idleWaiters = [];
+      for (const w of waiters) w();
+    }
+  }
+
+  /**
+   * Runs a host action alone: waits for in-flight events to finish saving and holds new ones
+   * until it's done. Host actions are rare, so ordinary events still run fully in parallel.
+   */
+  private async exclusive<T>(fn: () => Promise<T>): Promise<T> {
+    while (this.exclusiveLock) await this.exclusiveLock;
+    let release!: () => void;
+    this.exclusiveLock = new Promise<void>((r) => (release = r));
+    try {
+      if (this.activeEvents > 0) await new Promise<void>((r) => this.idleWaiters.push(r));
+      return await fn();
+    } finally {
+      this.exclusiveLock = null;
+      release();
+    }
   }
 
   /** Returns a rejection if the host action could not be saved; otherwise null. */
@@ -500,15 +587,17 @@ export class SessionStore {
     return n >= MAX_BOOSTS_PER_TRACK;
   }
 
-  /** Returns the completed quest, if these taps finished one. */
+  /** Returns the last quest these taps completed, if any. Taps past a goal carry into the next quest. */
   private applyTaps(count: number): { level: number; goal: number } | null {
     this.questProgress += count;
-    const goal = this.questGoal();
-    if (this.questProgress < goal) return null;
-    const level = this.questLevel;
-    this.questLevel += 1;
-    this.questProgress = 0;
-    return { level, goal };
+    let completed: { level: number; goal: number } | null = null;
+    while (this.questProgress >= this.questGoal()) {
+      const goal = this.questGoal();
+      completed = { level: this.questLevel, goal };
+      this.questProgress -= goal;
+      this.questLevel += 1;
+    }
+    return completed;
   }
 
   /** Returns the new track's title. */
@@ -519,11 +608,14 @@ export class SessionStore {
     this.nowPlaying = track;
     this.votes.delete(track.id);
     this.boosts.delete(track.id);
+    this.plays.set(track.id, (this.plays.get(track.id) ?? 0) + 1);
     return track.title;
   }
 
   /** Clears everything a demo run builds up. Seen event IDs are kept so dedupe still holds. */
   private clearRunState() {
+    this.run += 1;
+    this.plays.clear();
     this.votes.clear();
     this.boosts.clear();
     this.lastPlayedAt.clear();
