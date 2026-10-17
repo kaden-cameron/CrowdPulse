@@ -6,8 +6,14 @@
     "packages/*"
   ],
   "scripts": {
+    "dev": "concurrently -n server,web -c magenta,cyan \"npm run dev:server\" \"npm run dev:web\"",
     "dev:web": "npm run dev --workspace=@crowdpulse/web",
     "dev:server": "npm run dev --workspace=@crowdpulse/server",
-    "build": "npm run build --workspace=@crowdpulse/shared && npm run build --workspace=@crowdpulse/web && npm run build --workspace=@crowdpulse/server"
+    "build": "npm run build --workspace=@crowdpulse/shared && npm run build --workspace=@crowdpulse/web && npm run build --workspace=@crowdpulse/server",
+    "start": "NODE_ENV=production npm start --workspace=@crowdpulse/server",
+    "test": "npm test --workspace=@crowdpulse/server && npm test --workspace=@crowdpulse/web"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
   }
 }

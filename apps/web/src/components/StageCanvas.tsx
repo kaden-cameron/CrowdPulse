@@ -49,10 +49,28 @@ type Particle = {
   life: number;
 };
 
-export function StageCanvas({ visual }: { visual: VisualState }) {
+/** Only allowlisted themes render; intensity is clamped to 0–1. */
+export function sanitizeVisual(visual: VisualState): VisualState {
+  return {
+    theme: visual.theme in THEMES ? visual.theme : "calm_waves",
+    intensity: Math.max(0, Math.min(1, Number(visual.intensity) || 0)),
+  };
+}
+
+export function StageCanvas({
+  visual,
+  paused = false,
+}: {
+  visual: VisualState;
+  /** Freeze motion when data is stale so we never animate fake "live" activity. */
+  paused?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const visualRef = useRef(visual);
-  visualRef.current = visual;
+  const safe = sanitizeVisual(visual);
+  const visualRef = useRef(safe);
+  visualRef.current = safe;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -99,6 +117,10 @@ export function StageCanvas({ visual }: { visual: VisualState }) {
     };
 
     const draw = () => {
+      if (pausedRef.current) {
+        raf = requestAnimationFrame(draw);
+        return;
+      }
       const v = visualRef.current;
       const palette = THEMES[v.theme];
       t += 0.008 + v.intensity * 0.02;
@@ -175,7 +197,9 @@ export function StageCanvas({ visual }: { visual: VisualState }) {
   return (
     <canvas
       ref={canvasRef}
-      className="stage-canvas"
+      className={`stage-canvas${paused ? " paused" : ""}`}
+      data-theme={safe.theme}
+      data-intensity={safe.intensity}
       aria-hidden
     />
   );

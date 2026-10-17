@@ -1,6 +1,7 @@
 import type {
   ClientToServerMessage,
   ConnectionStatus,
+  EventResultMessage,
   ServerToClientMessage,
   SessionState,
 } from "@crowdpulse/shared";
@@ -12,14 +13,12 @@ function wsUrl(): string {
 
 export type SessionSocketHandlers = {
   onState: (state: SessionState) => void;
-  onVoteResult?: (result: {
-    eventId: string;
-    status: "accepted" | "rejected" | "duplicate";
-    reason?: string;
-  }) => void;
+  onEventResult?: (result: EventResultMessage) => void;
   onStatus: (status: ConnectionStatus) => void;
   onError?: (message: string) => void;
 };
+
+type EventMessage = Exclude<ClientToServerMessage, { type: "client.hello" }>;
 
 export class SessionSocket {
   private ws: WebSocket | null = null;
@@ -29,6 +28,9 @@ export class SessionSocket {
   private sessionId: string;
   private role: "attendee" | "stage" | "host";
   private handlers: SessionSocketHandlers;
+  // Events not yet acknowledged by the server. Resent on reconnect with the
+  // same eventId; the server deduplicates, so a resend is never double-counted.
+  private outbox = new Map<string, EventMessage>();
 
   constructor(
     sessionId: string,
@@ -52,11 +54,12 @@ export class SessionSocket {
     ws.onopen = () => {
       this.attempt = 0;
       this.handlers.onStatus("connected");
-      this.send({
+      this.raw({
         type: "client.hello",
         role: this.role,
         sessionId: this.sessionId,
       });
+      for (const msg of this.outbox.values()) this.raw(msg);
     };
 
     ws.onmessage = (event) => {
@@ -69,21 +72,27 @@ export class SessionSocket {
       }
 
       if (msg.type === "session.state") {
-        this.handlers.onState(msg);
+        if (msg.sessionId === this.sessionId) this.handlers.onState(msg);
         return;
       }
-      if (msg.type === "vote.result") {
-        this.handlers.onVoteResult?.(msg);
+      if (msg.type === "event.result") {
+        this.outbox.delete(msg.eventId);
+        this.handlers.onEventResult?.(msg);
         return;
       }
       if (msg.type === "error") {
+        if (msg.code === "unknown_session") {
+          this.intentionalClose = true;
+          this.handlers.onStatus("not_found");
+        }
         this.handlers.onError?.(msg.message);
       }
     };
 
     ws.onclose = () => {
+      if (this.intentionalClose) return;
       this.handlers.onStatus("disconnected");
-      if (!this.intentionalClose) this.scheduleReconnect();
+      this.scheduleReconnect();
     };
 
     ws.onerror = () => {
@@ -91,10 +100,19 @@ export class SessionSocket {
     };
   }
 
-  send(message: ClientToServerMessage) {
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-    }
+  /** Queue an event; sent now if connected, otherwise on reconnect. */
+  sendEvent(message: EventMessage) {
+    this.outbox.set(message.eventId, message);
+    this.raw(message);
+  }
+
+  /** Reconnect immediately (e.g. when the device comes back online). */
+  reconnectNow() {
+    if (this.intentionalClose) return;
+    if (this.ws && this.ws.readyState <= WebSocket.OPEN) return;
+    if (this.reconnectTimer != null) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.connect();
   }
 
   close() {
@@ -105,6 +123,12 @@ export class SessionSocket {
     }
     this.ws?.close();
     this.ws = null;
+  }
+
+  private raw(message: ClientToServerMessage) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
+    }
   }
 
   private scheduleReconnect() {
@@ -118,14 +142,39 @@ export class SessionSocket {
 export async function fetchSessionState(
   sessionId: string,
 ): Promise<SessionState> {
-  const res = await fetch(`/api/sessions/${sessionId}/state`);
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/state`);
   if (!res.ok) throw new Error("Failed to load session state");
   return res.json() as Promise<SessionState>;
 }
 
+/** RFC 4122 v4 UUID. crypto.randomUUID needs a secure context, which phones on LAN http:// lack. */
 export function createEventId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+  if (window.isSecureContext && typeof crypto.randomUUID === "function") {
     return crypto.randomUUID();
   }
-  return `evt_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+  const b = crypto.getRandomValues(new Uint8Array(16));
+  b[6] = (b[6] & 0x0f) | 0x40;
+  b[8] = (b[8] & 0x3f) | 0x80;
+  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+
+/** Anonymous, random per-browser participant token. No personal data. */
+export function getParticipantId(): string {
+  const key = "crowdpulse.participant";
+  const fresh = () => `p_${createEventId().replaceAll("-", "")}`;
+  try {
+    const existing = localStorage.getItem(key);
+    if (existing) return existing;
+    const id = fresh();
+    localStorage.setItem(key, id);
+    return id;
+  } catch {
+    return fresh();
+  }
+}
+
+/** Accept newer state only, unless the server restarted (new epoch). */
+export function isNewer(prev: SessionState | null, next: SessionState): boolean {
+  return !prev || next.epoch !== prev.epoch || next.version >= prev.version;
 }

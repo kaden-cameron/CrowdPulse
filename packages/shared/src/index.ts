@@ -10,7 +10,8 @@ export type ConnectionStatus =
   | "connecting"
   | "connected"
   | "disconnected"
-  | "reconnecting";
+  | "reconnecting"
+  | "not_found";
 
 export type VoteFeedback =
   | "idle"
@@ -39,6 +40,9 @@ export interface VisualState {
   intensity: number;
 }
 
+/** "auto" follows crowd energy; "host" means the host pinned a theme/intensity. */
+export type VisualMode = "auto" | "host";
+
 export interface LatestEvent {
   type: string;
   message: string;
@@ -49,10 +53,18 @@ export interface SessionState {
   type: "session.state";
   sessionId: string;
   sessionName: string;
+  /** Changes when the server restarts; clients accept a new epoch unconditionally. */
+  epoch: string;
+  /** Monotonic within an epoch; clients ignore older versions. */
+  version: number;
   energyScore: number;
+  participants: number;
+  nowPlaying: QueueItem | null;
   queue: QueueItem[];
   tracks: Track[];
+  moods: Record<Mood, number>;
   visualState: VisualState;
+  visualMode: VisualMode;
   crowdQuest: {
     label: string;
     progress: number;
@@ -67,13 +79,23 @@ export interface VoteSubmitMessage {
   sessionId: string;
   trackId: string;
   eventId: string;
-  mood?: Mood;
+  participantId: string;
 }
 
 export interface JoinMessage {
   type: "session.join";
   sessionId: string;
-  mood?: Mood;
+  eventId: string;
+  participantId: string;
+  mood: Mood;
+}
+
+export interface TapMessage {
+  type: "tap.batch";
+  sessionId: string;
+  eventId: string;
+  participantId: string;
+  count: number;
 }
 
 export interface ClientHelloMessage {
@@ -82,8 +104,8 @@ export interface ClientHelloMessage {
   sessionId: string;
 }
 
-export interface VoteResultMessage {
-  type: "vote.result";
+export interface EventResultMessage {
+  type: "event.result";
   eventId: string;
   status: "accepted" | "rejected" | "duplicate";
   reason?: string;
@@ -98,11 +120,12 @@ export interface ErrorMessage {
 export type ClientToServerMessage =
   | VoteSubmitMessage
   | JoinMessage
+  | TapMessage
   | ClientHelloMessage;
 
 export type ServerToClientMessage =
   | SessionState
-  | VoteResultMessage
+  | EventResultMessage
   | ErrorMessage;
 
 export const THEME_ALLOWLIST: VisualTheme[] = [
@@ -111,6 +134,10 @@ export const THEME_ALLOWLIST: VisualTheme[] = [
   "sunset",
   "electric_blue",
 ];
+
+export const MOODS: Mood[] = ["chill", "hyped", "focused", "wild"];
+
+export const MAX_TAPS_PER_BATCH = 30;
 
 export const DEMO_SESSION_ID = "demo";
 export const DEMO_SESSION_NAME = "SwampHacks Main Stage";

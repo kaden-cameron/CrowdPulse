@@ -1,172 +1,121 @@
-import cors from "cors";
 import express from "express";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
   DEMO_SESSION_ID,
-  type ClientToServerMessage,
+  DEMO_SESSION_NAME,
   type ServerToClientMessage,
 } from "@crowdpulse/shared";
+import { createApp, type Sessions } from "./app.js";
+import { log } from "./log.js";
 import { SessionStore } from "./session.js";
 
 const PORT = Number(process.env.PORT ?? 8787);
-const sessions = new Map<string, SessionStore>();
+const isProd = process.env.NODE_ENV === "production";
+const hostKey = process.env.HOST_DEV_KEY ?? (isProd ? "" : "local-dev-host-key");
+if (!hostKey) {
+  console.error("HOST_DEV_KEY must be set in production");
+  process.exit(1);
+}
+const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
+
+// Only known sessions exist; unknown codes get 404 instead of silently creating state.
+const sessions: Sessions = new Map([
+  [DEMO_SESSION_ID, new SessionStore(DEMO_SESSION_ID, DEMO_SESSION_NAME)],
+]);
 const socketsBySession = new Map<string, Set<WebSocket>>();
 
-function getSession(sessionId: string): SessionStore {
-  const id = sessionId || DEMO_SESSION_ID;
-  let session = sessions.get(id);
-  if (!session) {
-    session = new SessionStore(id);
-    sessions.set(id, session);
-  }
-  return session;
-}
+const { app, handleEvent } = createApp({ sessions, hostKey, corsOrigins });
 
-function trackSocket(sessionId: string, ws: WebSocket) {
-  let set = socketsBySession.get(sessionId);
-  if (!set) {
-    set = new Set();
-    socketsBySession.set(sessionId, set);
-  }
-  set.add(ws);
-  ws.on("close", () => set?.delete(ws));
+// In production, serve the built web app and fall back to index.html for SPA routes.
+const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
+if (existsSync(webDist)) {
+  app.use(express.static(webDist));
+  app.get(/^\/(?!api|ws).*/, (_req, res) => res.sendFile(path.join(webDist, "index.html")));
 }
 
 function send(ws: WebSocket, message: ServerToClientMessage) {
-  if (ws.readyState === ws.OPEN) {
-    ws.send(JSON.stringify(message));
-  }
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(message));
 }
 
-function broadcast(sessionId: string, message: ServerToClientMessage) {
+function broadcast(sessionId: string) {
   const set = socketsBySession.get(sessionId);
-  if (!set) return;
-  const payload = JSON.stringify(message);
+  const session = sessions.get(sessionId);
+  if (!set?.size || !session) return;
+  const payload = JSON.stringify(session.getState());
   for (const ws of set) {
     if (ws.readyState === ws.OPEN) ws.send(payload);
   }
 }
 
-const app = express();
-app.use(cors());
-app.use(express.json({ limit: "32kb" }));
-
-app.get("/api/health", (_req, res) => {
-  res.json({
-    ok: true,
-    service: "crowdpulse-server",
-    time: new Date().toISOString(),
-  });
-});
-
-app.get("/api/sessions/:id/state", (req, res) => {
-  const session = getSession(req.params.id);
-  res.json(session.getState());
-});
-
-app.post("/api/sessions/:id/votes", (req, res) => {
-  const session = getSession(req.params.id);
-  const { trackId, eventId, mood } = req.body ?? {};
-  const clientKey =
-    (req.headers["x-client-id"] as string) ||
-    req.ip ||
-    "anonymous";
-
-  if (!trackId || !eventId) {
-    res.status(400).json({ error: "trackId and eventId are required" });
-    return;
-  }
-
-  const result = session.submitVote({
-    trackId,
-    eventId,
-    clientKey,
-    mood,
-  });
-
-  if (result.status === "rejected") {
-    const status = result.reason === "Rate limit exceeded" ? 429 : 400;
-    res.status(status).json({ status: "rejected", reason: result.reason });
-    return;
-  }
-
-  broadcast(session.sessionId, result.state);
-  res.json(result);
-});
+for (const [id, session] of sessions) session.onChange(() => broadcast(id));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws" });
+const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 2048 });
+const alive = new WeakSet<WebSocket>();
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
+  const ip = req.socket.remoteAddress ?? "unknown";
   let boundSessionId: string | null = null;
-  let clientKey = `ws-${Math.random().toString(36).slice(2)}`;
+  alive.add(ws);
+  ws.on("pong", () => alive.add(ws));
+  ws.on("close", () => {
+    if (boundSessionId) socketsBySession.get(boundSessionId)?.delete(ws);
+  });
 
   ws.on("message", (raw) => {
-    let msg: ClientToServerMessage;
+    let msg: { type?: unknown; sessionId?: unknown };
     try {
-      msg = JSON.parse(String(raw)) as ClientToServerMessage;
+      msg = JSON.parse(String(raw));
     } catch {
-      send(ws, {
-        type: "error",
-        code: "bad_json",
-        message: "Could not parse message",
-      });
+      send(ws, { type: "error", code: "bad_json", message: "Could not parse message" });
       return;
     }
 
-    if (msg.type === "client.hello" || msg.type === "session.join") {
-      boundSessionId = msg.sessionId || DEMO_SESSION_ID;
-      trackSocket(boundSessionId, ws);
-      const session = getSession(boundSessionId);
-      if (msg.type === "session.join" && "mood" in msg) {
-        session.recordMood(msg.mood);
+    if (msg?.type === "client.hello") {
+      const id = typeof msg.sessionId === "string" ? msg.sessionId : "";
+      const session = sessions.get(id);
+      if (!session) {
+        send(ws, { type: "error", code: "unknown_session", message: "Session not found" });
+        ws.close(4404, "unknown_session");
+        return;
       }
+      if (boundSessionId) socketsBySession.get(boundSessionId)?.delete(ws);
+      boundSessionId = id;
+      const set = socketsBySession.get(id) ?? new Set();
+      set.add(ws);
+      socketsBySession.set(id, set);
+      // Full snapshot on every (re)connect so clients never assume they saw every event.
       send(ws, session.getState());
       return;
     }
 
-    if (msg.type === "vote.submit") {
-      const sessionId = msg.sessionId || boundSessionId || DEMO_SESSION_ID;
-      boundSessionId = sessionId;
-      trackSocket(sessionId, ws);
-      const session = getSession(sessionId);
-      const result = session.submitVote({
-        trackId: msg.trackId,
-        eventId: msg.eventId,
-        clientKey,
-        mood: msg.mood,
-      });
-
-      if (result.status === "rejected") {
-        send(ws, {
-          type: "vote.result",
-          eventId: msg.eventId,
-          status: "rejected",
-          reason: result.reason,
-        });
-        return;
-      }
-
-      send(ws, {
-        type: "vote.result",
-        eventId: msg.eventId,
-        status: result.status,
-      });
-      broadcast(sessionId, result.state);
-      return;
-    }
-
-    send(ws, {
-      type: "error",
-      code: "unknown_type",
-      message: "Unsupported message type",
-    });
+    // Events are applied via the same validated path as HTTP; state broadcasts via onChange.
+    const { result } = handleEvent(msg, ip, "ws");
+    send(ws, result);
   });
 });
 
+// Heartbeat: drop clients that miss a ping.
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (!alive.has(ws)) {
+      ws.terminate();
+      continue;
+    }
+    alive.delete(ws);
+    ws.ping();
+  }
+}, 15_000);
+
+// Energy decays as activity ages out; tick() broadcasts only when the score moves.
+setInterval(() => {
+  for (const session of sessions.values()) session.tick();
+}, 2_000);
+
 server.listen(PORT, () => {
-  console.log(`CrowdPulse server listening on http://localhost:${PORT}`);
-  console.log(`WebSocket path: ws://localhost:${PORT}/ws`);
-  console.log(`Demo session: ${DEMO_SESSION_ID}`);
+  log({ kind: "startup", port: PORT, sessions: [...sessions.keys()], servingWeb: existsSync(webDist) });
 });

@@ -1,11 +1,29 @@
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import QRCode from "qrcode";
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { StageCanvas } from "../components/StageCanvas";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 
 export function StagePage() {
   const { sessionCode = "demo" } = useParams();
-  const { state, status } = useSessionSocket(sessionCode, "stage");
+  const { state, status, lastMessageAt } = useSessionSocket(
+    sessionCode,
+    "stage",
+  );
+  const joinUrl = `${window.location.origin}/join/${encodeURIComponent(sessionCode)}`;
+  const [qr, setQr] = useState<string | null>(null);
+  const live = status === "connected";
+
+  useEffect(() => {
+    QRCode.toDataURL(joinUrl, {
+      margin: 1,
+      width: 280,
+      color: { dark: "#06141f", light: "#ffffff" },
+    })
+      .then(setQr)
+      .catch(() => setQr(null));
+  }, [joinUrl]);
 
   const visual = state?.visualState ?? {
     theme: "electric_blue" as const,
@@ -18,7 +36,7 @@ export function StagePage() {
 
   return (
     <main className="stage-page" data-theme={visual.theme}>
-      <StageCanvas visual={visual} />
+      <StageCanvas visual={visual} paused={!live} />
 
       <div className="stage-overlay">
         <header className="stage-header">
@@ -29,7 +47,7 @@ export function StagePage() {
             </h1>
           </div>
           <div className="stage-header-meta">
-            <ConnectionBadge status={status} />
+            <ConnectionBadge status={status} lastMessageAt={lastMessageAt} />
             <p className="freshness">
               {state
                 ? `Updated ${new Date(state.updatedAt).toLocaleTimeString()}`
@@ -49,6 +67,14 @@ export function StagePage() {
               />
             </div>
             <p className="energy-caption">Live engagement</p>
+          </div>
+          <div className="now-playing">
+            <p className="theme-label">Now playing</p>
+            <p className="now-playing-title">
+              {state?.nowPlaying
+                ? `${state.nowPlaying.title} — ${state.nowPlaying.artist}`
+                : "Waiting for the first pick"}
+            </p>
           </div>
         </div>
 
@@ -88,12 +114,26 @@ export function StagePage() {
               <h2>Latest</h2>
               <p>{state?.latestEvent?.message ?? "Session warming up"}</p>
             </div>
-            <Link className="join-qr-hint" to={`/join/${sessionCode}`}>
-              Join: /join/{sessionCode}
-            </Link>
+            <div className="join-qr">
+              {qr && (
+                <img src={qr} alt={`QR code to join at ${joinUrl}`} />
+              )}
+              <p className="join-qr-hint">
+                {joinUrl.replace(/^https?:\/\//, "")}
+                <span>{state?.participants ?? 0} in the crowd</span>
+              </p>
+            </div>
           </section>
         </footer>
       </div>
+
+      {!live && status !== "connecting" && (
+        <div className="stage-stale" role="alert">
+          {status === "not_found"
+            ? "Session not found"
+            : "Disconnected — live data paused"}
+        </div>
+      )}
     </main>
   );
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { Mood } from "@crowdpulse/shared";
 import { ConnectionBadge } from "../components/ConnectionBadge";
+import { VoteButton } from "../components/VoteButton";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 
 const MOODS: { id: Mood; label: string; hint: string }[] = [
@@ -17,15 +18,16 @@ export function JoinPage() {
     state,
     status,
     error,
-    voteFeedback,
-    voteReason,
+    lastMessageAt,
+    votes,
     setMood,
     submitVote,
+    tap,
   } = useSessionSocket(sessionCode, "attendee");
 
   const [step, setStep] = useState<"join" | "vote">("join");
   const [mood, setMoodLocal] = useState<Mood | null>(null);
-  const [pendingTrack, setPendingTrack] = useState<string | null>(null);
+  const [myTaps, setMyTaps] = useState(0);
 
   function continueToVote() {
     if (!mood) return;
@@ -33,21 +35,36 @@ export function JoinPage() {
     setStep("vote");
   }
 
-  function onVote(trackId: string) {
-    setPendingTrack(trackId);
-    submitVote(trackId);
+  function onTap() {
+    tap();
+    setMyTaps((n) => n + 1);
+    navigator.vibrate?.(10);
   }
 
-  const feedbackLabel =
-    voteFeedback === "pending"
-      ? "Submitting vote…"
-      : voteFeedback === "accepted"
-        ? "Vote accepted"
-        : voteFeedback === "rejected"
-          ? `Rejected${voteReason ? `: ${voteReason}` : ""}`
-          : voteFeedback === "duplicate"
-            ? "Already counted"
-            : null;
+  // Latest rejection reason across tracks, shown once above the list.
+  const rejection = Object.values(votes).find(
+    (v) => v.feedback === "rejected",
+  )?.reason;
+  const offline = status !== "connected";
+
+  if (status === "not_found") {
+    return (
+      <main className="join-page">
+        <header className="page-top">
+          <Link to="/" className="brand-inline">
+            CrowdPulse
+          </Link>
+          <ConnectionBadge status={status} />
+        </header>
+        <section className="join-panel">
+          <h1>Session not found</h1>
+          <p className="privacy-note">
+            Check the code on the stage screen and try again.
+          </p>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="join-page">
@@ -55,7 +72,7 @@ export function JoinPage() {
         <Link to="/" className="brand-inline">
           CrowdPulse
         </Link>
-        <ConnectionBadge status={status} />
+        <ConnectionBadge status={status} lastMessageAt={lastMessageAt} />
       </header>
 
       {step === "join" ? (
@@ -63,8 +80,8 @@ export function JoinPage() {
           <p className="session-kicker">You&apos;re joining</p>
           <h1>{state?.sessionName ?? "Loading session…"}</h1>
           <p className="privacy-note">
-            Votes are tied to this session only. We don&apos;t ask for your name
-            or phone number.
+            We use a random anonymous ID on this device — no name, email,
+            location, or microphone. Votes and taps are shared only as totals.
           </p>
 
           <fieldset className="mood-field">
@@ -104,15 +121,11 @@ export function JoinPage() {
             </p>
           </div>
 
-          {feedbackLabel && (
-            <p
-              className={`feedback feedback-${voteFeedback}`}
-              role="status"
-              aria-live="polite"
-            >
-              {feedbackLabel}
-            </p>
-          )}
+          <div role="status" aria-live="polite">
+            {rejection && (
+              <p className="feedback feedback-rejected">Rejected: {rejection}</p>
+            )}
+          </div>
           {error && (
             <p className="feedback feedback-rejected" role="alert">
               {error}
@@ -120,7 +133,8 @@ export function JoinPage() {
           )}
           {(status === "disconnected" || status === "reconnecting") && (
             <p className="feedback feedback-warn" role="status">
-              Connection lost — votes will send when you&apos;re back online.
+              Connection lost — pending votes will send when you&apos;re back
+              online.
             </p>
           )}
 
@@ -133,24 +147,39 @@ export function JoinPage() {
                     {track.artist} · {track.votes} votes · {track.status}
                   </p>
                 </div>
-                <button
-                  type="button"
-                  className="btn primary compact"
-                  disabled={
-                    status !== "connected" || voteFeedback === "pending"
-                  }
-                  aria-busy={
-                    voteFeedback === "pending" && pendingTrack === track.id
-                  }
-                  onClick={() => onVote(track.id)}
-                >
-                  {voteFeedback === "pending" && pendingTrack === track.id
-                    ? "…"
-                    : "Vote"}
-                </button>
+                <VoteButton
+                  feedback={votes[track.id]?.feedback ?? "idle"}
+                  trackTitle={track.title}
+                  disabled={track.status === "playing"}
+                  onVote={() => submitVote(track.id)}
+                />
               </li>
             ))}
           </ul>
+
+          <section className="hype-panel" aria-labelledby="hype-title">
+            <h2 id="hype-title">
+              {state?.crowdQuest.label ?? "Crowd quest"}
+            </h2>
+            <div className="quest-bar">
+              <div
+                style={{
+                  width: `${state ? Math.min(100, (state.crowdQuest.progress / state.crowdQuest.goal) * 100) : 0}%`,
+                }}
+              />
+            </div>
+            <p className="track-meta">
+              {state?.crowdQuest.progress ?? 0} / {state?.crowdQuest.goal ?? 100}
+            </p>
+            <button
+              type="button"
+              className="btn hype wide"
+              onClick={onTap}
+              disabled={offline}
+            >
+              Hype tap 🔥 <span className="hype-count">({myTaps} from you)</span>
+            </button>
+          </section>
 
           <p className="stage-link">
             Watching on the big screen?{" "}
