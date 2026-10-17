@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { DEMO_TRACKS, MAX_CATALOG_TRACKS, type Track } from "@crowdpulse/shared";
 
-// The song list attendees vote on. Defaults to the built-in demo tracks; set CATALOG_FILE to a JSON
-// array of real songs (see apps/server/catalog.example.json). Spotify can't supply BPM/energy for
-// new apps anymore, so those are part of the file.
+// The song list attendees vote on. Defaults to the built-in demo tracks when Spotify isn't set up.
+// With SPOTIFY_CLIENT_ID (and no CATALOG_FILE), the session starts empty and songs are added via
+// Spotify search. CATALOG_FILE still loads a fixed JSON list. Spotify can't supply BPM/energy for
+// new apps anymore, so those are part of the file or filled with defaults on search.
 
 export type CatalogTrack = Omit<Track, "votes" | "status" | "boosts" | "round">;
 
@@ -55,7 +56,23 @@ export function parseCatalog(json: unknown): CatalogTrack[] {
   return parsed.data;
 }
 
-export function loadCatalog(file: string | undefined): CatalogTrack[] {
-  if (!file) return DEMO_TRACKS;
-  return parseCatalog(JSON.parse(readFileSync(file, "utf8")));
+export function loadCatalog(
+  file: string | undefined,
+  options: { emptyWhenSpotify?: boolean } = {},
+): CatalogTrack[] {
+  if (file) return parseCatalog(JSON.parse(readFileSync(file, "utf8")));
+  // Real Spotify mode: start empty so the crowd searches in real songs instead of fake demos.
+  if (options.emptyWhenSpotify) return [];
+  return DEMO_TRACKS;
+}
+
+/** Validates one track being added live from Spotify search (requires a URI). */
+export function parseLiveTrack(json: unknown): CatalogTrack {
+  const parsed = TrackSchema.safeParse(json);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(`${issue.path.length ? `${issue.path.join(".")}: ` : ""}${issue.message}`);
+  }
+  if (!parsed.data.spotifyUri) throw new Error("spotifyUri is required");
+  return parsed.data;
 }

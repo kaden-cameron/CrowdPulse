@@ -1017,7 +1017,8 @@ code {
 }
 
 .host-field input[type="password"],
-.host-field input[type="text"] {
+.host-field input[type="text"],
+.host-field input[type="search"] {
   font: 16px var(--font-ui);
   padding: 0.55rem 0.7rem;
   border: 1px solid var(--line);
@@ -1025,6 +1026,55 @@ code {
   background: var(--paper);
   box-shadow: inset 1px 1px 0 var(--shade);
   color: var(--ink);
+}
+
+.spotify-search {
+  margin: 0.6rem 0 1rem;
+}
+
+.spotify-results {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.spotify-result {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.5rem 0.6rem;
+  border-bottom: 1px dotted var(--ink);
+}
+
+.spotify-result:last-child {
+  border-bottom: 0;
+}
+
+.spotify-art {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border: 1px solid var(--ink);
+  flex-shrink: 0;
+  background: var(--panel);
+}
+
+.spotify-art.placeholder {
+  display: inline-block;
+}
+
+.spotify-result-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.spotify-result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  flex-shrink: 0;
 }
 
 input[type="range"] {

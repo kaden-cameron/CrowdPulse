@@ -13,6 +13,7 @@ import { createApp, type Sessions } from "./app.js";
 import { clientIp } from "./http.js";
 import { createAuth0HostAuth, createDevKeyHostAuth } from "./auth.js";
 import { loadCatalog } from "./catalog.js";
+import { createSpotifySearch } from "./spotify.js";
 import { Database } from "./db.js";
 import { DEFAULT_GEMINI_MODEL, GeminiClient } from "./gemini.js";
 import { RecommendationService } from "./recommendation.js";
@@ -77,12 +78,16 @@ if (db) {
 }
 const persist = db ? db.persist.bind(db) : undefined;
 
-// Song list: CATALOG_FILE (real songs, optionally with Spotify URIs) or the built-in demo tracks.
+// Song list: CATALOG_FILE, empty (Spotify search mode), or built-in demo tracks.
+const spotifyClientId = process.env.SPOTIFY_CLIENT_ID?.trim() || undefined;
+const spotifySearch = createSpotifySearch(spotifyClientId, process.env.SPOTIFY_CLIENT_SECRET);
 let catalog;
 try {
   // Relative paths are from the repo root, so the same value works for `npm run dev` and the service.
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
-  catalog = loadCatalog(process.env.CATALOG_FILE ? path.resolve(repoRoot, process.env.CATALOG_FILE) : undefined);
+  catalog = loadCatalog(process.env.CATALOG_FILE ? path.resolve(repoRoot, process.env.CATALOG_FILE) : undefined, {
+    emptyWhenSpotify: Boolean(spotifyClientId),
+  });
 } catch (err) {
   console.error(`CATALOG_FILE: ${(err as Error).message}`);
   process.exit(1);
@@ -144,7 +149,8 @@ const { app, handleEvent, isOriginAllowed } = createApp({
   trackEstimator,
   ipLimitPerMinute: Number(process.env.RATE_LIMIT_IP_PER_MIN || 6000),
   publicUrl: joinPublicUrl ? new URL(joinPublicUrl).origin : undefined,
-  spotifyClientId: process.env.SPOTIFY_CLIENT_ID?.trim() || undefined,
+  spotifyClientId,
+  spotifySearch,
   exposeLanIp: !isProd,
 });
 
@@ -285,8 +291,12 @@ server.listen(PORT, () => {
     sessions: [...sessions.keys()],
     persistence: db ? "tigerdata" : "memory",
     gemini: gemini ? gemini.model : "off",
-    catalog: process.env.CATALOG_FILE ? `${catalog.length} tracks from CATALOG_FILE` : "demo tracks",
-    spotify: process.env.SPOTIFY_CLIENT_ID ? "client id set" : "off",
+    catalog: process.env.CATALOG_FILE
+      ? `${catalog.length} tracks from CATALOG_FILE`
+      : spotifyClientId
+        ? "empty (Spotify search)"
+        : "demo tracks",
+    spotify: spotifyClientId ? (spotifySearch.configured ? "playback+search" : "playback only") : "off",
     boosts: boosts ? "devnet" : "off",
     hostAuth: hostAuth.mode,
     allowedOrigins: corsOrigins.length ? corsOrigins : "any (development)",

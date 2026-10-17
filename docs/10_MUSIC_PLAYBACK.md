@@ -53,18 +53,15 @@ The player page can play through **Spotify** instead of the laptop's own audio. 
 3. **Server env** (`.env` locally, `/etc/crowdpulse/crowdpulse.env` on Vultr):
    ```
    SPOTIFY_CLIENT_ID=<your app's Client ID>
-   CATALOG_FILE=apps/server/catalog.json
+   SPOTIFY_CLIENT_SECRET=<your app's Client Secret>   # server-only; enables phone search
    ```
-   Only the **Client ID** is used. Login uses PKCE, so the **Client Secret is not needed. Don't put it in any env file, the repo or the frontend.** The Client ID is public by design.
-4. **Real songs:** copy `apps/server/catalog.example.json` to `apps/server/catalog.json` and replace the demo entries with your songs:
-   ```json
-   { "id": "song_01", "title": "Song Title", "artist": "Artist", "genre": "house", "bpm": 124, "energy": 0.8,
-     "spotifyUri": "https://open.spotify.com/track/…" }
-   ```
-   - `spotifyUri` is optional. Paste a share link (Share → Copy Song Link) or a `spotify:track:` URI. Without it, the player searches Spotify for the title and artist and plays the top match.
-   - **`bpm` and `energy` (0–1) are yours to set,** because Spotify no longer gives new apps audio features. Gemini uses them.
-   - IDs must be unique, with 2–100 songs. The server refuses to start on a bad file and names the problem.
-   - Restart the server after changing it. Votes in the current run refer to the old IDs, so start a new run.
+   - **Client ID** is public (player login uses PKCE).
+   - **Client Secret** stays on the server. It powers `/api/spotify/search` so attendees can find real songs without logging into Spotify. Never put it in the frontend or commit it.
+   - Optional: `CATALOG_FILE=apps/server/catalog.json` for a fixed starter list. With Spotify configured and no catalog file, the session starts **empty** and songs come from search.
+4. **Real songs (live search):** on `/join/demo` or `/host/demo`, use **Search Spotify**, then **Add & vote** (attendee) or **Add** / **Play** (host). Tracks land in the live catalog with their `spotify:track:` URI so the player page can play them.
+   - Optional fixed list: copy `apps/server/catalog.example.json` to `apps/server/catalog.json` and set `CATALOG_FILE`.
+   - **`bpm` and `energy` (0–1)** for searched songs use defaults (Spotify no longer gives new apps audio features). Override them in a catalog file if you care for Gemini.
+   - Catalog max 100 songs. Restart after changing `CATALOG_FILE`; live search adds do not need a restart.
 
 ### Building the song list from the host page
 

@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import type { BoostConfig, Mood } from "@crowdpulse/shared";
 import { BoostPanel } from "../components/BoostPanel";
+import { SpotifySearch } from "../components/SpotifySearch";
 import { fetchBoostConfig } from "../lib/solana";
 import { MenuBar } from "../components/MenuBar";
 import { Window } from "../components/Window";
 import { VoteButton } from "../components/VoteButton";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useSessionAppearance } from "../lib/theme";
+import { getParticipantId } from "../lib/ws";
 
 const MOODS: { id: Mood; label: string; hint: string }[] = [
   { id: "chill", label: "Chill", hint: "Laid-back waves" },
@@ -160,7 +162,21 @@ export function JoinPage() {
             </p>
           )}
 
+          <SpotifySearch
+            sessionId={sessionCode}
+            participantId={getParticipantId()}
+            onAdded={(trackId) => submitVote(trackId)}
+          />
+
           <ul className="track-list panel">
+            {(state?.tracks ?? []).length === 0 && (
+              <li className="track-row">
+                <div>
+                  <p className="track-title">No songs yet</p>
+                  <p className="track-meta">Search Spotify above to add a real track to the queue.</p>
+                </div>
+              </li>
+            )}
             {(state?.tracks ?? []).map((track) => (
               <li key={track.id} className="track-row">
                 <div>

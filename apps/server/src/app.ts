@@ -22,12 +22,13 @@ import { RateLimiter } from "./rateLimit.js";
 import { authErrorHandler, createDevKeyHostAuth, type HostAuth } from "./auth.js";
 import { clientIp, originPolicy, pickLanIp, securityHeaders } from "./http.js";
 import type { Database } from "./db.js";
-import { spotifyTrackId, toSpotifyUri, type CatalogTrack } from "./catalog.js";
+import { parseLiveTrack, spotifyTrackId, toSpotifyUri, type CatalogTrack } from "./catalog.js";
 import type { RecommendationModel } from "./gemini.js";
 import type { RecommendationService } from "./recommendation.js";
 import { estimateSongs } from "./trackEstimator.js";
 import { httpStatusFor, type BoostVerifier } from "./solana.js";
 import type { EventOutcome, SessionStore } from "./session.js";
+import { catalogTrackFromSpotify, type SpotifySearchClient } from "./spotify.js";
 
 const sessionId = z.string().min(1).max(64);
 const eventId = z.string().uuid();
@@ -91,10 +92,12 @@ export interface AppOptions {
   /** The address attendees should open (production). Used for the stage QR code. */
   publicUrl?: string;
   /**
-   * Spotify app Client ID for the player page's Spotify login (PKCE). Public by design — the
-   * Client Secret is never needed or used.
+   * Spotify app Client ID for the player page's Spotify login (PKCE). Public by design.
+   * Song search uses Client Credentials separately (see spotifySearch).
    */
   spotifyClientId?: string;
+  /** Server-side Spotify search (Client Credentials). When set, phones can search real songs. */
+  spotifySearch?: SpotifySearchClient;
   /** Development only: share this machine's LAN IP so a stage opened at localhost gets a scannable QR. */
   exposeLanIp?: boolean;
   /** Per-IP backstop per minute. High on purpose: a whole venue can share one Wi-Fi IP. */
@@ -160,10 +163,11 @@ export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute 
 }
 
 export function createApp(options: AppOptions) {
-  const { sessions, corsOrigins, db, recommenders = new Map(), boosts, trackEstimator } = options;
+  const { sessions, corsOrigins, db, recommenders = new Map(), boosts, trackEstimator, spotifySearch } = options;
   const hostAuth = options.hostAuth ?? createDevKeyHostAuth(options.hostKey ?? "");
   if (!options.hostAuth && !options.hostKey) throw new Error("createApp needs hostAuth or hostKey");
   const intentLimiter = new RateLimiter(10, 60_000, options.now);
+  const trackAddLimiter = new RateLimiter(30, 60_000, options.now);
   const handleEvent = createEventHandler(options);
 
   const app = express();
@@ -190,7 +194,93 @@ export function createApp(options: AppOptions) {
       publicUrl: options.publicUrl ?? null,
       lanIp: options.exposeLanIp ? pickLanIp() : null,
       spotifyClientId: options.spotifyClientId ?? null,
+      spotifySearch: Boolean(spotifySearch?.configured),
     });
+  });
+
+  // Real-song search for the join/host UIs (Client Credentials). Playback still uses PKCE on /player.
+  app.get("/api/spotify/search", async (req, res) => {
+    if (!spotifySearch?.configured) {
+      res.status(503).json({
+        error:
+          "Spotify search isn't configured. Set SPOTIFY_CLIENT_SECRET on the server (Client ID is already used for playback).",
+      });
+      return;
+    }
+    const q = typeof req.query.q === "string" ? req.query.q : "";
+    if (q.trim().length < 2) {
+      res.status(400).json({ error: "Type at least 2 characters to search" });
+      return;
+    }
+    try {
+      const tracks = await spotifySearch.search(q, 8);
+      res.json({ tracks });
+    } catch (err) {
+      const status = (err as { status?: number }).status ?? 502;
+      res.status(status).json({ error: err instanceof Error ? err.message : "Spotify search failed" });
+    }
+  });
+
+  // Add a Spotify track to the live session catalog so attendees can vote on it.
+  const AddTrackSchema = z
+    .object({
+      id: z.string().max(64).optional(),
+      title: z.string().min(1).max(120),
+      artist: z.string().min(1).max(120),
+      spotifyUri: z.string().min(1).max(200),
+      genre: z.string().min(1).max(40).optional(),
+      bpm: z.number().min(40).max(220).optional(),
+      energy: z.number().min(0).max(1).optional(),
+      popularity: z.number().min(0).max(100).optional(),
+      participantId: participantId.optional(),
+    })
+    .strict();
+
+  app.post("/api/sessions/:id/tracks", async (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) {
+      res.status(404).json({ error: "Unknown session" });
+      return;
+    }
+    const parsed = AddTrackSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid track" });
+      return;
+    }
+    const ip = clientIp(req);
+    if (!trackAddLimiter.allow(parsed.data.participantId ?? ip)) {
+      res.status(429).json({ error: "Too many songs added — try again shortly" });
+      return;
+    }
+    try {
+      const uri = toSpotifyUri(parsed.data.spotifyUri) ?? parsed.data.spotifyUri;
+      const spotifyId =
+        parsed.data.id ??
+        uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1] ??
+        uri.replace(/[^A-Za-z0-9]/g, "").slice(0, 22);
+      const fromSpotify = catalogTrackFromSpotify({
+        id: spotifyId,
+        title: parsed.data.title,
+        artist: parsed.data.artist,
+        spotifyUri: uri,
+        popularity: parsed.data.popularity,
+      });
+      const track = parseLiveTrack({
+        ...fromSpotify,
+        ...(parsed.data.genre ? { genre: parsed.data.genre } : {}),
+        ...(parsed.data.bpm != null ? { bpm: parsed.data.bpm } : {}),
+        ...(parsed.data.energy != null ? { energy: parsed.data.energy } : {}),
+      });
+      const outcome = await session.addTrack(track);
+      if (outcome.status === "rejected") {
+        res.status(outcome.httpStatus).json({ error: outcome.reason });
+        return;
+      }
+      log({ kind: "track.added", sessionId: req.params.id, trackId: track.id, title: track.title });
+      res.status(201).json(outcome);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : "Invalid track" });
+    }
   });
 
   app.get("/api/health", async (_req, res) => {
@@ -451,7 +541,7 @@ export function createApp(options: AppOptions) {
       res.status(outcome.httpStatus).json({ error: outcome.reason });
       return;
     }
-    log({ kind: "host.advance", sessionId: req.params.id, outcome: "accepted" });
+    log({ kind: "host.advance", sessionId: req.params.id, outcome: "accepted", trackId: parsed.data.trackId ?? null });
     res.json(outcome);
   });
 

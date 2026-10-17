@@ -486,6 +486,32 @@ export class SessionStore {
     });
   }
 
+  /**
+   * Add a Spotify (or catalog) track to the live session so the crowd can vote on it.
+   * Idempotent when the same id is already present. Survives "Start new run" and restarts
+   * (persisted as track_add).
+   */
+  addTrack(track: CatalogTrack): Promise<EventOutcome> {
+    return this.exclusive(() => this.addTrackNow(track));
+  }
+
+  private async addTrackNow(track: CatalogTrack): Promise<EventOutcome> {
+    if (this.catalog.some((t) => t.id === track.id)) {
+      return { status: "accepted", state: this.getState() };
+    }
+    if (this.catalog.some((t) => t.spotifyUri && track.spotifyUri && t.spotifyUri === track.spotifyUri)) {
+      return { status: "accepted", state: this.getState() };
+    }
+    if (this.catalog.length >= 100) {
+      return this.reject("Song list is full (100 max) — start a new session or remove songs", 409);
+    }
+    const saved = await this.persistHostAction("track_add", { track });
+    if (saved) return saved;
+    this.catalog = [...this.catalog, track];
+    this.change({ type: "track.added", message: `Added ${track.title} by ${track.artist}` });
+    return { status: "accepted", state: this.getState() };
+  }
+
   /** Host action: play the top-voted track next, or a specific catalog track. */
   advance(trackId?: string): Promise<EventOutcome> {
     return this.exclusive(() => this.advanceNow(trackId));
@@ -651,6 +677,13 @@ export class SessionStore {
         case "track_advance":
           if (typeof meta.trackId === "string") this.applyAdvance(meta.trackId, at);
           break;
+        case "track_add": {
+          const t = meta.track as CatalogTrack | undefined;
+          if (t?.id && t.title && t.artist && !this.catalog.some((c) => c.id === t.id)) {
+            this.catalog = [...this.catalog, t];
+          }
+          break;
+        }
         default:
           continue;
       }
@@ -770,7 +803,15 @@ export class SessionStore {
 
   /** Returns a rejection if the host action could not be saved; otherwise null. */
   private async persistHostAction(
-    eventType: "host_visual" | "track_advance" | "session_reset" | "playback_mode" | "appearance" | "catalog_add" | "catalog_remove",
+    eventType:
+      | "host_visual"
+      | "track_advance"
+      | "track_add"
+      | "session_reset"
+      | "playback_mode"
+      | "appearance"
+      | "catalog_add"
+      | "catalog_remove",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {

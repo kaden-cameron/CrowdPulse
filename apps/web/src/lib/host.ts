@@ -30,8 +30,8 @@ export const hostSetVisual = (sessionId: string, auth: HostHeaders, visual: Visu
 export const hostReset = (sessionId: string, auth: HostHeaders) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/reset`, auth);
 
-export const hostAdvance = (sessionId: string, auth: HostHeaders) =>
-  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/advance`, auth);
+export const hostAdvance = (sessionId: string, auth: HostHeaders, trackId?: string) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/advance`, auth, trackId ? { trackId } : {});
 
 export type AiSnapshot = { ai: AiStatus; recommendations: Recommendation[] };
 

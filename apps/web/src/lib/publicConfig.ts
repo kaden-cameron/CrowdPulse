@@ -4,6 +4,8 @@ export interface PublicConfig {
   publicUrl: string | null;
   lanIp: string | null;
   spotifyClientId: string | null;
+  /** True when the server can search Spotify for everyone (Client Credentials). */
+  spotifySearch: boolean;
 }
 
 let cached: Promise<PublicConfig> | null = null;
@@ -22,7 +24,9 @@ export function fetchPublicConfig(): Promise<PublicConfig> {
 export function usePublicConfig(): PublicConfig | null {
   const [cfg, setCfg] = useState<PublicConfig | null>(null);
   useEffect(() => {
-    fetchPublicConfig().then(setCfg, () => setCfg({ publicUrl: null, lanIp: null, spotifyClientId: null }));
+    fetchPublicConfig().then(setCfg, () =>
+      setCfg({ publicUrl: null, lanIp: null, spotifyClientId: null, spotifySearch: false }),
+    );
   }, []);
   return cfg;
 }

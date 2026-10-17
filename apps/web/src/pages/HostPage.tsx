@@ -16,6 +16,7 @@ import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useSessionAppearance } from "../lib/theme";
 import { AppearanceCard } from "../components/AppearanceCard";
 import { LibraryCard } from "../components/LibraryCard";
+import { SpotifySearch } from "../components/SpotifySearch";
 import { hostAdvance, hostPlaybackMode, hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
 
 
@@ -108,6 +109,22 @@ export function HostPage() {
           error={metricsError}
           tracks={state?.tracks ?? []}
         />
+
+        <div className="host-block">
+          <h2>Add songs from Spotify</h2>
+          <p className="host-sub">
+            Search real tracks, add them for the crowd to vote on, or play one now on the player page.
+          </p>
+          <SpotifySearch
+            sessionId={sessionCode}
+            allowClientLogin
+            onPlayNow={async (trackId) => {
+              await run(`Playing ${trackId}`, async () =>
+                hostAdvance(sessionCode, await access.getHeaders(), trackId),
+              );
+            }}
+          />
+        </div>
 
         <PlaybackCard
           sessionCode={sessionCode}

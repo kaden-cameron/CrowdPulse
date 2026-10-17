@@ -21,6 +21,7 @@ export type PersistedEventType =
   | "tap"
   | "host_visual"
   | "track_advance"
+  | "track_add"
   | "energy_sample"
   | "ai_recommendation"
   | "ai_decision"
