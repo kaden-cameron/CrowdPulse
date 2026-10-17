@@ -1,3 +1,4 @@
+import { pickCover } from "@crowdpulse/shared";
 import type { PlayableTrack, PlayerAdapter, StartedInfo } from "./types";
 
 // Spotify player: this browser tab becomes a Spotify Connect device ("CrowdPulse") via the Web
@@ -14,6 +15,7 @@ interface SdkTrack {
   uri: string;
   duration_ms?: number;
   linked_from?: { uri: string | null };
+  album?: { images?: { url: string; width?: number | null }[] };
 }
 export interface SdkState {
   paused: boolean;
@@ -164,7 +166,12 @@ export class SpotifyPlayer implements PlayerAdapter {
       );
     }
     const state = await started;
-    return { durationMs: state.duration || state.track_window.current_track?.duration_ms || 0, source: "spotify" };
+    const cover = pickCover(state.track_window.current_track?.album?.images) ?? track.imageUrl;
+    return {
+      durationMs: state.duration || state.track_window.current_track?.duration_ms || 0,
+      source: "spotify",
+      ...(cover ? { imageUrl: cover } : {}),
+    };
   }
 
   /** The catalog's URI, or the top search hit for title + artist (cached). */

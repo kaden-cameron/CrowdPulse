@@ -1,13 +1,19 @@
-import { MAX_TRACKS_PER_ADD, type LibraryTrackInput } from "@crowdpulse/shared";
+import { MAX_TRACKS_PER_ADD, pickCover } from "@crowdpulse/shared";
 
 // Host-page Spotify reads: playlist import and song search (Web API, the host's own login).
 
 const API = "https://api.spotify.com/v1";
 
-export interface FoundTrack extends LibraryTrackInput {
+export interface FoundTrack {
+  title: string;
+  artist: string;
+  spotifyUri: string;
   durationMs: number;
   explicit: boolean;
+  /** Small thumbnail for result lists. */
   imageUrl: string | null;
+  /** ~300px album cover, saved with the song. */
+  coverUrl: string | null;
 }
 
 /** Playlist link, URI or bare id → playlist id. */
@@ -41,6 +47,7 @@ function toFound(t: SpotifyTrack | null | undefined): FoundTrack | null {
     durationMs: t.duration_ms ?? 0,
     explicit: Boolean(t.explicit),
     imageUrl: (images.find((i) => (i.width ?? 0) <= 100) ?? images.at(-1))?.url ?? null,
+    coverUrl: pickCover(images),
   };
 }
 

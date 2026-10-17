@@ -12,6 +12,7 @@ export interface PlayableTrack {
   energy: number;
   /** Used by the Spotify player; when missing it searches by title + artist. */
   spotifyUri?: string;
+  imageUrl?: string;
 }
 
 export type PlaybackSource = "file" | "generated" | "spotify";
@@ -21,6 +22,8 @@ export interface StartedInfo {
   source: PlaybackSource;
   /** Set when a file couldn't be played and the generated version was used instead. */
   note?: string;
+  /** Album cover of what's actually playing (Spotify reports it). */
+  imageUrl?: string;
 }
 
 export interface PlayerAdapter {

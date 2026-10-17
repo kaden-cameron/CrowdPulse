@@ -14,7 +14,7 @@ Use this to rehearse and run the 3-minute demo. Rehearse it **twice in a row, wi
 4. **Screens:**
    - **Projector:** `/stage/demo`. Check the QR code shows the public URL, not `localhost`.
    - **Laptop:** `/host/demo`, signed in as the host. Have a private window open on the same page for the security beat.
-   - **Speakers:** `/player/demo` on the laptop plugged into the PA. Sign in, press **Start audio**, and check the host page shows "Player online". Choose **Auto play** or **DJ picks**.
+   - **Speakers:** on the laptop plugged into the PA, use the host page's **Now playing** window and press **Start audio on this device**, or open `/player/demo` if the speakers are on a different laptop. Check that the window shows "Player online" or "This tab is the player". Choose **Auto play** or **DJ picks**.
    - **Terminal:** the TigerData SQL editor with `apps/server/sql/demo-queries.sql` loaded.
    - **Two phones**, one on cellular data, plus the short URL printed on paper.
    - **Devnet:** if you're showing Solana, Phantom set to devnet and funded, with Solana Explorer ready.

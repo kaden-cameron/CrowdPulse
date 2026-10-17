@@ -72,7 +72,7 @@ export function LibraryCard({
     const r = await hostAddToLibrary(
       sessionCode,
       await getHeaders(),
-      found.map(({ title, artist, spotifyUri }) => ({ title, artist, spotifyUri })),
+      found.map(({ title, artist, spotifyUri, coverUrl }) => ({ title, artist, spotifyUri, ...(coverUrl ? { imageUrl: coverUrl } : {}) })),
     );
     const how =
       r.estimatedBy === "gemini" ? " BPM/energy estimated by Gemini." : r.estimatedBy === "mixed" ? " Most BPM/energy estimated by Gemini." : "";

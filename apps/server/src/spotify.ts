@@ -2,6 +2,7 @@
 // Playback uses browser PKCE (Client ID only). Search uses Client Credentials so phones
 // can find real songs without every attendee logging into Spotify.
 
+import { pickCover, SPOTIFY_IMAGE_URL } from "@crowdpulse/shared";
 import { toSpotifyUri, type CatalogTrack } from "./catalog.js";
 
 const TOKEN_URL = "https://accounts.spotify.com/api/token";
@@ -15,12 +16,17 @@ export interface SpotifySearchHit {
   spotifyUri: string;
   durationMs: number;
   popularity: number;
+  /** Small thumbnail for result lists. */
   imageUrl: string | null;
+  /** ~300px album cover, stored with the song for the now-playing display. */
+  coverUrl: string | null;
 }
 
 export interface SpotifySearchClient {
   configured: boolean;
   search(query: string, limit?: number): Promise<SpotifySearchHit[]>;
+  /** ~300px album cover for a track id (cached; null if Spotify has none). */
+  cover(trackId: string): Promise<string | null>;
 }
 
 type TokenCache = { accessToken: string; expiresAt: number };
@@ -37,8 +43,13 @@ export function createSpotifySearch(clientId?: string, clientSecret?: string): S
           status: 503,
         });
       },
+      async cover() {
+        return null;
+      },
     };
   }
+
+  const covers = new Map<string, string | null>();
 
   let cache: TokenCache | null = null;
 
@@ -73,6 +84,21 @@ export function createSpotifySearch(clientId?: string, clientSecret?: string): S
 
   return {
     configured: true,
+    async cover(trackId: string): Promise<string | null> {
+      if (covers.has(trackId)) return covers.get(trackId)!;
+      const res = await fetch(`${API}/tracks/${encodeURIComponent(trackId)}`, {
+        headers: { authorization: `Bearer ${await accessToken()}` },
+      });
+      if (!res.ok) {
+        if (res.status === 404) covers.set(trackId, null);
+        throw Object.assign(new Error(`Spotify cover lookup failed (${res.status})`), { status: 502 });
+      }
+      const data = (await res.json().catch(() => ({}))) as SpotifyApiTrack;
+      const url = pickCover(data.album?.images);
+      if (covers.size >= 1000) covers.delete(covers.keys().next().value!);
+      covers.set(trackId, url);
+      return url;
+    },
     async search(query: string, limit = 8): Promise<SpotifySearchHit[]> {
       const q = query.trim().slice(0, 100);
       if (q.length < 2) return [];
@@ -99,6 +125,7 @@ export function createSpotifySearch(clientId?: string, clientSecret?: string): S
           durationMs: t.duration_ms ?? 0,
           popularity: t.popularity ?? 50,
           imageUrl: t.album?.images?.[t.album.images.length - 1]?.url ?? t.album?.images?.[0]?.url ?? null,
+          coverUrl: pickCover(t.album?.images),
         }));
     },
   };
@@ -111,7 +138,7 @@ interface SpotifyApiTrack {
   duration_ms?: number;
   popularity?: number;
   artists?: { name: string }[];
-  album?: { name?: string; images?: { url: string }[] };
+  album?: { name?: string; images?: { url: string; width?: number | null }[] };
 }
 
 /** Turns a Spotify search hit into a CrowdPulse catalog track (BPM/energy are ours to set). */
@@ -121,6 +148,7 @@ export function catalogTrackFromSpotify(hit: {
   artist: string;
   spotifyUri: string;
   popularity?: number;
+  imageUrl?: string;
 }): CatalogTrack {
   const uri = toSpotifyUri(hit.spotifyUri) ?? hit.spotifyUri;
   const popularity = Math.max(0, Math.min(100, hit.popularity ?? 50));
@@ -133,5 +161,6 @@ export function catalogTrackFromSpotify(hit: {
     bpm: 120,
     energy: Math.round((0.35 + (popularity / 100) * 0.55) * 100) / 100,
     spotifyUri: uri,
+    ...(hit.imageUrl && SPOTIFY_IMAGE_URL.test(hit.imageUrl) ? { imageUrl: hit.imageUrl } : {}),
   };
 }

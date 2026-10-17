@@ -10,7 +10,9 @@ votes · boosts · Gemini · host ──▶ server: nowPlaying + playback state 
 
 ## Running it
 
-1. On the laptop plugged into the speakers, open **`/player/demo`**. Sign in as host, then press **▶ Start audio on this device**. Browsers only allow sound after a click, so this step can't be skipped.
+1. On the laptop plugged into the speakers, open the host page (**`/host/demo`**). Its **Now playing** window is the player: sign in, then press **▶ Start audio on this device** under *Speakers*. Browsers only allow sound after a click, so this step can't be skipped.
+   - If the speakers are on a different laptop from the host, open **`/player/demo`** there instead. It shows the same Now playing window on its own. Only start audio on one device, or both will play.
+   - **Now playing** shows the album cover, the song, and a progress bar. Covers are saved when a song is added from Spotify. For songs added before that, the server looks the cover up on Spotify, which needs `SPOTIFY_CLIENT_SECRET`.
 2. On the host page, use the **Music playback** card:
    - **Auto play:** when a song ends, the top-voted track starts. If nothing has votes, it plays the least-recently-played track. Music never stops on its own.
    - **DJ picks:** when a song ends, nothing else starts until the host taps **Play next ▶** or approves a Gemini recommendation.

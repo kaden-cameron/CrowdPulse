@@ -1574,6 +1574,80 @@ input[type="range"] {
   font-size: 20px;
 }
 
+/* Now playing window (host page and /player): album cover beside the song. */
+.host-grid > .player-card {
+  grid-column: 1 / -1;
+}
+
+.now-playing {
+  display: grid;
+  grid-template-columns: clamp(140px, 24vw, 220px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  margin: 0.75rem 0 1rem;
+}
+
+.now-playing .cover {
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--gray);
+  box-shadow: var(--bevel);
+}
+
+.now-playing .cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
+.cover-blank {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  font-size: clamp(3rem, 8vw, 5rem);
+  color: var(--muted);
+}
+
+.now-meta {
+  min-width: 0;
+}
+
+.now-meta .player-title {
+  overflow-wrap: anywhere;
+}
+
+.speakers {
+  margin-top: 1.25rem;
+}
+
+.speaker-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: end;
+  justify-content: space-between;
+}
+
+.speaker-row .host-field {
+  flex: 1 1 220px;
+}
+
+@media (max-width: 520px) {
+  .now-playing {
+    grid-template-columns: 1fr;
+  }
+
+  .now-playing .cover {
+    width: min(240px, 100%);
+    justify-self: center;
+  }
+}
+
 /* ---------- Stage (projector) ---------- */
 .stage-page {
   min-height: 100dvh;

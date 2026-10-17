@@ -1,3 +1,4 @@
+import { pickCover } from "@crowdpulse/shared";
 import { spotifyAccessToken, spotifyConnected } from "./auth";
 
 export interface SpotifySearchHit {
@@ -9,6 +10,8 @@ export interface SpotifySearchHit {
   durationMs: number;
   popularity: number;
   imageUrl: string | null;
+  /** ~300px album cover, saved with the song for the now-playing display. */
+  coverUrl?: string | null;
 }
 
 export type SearchSource = "server" | "client";
@@ -57,7 +60,7 @@ export async function searchSpotifyTracks(
       duration_ms?: number;
       popularity?: number;
       artists?: { name: string }[];
-      album?: { name?: string; images?: { url: string }[] };
+      album?: { name?: string; images?: { url: string; width?: number | null }[] };
     }) => ({
       id: t.id,
       title: t.name,
@@ -67,6 +70,7 @@ export async function searchSpotifyTracks(
       durationMs: t.duration_ms ?? 0,
       popularity: t.popularity ?? 50,
       imageUrl: t.album?.images?.[t.album.images.length - 1]?.url ?? t.album?.images?.[0]?.url ?? null,
+      coverUrl: pickCover(t.album?.images),
     }));
   return { tracks, source: "client" };
 }
@@ -85,6 +89,7 @@ export async function addSessionTrack(
       artist: hit.artist,
       spotifyUri: hit.spotifyUri,
       popularity: hit.popularity,
+      ...(hit.coverUrl ? { imageUrl: hit.coverUrl } : {}),
       ...(participantId ? { participantId } : {}),
     }),
   });

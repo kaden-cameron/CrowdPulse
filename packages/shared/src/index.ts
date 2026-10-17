@@ -32,6 +32,8 @@ export interface Track {
   spotifyUri?: string;
   /** Where genre/BPM/energy came from: the catalog file, a Gemini estimate, or neutral defaults. */
   metaSource?: "catalog" | "gemini" | "default";
+  /** Album cover (~300px, Spotify's image CDN only). */
+  imageUrl?: string;
   votes: number;
   /** Verified Solana devnet boosts currently counting for this track (capped). */
   boosts: number;
@@ -296,6 +298,17 @@ export interface LibraryTrackInput {
   title: string;
   artist: string;
   spotifyUri: string;
+  imageUrl?: string;
+}
+
+/** Album covers are only accepted from Spotify's image CDN (no arbitrary URLs on the big screen). */
+export const SPOTIFY_IMAGE_URL = /^https:\/\/i\.scdn\.co\/image\/[A-Za-z0-9]{1,64}$/;
+
+/** From a Spotify album's images (largest first): the ~300px one, good for a cover display. */
+export function pickCover(images: { url: string; width?: number | null }[] | undefined): string | null {
+  if (!images?.length) return null;
+  const url = (images.find((i) => (i.width ?? 0) > 0 && (i.width ?? 0) <= 320) ?? images[0]).url;
+  return SPOTIFY_IMAGE_URL.test(url) ? url : null;
 }
 
 export interface LibraryAddResult {

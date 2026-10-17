@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { DEMO_TRACKS, MAX_CATALOG_TRACKS, type Track } from "@crowdpulse/shared";
+import { DEMO_TRACKS, MAX_CATALOG_TRACKS, SPOTIFY_IMAGE_URL, type Track } from "@crowdpulse/shared";
 
 // The song list attendees vote on. Defaults to the built-in demo tracks when Spotify isn't set up.
 // With SPOTIFY_CLIENT_ID (and no CATALOG_FILE), the session starts empty and songs are added via
@@ -24,6 +24,7 @@ const TrackSchema = z
         z.string().regex(/^spotify:track:[A-Za-z0-9]{22}$/, "spotifyUri must be spotify:track:<id> or an open.spotify.com/track link"),
       )
       .optional(),
+    imageUrl: z.string().regex(SPOTIFY_IMAGE_URL, "imageUrl must be a Spotify album image").optional(),
   })
   .strict();
 

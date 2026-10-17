@@ -5,6 +5,7 @@ import {
   APPEARANCE_PRESETS,
   HOST_TARGETS,
   MAX_TRACKS_PER_ADD,
+  SPOTIFY_IMAGE_URL,
   PLAYBACK_MODES,
   MAX_TAPS_PER_BATCH,
   MOODS,
@@ -221,6 +222,26 @@ export function createApp(options: AppOptions) {
     }
   });
 
+  // Album cover for a song already in a session's library (songs added before covers were saved).
+  // Only library songs, so this can't be used as an open Spotify proxy.
+  app.get("/api/spotify/cover/:trackId", async (req, res) => {
+    const id = req.params.trackId;
+    const uri = `spotify:track:${id}`;
+    if (!/^[A-Za-z0-9]{22}$/.test(id) || ![...sessions.values()].some((s) => s.catalogTracks().some((t) => t.spotifyUri === uri))) {
+      res.status(404).json({ error: "Not a song in this session" });
+      return;
+    }
+    if (!spotifySearch?.configured) {
+      res.json({ imageUrl: null });
+      return;
+    }
+    try {
+      res.set("cache-control", "public, max-age=86400").json({ imageUrl: await spotifySearch.cover(id) });
+    } catch (err) {
+      res.status(502).json({ error: err instanceof Error ? err.message : "Cover lookup failed" });
+    }
+  });
+
   // Add a Spotify track to the live session catalog so attendees can vote on it.
   const AddTrackSchema = z
     .object({
@@ -232,6 +253,7 @@ export function createApp(options: AppOptions) {
       bpm: z.number().min(40).max(220).optional(),
       energy: z.number().min(0).max(1).optional(),
       popularity: z.number().min(0).max(100).optional(),
+      imageUrl: z.string().regex(SPOTIFY_IMAGE_URL).optional(),
       participantId: participantId.optional(),
     })
     .strict();
@@ -264,6 +286,7 @@ export function createApp(options: AppOptions) {
         artist: parsed.data.artist,
         spotifyUri: uri,
         popularity: parsed.data.popularity,
+        imageUrl: parsed.data.imageUrl,
       });
       const track = parseLiveTrack({
         ...fromSpotify,
@@ -402,6 +425,7 @@ export function createApp(options: AppOptions) {
               title: z.string().trim().min(1).max(120),
               artist: z.string().trim().min(1).max(120),
               spotifyUri: z.string().max(120),
+              imageUrl: z.string().regex(SPOTIFY_IMAGE_URL).optional(),
             })
             .strict(),
         )
@@ -440,6 +464,7 @@ export function createApp(options: AppOptions) {
       title: s.title,
       artist: s.artist,
       spotifyUri: s.spotifyUri,
+      ...(s.imageUrl ? { imageUrl: s.imageUrl } : {}),
       genre: meta[i].genre,
       bpm: meta[i].bpm,
       energy: meta[i].energy,

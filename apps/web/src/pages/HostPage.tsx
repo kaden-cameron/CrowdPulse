@@ -17,7 +17,8 @@ import { useSessionAppearance } from "../lib/theme";
 import { AppearanceCard } from "../components/AppearanceCard";
 import { LibraryCard } from "../components/LibraryCard";
 import { SpotifySearch } from "../components/SpotifySearch";
-import { hostAdvance, hostPlaybackMode, hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
+import { hostAdvance, hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
+import { PlayerCard } from "../components/PlayerCard";
 
 
 export function HostPage() {
@@ -104,6 +105,14 @@ export function HostPage() {
           </div>
         </div>
 
+        <PlayerCard
+          sessionCode={sessionCode}
+          state={state}
+          ready={access.ready}
+          getHeaders={access.getHeaders}
+          onState={applyState}
+        />
+
         <AnalyticsPanel
           metrics={metrics}
           error={metricsError}
@@ -113,7 +122,7 @@ export function HostPage() {
         <div className="host-block">
           <h2>Add songs from Spotify</h2>
           <p className="host-sub">
-            Search real tracks, add them for the crowd to vote on, or play one now on the player page.
+            Search real tracks, add them for the crowd to vote on, or play one now.
           </p>
           <SpotifySearch
             sessionId={sessionCode}
@@ -125,21 +134,6 @@ export function HostPage() {
             }}
           />
         </div>
-
-        <PlaybackCard
-          sessionCode={sessionCode}
-          state={state}
-          busy={busy}
-          ready={access.ready}
-          onMode={(mode) =>
-            run(mode === "auto" ? "Auto play on" : "DJ picks on", async () =>
-              hostPlaybackMode(sessionCode, await access.getHeaders(), mode),
-            )
-          }
-          onPlayNext={() =>
-            run("Playing the top-voted track", async () => hostAdvance(sessionCode, await access.getHeaders()))
-          }
-        />
 
         <LibraryCard
           sessionCode={sessionCode}
@@ -350,81 +344,6 @@ export function HostSignIn() {
         </button>
       )}
       {access.error && <p className="feedback feedback-rejected">{access.error}</p>}
-    </div>
-  );
-}
-
-function PlaybackCard({
-  sessionCode,
-  state,
-  busy,
-  ready,
-  onMode,
-  onPlayNext,
-}: {
-  sessionCode: string;
-  state: SessionState | null;
-  busy: boolean;
-  ready: boolean;
-  onMode: (mode: "auto" | "dj") => void;
-  onPlayNext: () => void;
-}) {
-  const pb = state?.playback;
-  const statusText: Record<string, string> = {
-    idle: "Nothing chosen yet",
-    loading: "Starting on the player…",
-    playing: "Playing",
-    ended: "Finished — pick the next song",
-    error: "Couldn't play",
-  };
-  return (
-    <div className="host-block">
-      <div className="analytics-head">
-        <h2>Music playback</h2>
-        <span className={`player-light ${pb?.playerOnline ? "on" : "off"}`}>
-          {pb?.playerOnline ? "● Player online" : "○ Player offline"}
-        </span>
-      </div>
-      {!pb?.playerOnline && (
-        <p className="host-sub">
-          Open{" "}
-          <Link to={`/player/${sessionCode}`} target="_blank">
-            /player/{sessionCode}
-          </Link>{" "}
-          on the laptop connected to the speakers and press Start audio.
-        </p>
-      )}
-      <div className="target-row two">
-        {(["auto", "dj"] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            className={`mood-chip ${pb?.mode === m ? "selected" : ""}`}
-            aria-pressed={pb?.mode === m}
-            disabled={busy || !ready}
-            onClick={() => onMode(m)}
-          >
-            <span className="mood-label">{m === "auto" ? "Auto play" : "DJ picks"}</span>
-            <span className="mood-hint">
-              {m === "auto" ? "Next song starts when one ends" : "Host starts every song"}
-            </span>
-          </button>
-        ))}
-      </div>
-      <p className="host-sub">
-        {state?.nowPlaying ? (
-          <>
-            <strong>{state.nowPlaying.title}</strong> — {statusText[pb?.status ?? "idle"]}
-            {pb?.source && pb.status === "playing" && ` (${pb.source === "file" ? "audio file" : "generated demo track"})`}
-          </>
-        ) : (
-          "Nothing playing yet."
-        )}
-      </p>
-      {pb?.status === "error" && pb.message && <p className="feedback feedback-rejected">{pb.message}</p>}
-      <button type="button" className="btn primary" disabled={busy || !ready} onClick={onPlayNext}>
-        Play next ▶
-      </button>
     </div>
   );
 }
