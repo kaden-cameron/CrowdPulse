@@ -4,11 +4,14 @@
 set -euo pipefail
 APP=/opt/crowdpulse
 cd "$APP"
+# Root runs this script; the tree is owned by crowdpulse — allow git without "dubious ownership".
+git config --global --add safe.directory "$APP" 2>/dev/null || true
+sudo -u crowdpulse git config --global --add safe.directory "$APP" 2>/dev/null || true
 
 echo "→ pulling latest code"
 sudo -u crowdpulse git fetch --quiet origin
 sudo -u crowdpulse git reset --hard --quiet origin/main
-echo "  now at $(git log --oneline -1)"
+echo "  now at $(sudo -u crowdpulse git log --oneline -1)"
 
 echo "→ installing dependencies"
 sudo -u crowdpulse npm ci --no-audit --no-fund --loglevel=error
