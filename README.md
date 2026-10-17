@@ -54,6 +54,23 @@ On startup the server creates the schema if it's missing: the `crowd_events` hyp
 - **Tests:** `npm test` runs the TigerData integration suite (TD-01 to 06, TD-08, restart replay) against `DATABASE_URL` using throwaway sessions. It is skipped when no database is configured.
 - Without `DATABASE_URL` the server runs in memory, `/api/health` reports `"database":"off"`, and the dashboard shows **Persistence off**.
 
+## Gemini AI DJ (Doc 04)
+
+Add `GEMINI_API_KEY` to the repo-root `.env`. The model defaults to `gemini-3.5-flash-lite`; set `GEMINI_MODEL` to change it. The key is used only on the server.
+
+How it works: **Gemini proposes, the server validates, the host decides.**
+
+- On `/host/demo` → **Gemini AI DJ**, the host picks a target (raise energy, hold steady or cool down) and asks for a recommendation.
+- The server sends a compact summary with no participant IDs: energy and its trend, mood counts, votes, eligible tracks with genre/BPM/energy, the current visuals, and recent recommendations.
+- The request uses `generateContent` with a JSON response schema. Track IDs and themes are limited to enums.
+- The server checks the response again with strict zod validation. Unknown fields are rejected. The track must be eligible right now and the theme must be allowlisted. Out-of-range numbers are **rejected, not clamped**. The reason must be plain text with no links or markup.
+- **Approve** applies the theme and intensity and plays the track. **Reject** changes nothing. Both decisions are recorded.
+- Every call is logged (`kind: "ai.call"`) with the model, `responseId`, `modelVersion`, latency and token counts. When TigerData is on, the input, raw response, validation result and decision are also stored as `ai_recommendation` / `ai_decision` rows.
+- The card shows the majority-vote **baseline** next to Gemini's pick.
+- If Gemini fails, times out or isn't configured, the card says so, and voting and the stage keep working.
+
+**Evaluation:** `npm run eval --workspace=@crowdpulse/server -- 3` runs 6 fixed scenarios × 3 through both the baseline and Gemini. It writes `evidence/gemini/baseline-results.csv` and `evaluation-summary.txt`: preference fit (a proxy), action validity, availability, and median latency (p95 once n ≥ 20). It doesn't measure the change in engagement, which needs a live crowd.
+
 ## Architecture (current)
 
 ```

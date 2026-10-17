@@ -91,6 +91,7 @@ export class SessionStore {
   private updatedAt: number;
   private latestEvent: LatestEvent | null;
   private listeners = new Set<() => void>();
+  private energyHistory: { at: number; score: number }[] = [];
   private now: () => number;
   private persist: Persist;
 
@@ -237,13 +238,21 @@ export class SessionStore {
     return { status: "accepted", state: this.getState() };
   }
 
-  /** Host action: play the top-voted track next. */
-  async advance(): Promise<EventOutcome> {
-    const [next] = this.buildQueue();
-    if (!next) return this.reject("Queue is empty — no votes yet", 409);
-    const saved = await this.persistHostAction("track_advance", { trackId: next.trackId });
+  /** Host action: play the top-voted track next, or a specific catalog track. */
+  async advance(trackId?: string): Promise<EventOutcome> {
+    let nextId: string;
+    if (trackId) {
+      if (!this.catalog.some((t) => t.id === trackId)) return this.reject("Unknown track ID", 400);
+      if (this.nowPlaying?.id === trackId) return this.reject("Track is already playing", 409);
+      nextId = trackId;
+    } else {
+      const [next] = this.buildQueue();
+      if (!next) return this.reject("Queue is empty — no votes yet", 409);
+      nextId = next.trackId;
+    }
+    const saved = await this.persistHostAction("track_advance", { trackId: nextId });
     if (saved) return saved;
-    const title = this.applyAdvance(next.trackId, this.now());
+    const title = this.applyAdvance(nextId, this.now());
     this.change({ type: "track.playing", message: `Now playing ${title}` });
     return { status: "accepted", state: this.getState() };
   }
@@ -252,9 +261,35 @@ export class SessionStore {
   tick(): boolean {
     const before = this.energyScore;
     this.recomputeEnergy();
+    const now = this.now();
+    this.energyHistory.push({ at: now, score: this.energyScore });
+    this.energyHistory = this.energyHistory.filter((e) => now - e.at <= 120_000);
     if (this.energyScore === before) return false;
     this.bump();
     return true;
+  }
+
+  catalogTracks(): readonly CatalogTrack[] {
+    return this.catalog;
+  }
+
+  /** Change in energy score over roughly the last `windowMs` (0 if no history yet). */
+  energyChange(windowMs = 30_000): number {
+    const cutoff = this.now() - windowMs;
+    const past = this.energyHistory.find((e) => e.at >= cutoff);
+    return past ? this.energyScore - past.score : 0;
+  }
+
+  /** Audit-only record (e.g. AI recommendations and decisions). Never replayed into state. */
+  async recordAudit(eventType: "ai_recommendation" | "ai_decision", metadata: Record<string, unknown>): Promise<void> {
+    await this.persist({
+      eventId: randomUUID(),
+      sessionId: this.sessionId,
+      participantId: null,
+      eventType,
+      value: null,
+      metadata,
+    });
   }
 
   /** Writes the current energy score as a metrics-only sample (not replayed). */

@@ -24,6 +24,10 @@ export interface Track {
   id: string;
   title: string;
   artist: string;
+  genre: string;
+  bpm: number;
+  /** Catalog energy, 0–1. */
+  energy: number;
   votes: number;
   status: "open" | "queued" | "playing";
 }
@@ -141,6 +145,50 @@ export const MOODS: Mood[] = ["chill", "hyped", "focused", "wild"];
 
 export const MAX_TAPS_PER_BATCH = 30;
 
+/** What the host is aiming for; sent to Gemini as context. */
+export type HostTarget = "raise_energy" | "hold_steady" | "cool_down";
+export const HOST_TARGETS: HostTarget[] = ["raise_energy", "hold_steady", "cool_down"];
+
+/** Server-validated AI DJ proposal (Doc 04 §3). */
+export interface RecommendationProposal {
+  reason: string;
+  target_energy: number;
+  recommended_track_id: string;
+  visual_theme: VisualTheme;
+  intensity: number;
+  confidence: number;
+}
+
+export interface Recommendation {
+  id: string;
+  sessionId: string;
+  createdAt: string;
+  status: "pending" | "approved" | "rejected" | "invalid" | "failed";
+  hostTarget: HostTarget;
+  /** The compact summary actually sent to the model. */
+  input: unknown;
+  model: string;
+  /** From the Gemini response, for proof the call was real. */
+  responseId: string | null;
+  modelVersion: string | null;
+  latencyMs: number | null;
+  /** Raw model text (truncated), kept for audit. */
+  rawResponse: string | null;
+  proposal: RecommendationProposal | null;
+  /** Why the server rejected the proposal or the call failed. */
+  validationErrors: string[];
+  /** Majority-vote baseline under the same state, for comparison. */
+  baseline: { trackId: string | null; reason: string };
+  decidedAt: string | null;
+}
+
+export interface AiStatus {
+  configured: boolean;
+  model: string | null;
+  lastError: string | null;
+  lastSuccessAt: string | null;
+}
+
 /** Response of GET /api/sessions/:id/metrics. */
 export type SessionMetrics =
   | { persistence: "memory" }
@@ -167,11 +215,11 @@ export const DEMO_SESSION_ID = "demo";
 export const DEMO_SESSION_NAME = "SwampHacks Main Stage";
 
 export const DEMO_TRACKS: Omit<Track, "votes" | "status">[] = [
-  { id: "track_01", title: "Gator Glow", artist: "Orange & Blue" },
-  { id: "track_02", title: "Midnight Cypress", artist: "Lake Beat" },
-  { id: "track_03", title: "Hackathon Heat", artist: "Pulse Lab" },
-  { id: "track_04", title: "Spanish Moss", artist: "Night Circuit" },
-  { id: "track_05", title: "Voltage Swamp", artist: "Neon Bayou" },
-  { id: "track_06", title: "Crowd Current", artist: "Signal Kids" },
-  { id: "track_07", title: "Stage Lightning", artist: "DJ Hydra" },
+  { id: "track_01", title: "Gator Glow", artist: "Orange & Blue", genre: "house", bpm: 122, energy: 0.6 },
+  { id: "track_02", title: "Midnight Cypress", artist: "Lake Beat", genre: "lofi", bpm: 84, energy: 0.2 },
+  { id: "track_03", title: "Hackathon Heat", artist: "Pulse Lab", genre: "techno", bpm: 130, energy: 0.85 },
+  { id: "track_04", title: "Spanish Moss", artist: "Night Circuit", genre: "downtempo", bpm: 96, energy: 0.35 },
+  { id: "track_05", title: "Voltage Swamp", artist: "Neon Bayou", genre: "electro", bpm: 126, energy: 0.75 },
+  { id: "track_06", title: "Crowd Current", artist: "Signal Kids", genre: "synthwave", bpm: 110, energy: 0.5 },
+  { id: "track_07", title: "Stage Lightning", artist: "DJ Hydra", genre: "drum & bass", bpm: 174, energy: 0.95 },
 ];

@@ -11,6 +11,8 @@ import {
 } from "@crowdpulse/shared";
 import { createApp, type Sessions } from "./app.js";
 import { Database } from "./db.js";
+import { DEFAULT_GEMINI_MODEL, GeminiClient } from "./gemini.js";
+import { RecommendationService } from "./recommendation.js";
 import { log } from "./log.js";
 import { SessionStore } from "./session.js";
 
@@ -60,7 +62,13 @@ if (db) {
 }
 const socketsBySession = new Map<string, Set<WebSocket>>();
 
-const { app, handleEvent } = createApp({ sessions, hostKey, corsOrigins, db });
+// Gemini is optional: without a key the host sees "AI unavailable" and everything else works.
+const gemini = process.env.GEMINI_API_KEY
+  ? new GeminiClient(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL)
+  : undefined;
+const recommenders = new Map([...sessions].map(([id, s]) => [id, new RecommendationService(s, gemini)]));
+
+const { app, handleEvent } = createApp({ sessions, hostKey, corsOrigins, db, recommenders });
 
 // In production, serve the built web app and fall back to index.html for SPA routes.
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
@@ -165,6 +173,7 @@ server.listen(PORT, () => {
     port: PORT,
     sessions: [...sessions.keys()],
     persistence: db ? "tigerdata" : "memory",
+    gemini: gemini ? gemini.model : "off",
     servingWeb: existsSync(webDist),
   });
 });

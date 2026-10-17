@@ -21,7 +21,9 @@ export type PersistedEventType =
   | "tap"
   | "host_visual"
   | "track_advance"
-  | "energy_sample";
+  | "energy_sample"
+  | "ai_recommendation"
+  | "ai_decision";
 
 export type PersistResult = "stored" | "duplicate";
 
@@ -73,7 +75,7 @@ const MIGRATIONS: { name: string; sql: string; optional?: boolean }[] = [
       SELECT
         session_id,
         time_bucket(INTERVAL '5 seconds', time) AS bucket,
-        COUNT(*) FILTER (WHERE event_type <> 'energy_sample') AS event_count,
+        COUNT(*) FILTER (WHERE event_type IN ('vote', 'mood', 'tap')) AS event_count,
         COUNT(*) FILTER (WHERE event_type = 'vote') AS votes,
         COALESCE(SUM(value) FILTER (WHERE event_type = 'tap'), 0) AS taps,
         AVG(value) FILTER (WHERE event_type = 'energy_sample') AS avg_energy
@@ -179,7 +181,7 @@ export class Database {
     const { rows } = await this.pool.query(
       `SELECT time, event_id, session_id, participant_id, event_type, value, metadata
        FROM crowd_events
-       WHERE session_id = $1 AND event_type <> 'energy_sample'
+       WHERE session_id = $1 AND event_type NOT IN ('energy_sample', 'ai_recommendation', 'ai_decision')
        ORDER BY time, event_id`,
       [sessionId],
     );
@@ -205,7 +207,7 @@ export class Database {
            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '10 seconds') AS last10s,
            COUNT(*) AS total
          FROM crowd_events
-         WHERE session_id = $1 AND event_type <> 'energy_sample'`,
+         WHERE session_id = $1 AND event_type IN ('vote', 'mood', 'tap')`,
         [sessionId],
       ),
       this.pool.query(
@@ -232,7 +234,7 @@ export class Database {
     const raw = await this.pool.query(
       `SELECT
          time_bucket(INTERVAL '5 seconds', time) AS bucket,
-         COUNT(*) FILTER (WHERE event_type <> 'energy_sample') AS event_count,
+         COUNT(*) FILTER (WHERE event_type IN ('vote', 'mood', 'tap')) AS event_count,
          COUNT(*) FILTER (WHERE event_type = 'vote') AS votes,
          COALESCE(SUM(value) FILTER (WHERE event_type = 'tap'), 0) AS taps,
          AVG(value) FILTER (WHERE event_type = 'energy_sample') AS avg_energy

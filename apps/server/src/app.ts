@@ -3,16 +3,19 @@ import express, { type RequestHandler } from "express";
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
+  HOST_TARGETS,
   MAX_TAPS_PER_BATCH,
   MOODS,
   THEME_ALLOWLIST,
   type EventResultMessage,
+  type HostTarget,
   type VisualTheme,
   type Mood,
 } from "@crowdpulse/shared";
 import { log } from "./log.js";
 import { RateLimiter } from "./rateLimit.js";
 import type { Database } from "./db.js";
+import type { RecommendationService } from "./recommendation.js";
 import type { EventOutcome, SessionStore } from "./session.js";
 
 const sessionId = z.string().min(1).max(64);
@@ -64,6 +67,8 @@ export interface AppOptions {
   hostKey: string;
   /** TigerData connection; omitted means in-memory only (no metrics). */
   db?: Database;
+  /** Gemini recommendation service per session. */
+  recommenders?: Map<string, RecommendationService>;
   corsOrigins?: string[];
   now?: () => number;
 }
@@ -125,7 +130,7 @@ export function createEventHandler({ sessions, now = Date.now }: AppOptions) {
 }
 
 export function createApp(options: AppOptions) {
-  const { sessions, hostKey, corsOrigins, db } = options;
+  const { sessions, hostKey, corsOrigins, db, recommenders = new Map() } = options;
   const handleEvent = createEventHandler(options);
 
   const app = express();
@@ -137,7 +142,9 @@ export function createApp(options: AppOptions) {
   app.get("/api/health", async (_req, res) => {
     // Status only — never connection strings or other configuration.
     const database = db ? ((await db.ping()) ? "up" : "down") : "off";
-    res.json({ ok: true, service: "crowdpulse-server", database, time: new Date().toISOString() });
+    const anyRec = recommenders.values().next().value as RecommendationService | undefined;
+    const gemini = anyRec?.status().configured ? "configured" : "off";
+    res.json({ ok: true, service: "crowdpulse-server", database, gemini, time: new Date().toISOString() });
   });
 
   app.get("/api/sessions/:id/metrics", async (req, res) => {
@@ -230,6 +237,52 @@ export function createApp(options: AppOptions) {
     log({ kind: "host.advance", sessionId: req.params.id, outcome: "accepted" });
     res.json(outcome);
   });
+
+  // --- AI DJ (Doc 04): Gemini proposes, server validates, host approves/rejects ---
+  const TargetSchema = z.object({ hostTarget: z.enum(HOST_TARGETS as [HostTarget, ...HostTarget[]]) }).strict();
+
+  app.get("/api/host/sessions/:id/recommendations", requireHost, hostSession, (req, res) => {
+    const svc = recommenders.get(req.params.id);
+    res.json({
+      ai: svc?.status() ?? { configured: false, model: null, lastError: null, lastSuccessAt: null },
+      recommendations: svc?.list() ?? [],
+    });
+  });
+
+  app.post("/api/host/sessions/:id/recommendations", requireHost, hostSession, async (req, res) => {
+    const svc = recommenders.get(req.params.id);
+    const parsed = TargetSchema.safeParse(req.body ?? {});
+    if (!svc || !parsed.success) {
+      res.status(400).json({ error: "Invalid recommendation request" });
+      return;
+    }
+    const result = await svc.recommend(parsed.data.hostTarget);
+    if ("busy" in result) {
+      res.status(409).json({ error: "A recommendation is already being generated" });
+      return;
+    }
+    res.status(201).json({ ai: svc.status(), recommendation: result.recommendation });
+  });
+
+  app.post(
+    "/api/host/sessions/:id/recommendations/:recId/:decision",
+    requireHost,
+    hostSession,
+    async (req: express.Request<{ id: string; recId: string; decision: string }>, res) => {
+      const svc = recommenders.get(req.params.id);
+      const { recId, decision } = req.params;
+      if (!svc || (decision !== "approve" && decision !== "reject")) {
+        res.status(404).json({ error: "Not found" });
+        return;
+      }
+      const result = decision === "approve" ? await svc.approve(recId) : await svc.reject(recId);
+      if (!result.ok) {
+        res.status(result.status).json({ error: result.error });
+        return;
+      }
+      res.json(result);
+    },
+  );
 
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });

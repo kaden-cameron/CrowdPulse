@@ -6,6 +6,7 @@ import {
   type SessionState,
   type VisualTheme,
 } from "@crowdpulse/shared";
+import { AiPanel } from "../components/AiPanel";
 import { AnalyticsPanel } from "../components/AnalyticsPanel";
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { useMetrics } from "../hooks/useMetrics";
@@ -198,22 +199,12 @@ export function HostPage() {
           </div>
         </div>
 
-        <div className="host-block ai-card" tabIndex={0}>
-          <h2>Gemini recommendation</h2>
-          <p className="ai-status">Unavailable — wire-up in stage 04</p>
-          <p>
-            Voting and stage visuals keep working without AI. Approve/reject
-            controls will appear when a real recommendation is available.
-          </p>
-          <div className="cta-row">
-            <button type="button" className="btn primary" disabled>
-              Approve
-            </button>
-            <button type="button" className="btn ghost" disabled>
-              Reject
-            </button>
-          </div>
-        </div>
+        <AiPanel
+          sessionId={sessionCode}
+          hostKey={hostKey}
+          tracks={state?.tracks ?? []}
+          onState={applyState}
+        />
 
         <div className="host-block">
           <h2>Crowd mood</h2>
