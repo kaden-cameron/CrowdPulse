@@ -13,9 +13,9 @@ import type {
 
 // Host API calls. `auth` comes from HostAccess: an Auth0 bearer token, or the local dev key.
 type HostHeaders = Record<string, string>;
-async function hostPost(path: string, auth: HostHeaders, body: object = {}) {
+async function hostPost(path: string, auth: HostHeaders, body: object = {}, method: "POST" | "PUT" | "DELETE" = "POST") {
   const res = await fetch(path, {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json", ...auth },
     body: JSON.stringify(body),
   });
@@ -32,6 +32,19 @@ export const hostReset = (sessionId: string, auth: HostHeaders) =>
 
 export const hostAdvance = (sessionId: string, auth: HostHeaders, trackId?: string) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/advance`, auth, trackId ? { trackId } : {});
+
+/** Skip / play next: the host queue, then votes, then the least recently played song. */
+export const hostSkip = (sessionId: string, auth: HostHeaders) => hostAdvance(sessionId, auth);
+
+/** The host's own queue, in play order (plays before voted songs). */
+export const hostSetQueue = (sessionId: string, auth: HostHeaders, trackIds: string[]) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/queue`, auth, { trackIds }, "PUT");
+
+export const hostClearLibrary = (sessionId: string, auth: HostHeaders) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/library`, auth, {}, "DELETE");
+
+export const hostSeek = (sessionId: string, auth: HostHeaders, positionMs: number) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/seek`, auth, { positionMs: Math.round(positionMs) });
 
 export type AiSnapshot = { ai: AiStatus; recommendations: Recommendation[] };
 

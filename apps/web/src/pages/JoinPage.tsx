@@ -30,7 +30,6 @@ export function JoinPage() {
     applyState,
     setMood,
     submitVote,
-    tap,
   } = useSessionSocket(sessionCode, "attendee");
   useSessionAppearance(sessionCode, state?.appearance);
 
@@ -40,7 +39,6 @@ export function JoinPage() {
   const step: "join" | "vote" = state && joinedRun === state.run ? "vote" : "join";
   const newRun = joinedRun !== null && state !== null && joinedRun !== state.run;
   const [mood, setMoodLocal] = useState<Mood | null>(null);
-  const [myTaps, setMyTaps] = useState(0);
   const [boostConfig, setBoostConfig] = useState<BoostConfig | null>(null);
   const [boostTrack, setBoostTrack] = useState<string | null>(null);
 
@@ -56,15 +54,9 @@ export function JoinPage() {
     setJoinedRun(state?.run ?? null);
   }
 
-  function onTap() {
-    tap();
-    setMyTaps((n) => n + 1);
-    navigator.vibrate?.(10);
-  }
-
   // Latest rejection that still applies, shown once above the list.
   const rejection = voteRejection;
-  const offline = status !== "connected";
+  const groups = groupByGenre(state?.tracks ?? []);
 
   if (status === "not_found") {
     return (
@@ -96,7 +88,7 @@ export function JoinPage() {
           <h1 className="window-heading">{state?.sessionName ?? "Loading session…"}</h1>
           <p className="privacy-note">
             We use a random anonymous ID on this device — no name, email,
-            location, or microphone. Votes and taps are shared only as totals.
+            location, or microphone. Votes are shared only as totals.
           </p>
 
           <fieldset className="mood-field">
@@ -168,43 +160,54 @@ export function JoinPage() {
             onAdded={(trackId) => submitVote(trackId)}
           />
 
-          <ul className="track-list panel">
-            {(state?.tracks ?? []).length === 0 && (
+          {!groups.length && (
+            <ul className="track-list panel">
               <li className="track-row">
                 <div>
                   <p className="track-title">No songs yet</p>
                   <p className="track-meta">Search Spotify above to add a real track to the queue.</p>
                 </div>
               </li>
-            )}
-            {(state?.tracks ?? []).map((track) => (
-              <li key={track.id} className="track-row">
-                <div>
-                  <p className="track-title">{track.title}</p>
-                  <p className="track-meta">
-                    {track.artist} · {track.votes} {track.votes === 1 ? "vote" : "votes"}
-                    {track.boosts > 0 && ` · ⚡${track.boosts}`} · {track.status}
-                  </p>
-                </div>
-                {boostConfig?.enabled && track.status !== "playing" && (
-                  <button
-                    type="button"
-                    className="btn ghost compact boost-btn"
-                    aria-label={`Boost ${track.title} with Solana devnet (optional)`}
-                    onClick={() => setBoostTrack(track.id)}
-                  >
-                    ⚡
-                  </button>
-                )}
-                <VoteButton
-                  feedback={voteFor(track.id)?.feedback ?? "idle"}
-                  trackTitle={track.title}
-                  disabled={track.status === "playing"}
-                  onVote={() => submitVote(track.id)}
-                />
-              </li>
-            ))}
-          </ul>
+            </ul>
+          )}
+          {groups.map(({ genre, tracks }) => (
+            <details key={genre} className="genre-group" open>
+              <summary>
+                <span>{genre}</span>
+                <span className="genre-count">{tracks.length}</span>
+              </summary>
+              <ul className="track-list panel">
+                {tracks.map((track) => (
+                  <li key={track.id} className="track-row">
+                    <div>
+                      <p className="track-title">{track.title}</p>
+                      <p className="track-meta">
+                        {track.artist} · {track.votes} {track.votes === 1 ? "vote" : "votes"}
+                        {track.boosts > 0 && ` · ⚡${track.boosts}`}
+                        {track.status !== "open" && ` · ${track.status}`}
+                      </p>
+                    </div>
+                    {boostConfig?.enabled && track.status !== "playing" && (
+                      <button
+                        type="button"
+                        className="btn ghost compact boost-btn"
+                        aria-label={`Boost ${track.title} with Solana devnet (optional)`}
+                        onClick={() => setBoostTrack(track.id)}
+                      >
+                        ⚡
+                      </button>
+                    )}
+                    <VoteButton
+                      feedback={voteFor(track.id)?.feedback ?? "idle"}
+                      trackTitle={track.title}
+                      disabled={track.status === "playing"}
+                      onVote={() => submitVote(track.id)}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ))}
 
           {boostTrack && boostConfig && (
             <BoostPanel
@@ -225,27 +228,6 @@ export function JoinPage() {
 
         </Window>
 
-        <Window title="Crowd quest" className="hype-panel">
-            <p className="quest-label">{state?.crowdQuest.label ?? "Crowd quest"}</p>
-            <div className="quest-bar">
-              <div
-                style={{
-                  width: `${state ? Math.min(100, (state.crowdQuest.progress / state.crowdQuest.goal) * 100) : 0}%`,
-                }}
-              />
-            </div>
-            <p className="track-meta">
-              {state?.crowdQuest.progress ?? 0} / {state?.crowdQuest.goal ?? 100}
-            </p>
-            <button
-              type="button"
-              className="btn hype wide"
-              onClick={onTap}
-              disabled={offline}
-            >
-              Hype tap 🔥 <span className="hype-count">({myTaps} from you)</span>
-            </button>
-        </Window>
 
           <p className="stage-link">
             Watching on the big screen? <Link to={`/stage/${sessionCode}`}>Open stage view</Link>
@@ -255,4 +237,19 @@ export function JoinPage() {
       </div>
     </main>
   );
+}
+
+const OTHER = "Other";
+
+/** The library grouped by genre for attendees (alphabetical, "Other" last; songs keep library order). */
+export function groupByGenre<T extends { genre: string }>(tracks: T[]): { genre: string; tracks: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const t of tracks) {
+    const g = t.genre.trim().toLowerCase();
+    const label = !g || g === "unknown" || g === "spotify" ? OTHER : g.replace(/\b\w/g, (c) => c.toUpperCase());
+    groups.set(label, [...(groups.get(label) ?? []), t]);
+  }
+  return [...groups.entries()]
+    .sort(([a], [b]) => (a === OTHER ? 1 : b === OTHER ? -1 : a.localeCompare(b)))
+    .map(([genre, list]) => ({ genre, tracks: list }));
 }

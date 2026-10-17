@@ -5,7 +5,7 @@ import { spotifyAccessToken, spotifyConnected } from "../spotify/auth";
 import { decide, type Playing } from "./follow";
 import { LocalPlayer } from "./localPlayer";
 import { SpotifyPlayer } from "./spotifyPlayer";
-import type { PlayerAdapter, StartedInfo } from "./types";
+import type { PlayerAdapter, PlayerUnavailableError, StartedInfo } from "./types";
 
 // Makes this browser tab the session's speaker output: it plays whatever the server says is now
 // playing (host pick, Gemini approval, or auto mode) and reports started / progress / ended.
@@ -37,6 +37,14 @@ export function usePlayerEngine({
       return "local";
     }
   });
+  // Has this tab's host picked a source yet? If not, the card defaults to Spotify when it's set up.
+  const [sourceChosen] = useState(() => {
+    try {
+      return sessionStorage.getItem(SOURCE_KEY) !== null;
+    } catch {
+      return false;
+    }
+  });
   const player: PlayerAdapter = useMemo(
     () =>
       source === "spotify"
@@ -52,6 +60,7 @@ export function usePlayerEngine({
   const [, tick] = useState(0); // re-render for the progress bar
   const [followSeq, setFollowSeq] = useState(0); // re-run the follower after a play finishes
   const playing = useRef<Playing>(null);
+  const seekSeen = useRef(0);
   const busy = useRef(false);
 
   // Always use the latest sign-in (callbacks registered earlier would otherwise keep stale headers).
@@ -95,6 +104,7 @@ export function usePlayerEngine({
     if (!track) return;
     busy.current = true;
     playing.current = { trackId: action.trackId, round: action.round };
+    seekSeen.current = state!.playback.seekSeq; // startAtMs already includes any earlier seek
     player
       .play(track, { startAtMs: action.startAtMs })
       .then(async (started) => {
@@ -111,6 +121,14 @@ export function usePlayerEngine({
       })
       .catch(async (err: Error) => {
         playing.current = null;
+        if ((err as Partial<PlayerUnavailableError>).playerUnavailable) {
+          // Not this song's fault (Spotify disconnected, no Premium…): stop this device and ask the
+          // host to start again, instead of telling the server the song failed (auto mode would skip).
+          player.stop();
+          setUnlocked(false);
+          setError(`${err.message}. Press Start audio to try again.`);
+          return;
+        }
         setError(`Couldn't play ${track.title}: ${err.message}`);
         await send({ event: "error", trackId: action.trackId, round: action.round, message: err.message });
       })
@@ -120,6 +138,16 @@ export function usePlayerEngine({
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, unlocked, ready, player, followSeq]);
+
+  // The host moved the song position: jump to where the server now says the song is.
+  useEffect(() => {
+    const pb = state?.playback;
+    const p = playing.current;
+    if (!unlocked || !pb || !p || busy.current || pb.seekSeq <= seekSeen.current) return;
+    if (pb.trackId !== p.trackId || pb.round !== p.round || !pb.startedAt) return;
+    seekSeen.current = pb.seekSeq;
+    player.seek(Date.now() - Date.parse(pb.startedAt)).catch((err: Error) => setError(`Couldn't move in the song: ${err.message}`));
+  }, [state, unlocked, player]);
 
   // Redraw the progress bar every second (also when another device is the player).
   useEffect(() => {
@@ -180,6 +208,7 @@ export function usePlayerEngine({
 
   return {
     source,
+    sourceChosen,
     chooseSource,
     spotifyReady: source === "spotify" && spotifyConnected(),
     unlocked,

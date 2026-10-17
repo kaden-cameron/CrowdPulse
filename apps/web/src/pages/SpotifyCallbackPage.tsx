@@ -10,7 +10,10 @@ export function SpotifyCallbackPage() {
 
   useEffect(() => {
     finishSpotifyLogin(params)
-      .then((returnTo) => navigate(returnTo || "/", { replace: true }))
+      .then((returnTo) => {
+        if (returnTo === "popup") window.close();
+        else navigate(returnTo || "/", { replace: true });
+      })
       .catch((err: Error) => setError(err.message));
     // Run once: the code can only be exchanged one time.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -24,9 +27,9 @@ export function SpotifyCallbackPage() {
           {error && (
             <>
               <p className="feedback feedback-rejected">{error}</p>
-              <a className="btn ghost" href="/player/demo">
-                Back to the player
-              </a>
+              <button type="button" className="btn ghost" onClick={() => (window.opener ? window.close() : navigate("/host/demo"))}>
+                Close
+              </button>
             </>
           )}
         </div>

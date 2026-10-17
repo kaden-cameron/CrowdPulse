@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PlaybackMode, SessionState } from "@crowdpulse/shared";
-import { hostAdvance, hostPlaybackMode } from "../lib/host";
+import { hostPlaybackMode, hostSeek, hostSkip } from "../lib/host";
 import { usePlayerEngine } from "../lib/player/usePlayerEngine";
 import { usePublicConfig } from "../lib/publicConfig";
 import { useSpotifyCover } from "../lib/spotify/cover";
-import { disconnectSpotify, redirectProblem, spotifyConnected, startSpotifyLogin } from "../lib/spotify/auth";
+import { disconnectSpotify, redirectProblem, startSpotifyLogin, useSpotifyConnected } from "../lib/spotify/auth";
 
-// Host-page window: what's playing (album cover, progress), auto / DJ mode, play next, and this
+// Host-page window: what's playing (album cover, draggable position), auto / DJ mode, skip, and this
 // tab as the speaker output. The cover and progress show even when another device is the player.
 
 const fmt = (ms: number) => {
@@ -42,11 +42,22 @@ export function PlayerCard({
   const engine = usePlayerEngine({ sessionCode, state, ready, getHeaders, generatedDurationS });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "accepted" | "rejected"; text: string } | null>(null);
+  const [drag, setDrag] = useState<number | null>(null); // slider position while the host drags it
+  const spotifyConnected = useSpotifyConnected();
 
   const pb = state?.playback;
   const np = state?.nowPlaying;
   const track = np ? state?.tracks.find((t) => t.id === np.trackId) : undefined;
   const here = engine.info && engine.info.trackId === np?.trackId ? engine.info : null;
+  // A real Spotify song playing as a generated stand-in: tell the host how to hear the real thing.
+  const standIn = here?.source === "generated" && !!track?.spotifyUri;
+
+  // Spotify set up on this server → play real songs by default (until the host picks a source).
+  const spotifyId = config?.spotifyClientId;
+  useEffect(() => {
+    if (spotifyId && !engine.sourceChosen && engine.source === "local" && !engine.unlocked) engine.chooseSource("spotify");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spotifyId]);
 
   // Progress: from this tab's player when it's the one playing, else from the server's timing.
   let pos = 0;
@@ -75,7 +86,14 @@ export function PlayerCard({
   }
   const setMode = (m: PlaybackMode) =>
     run(m === "auto" ? "Auto play on" : "DJ picks on", async () => hostPlaybackMode(sessionCode, await getHeaders(), m));
-  const playNext = () => run("Playing the top-voted track", async () => hostAdvance(sessionCode, await getHeaders()));
+  const skip = () => run("Skipped to the next song", async () => hostSkip(sessionCode, await getHeaders()));
+  const commitSeek = () => {
+    if (drag === null) return;
+    const to = drag;
+    setDrag(null);
+    void run(`Moved to ${fmt(to)}`, async () => hostSeek(sessionCode, await getHeaders(), to));
+  };
+  const canSeek = ready && !busy && pb?.status === "playing" && dur > 0;
 
   return (
     <div className="host-block player-card">
@@ -86,7 +104,7 @@ export function PlayerCard({
         </span>
       </div>
 
-      <div className="now-playing">
+      <div className="np-layout">
         <div className="cover" aria-hidden={!cover}>
           {cover ? (
             <img src={cover} alt={np ? `Album cover for ${np.title}` : ""} width={300} height={300} />
@@ -106,12 +124,25 @@ export function PlayerCard({
             {np ? `${np.artist} · ${STATUS_TEXT[pb?.status ?? "idle"]}` : "Pick a song, or switch on auto play."}
           </p>
           {dur > 0 && (
-            <div className="player-progress" aria-label="Song progress">
-              <div className="quest-bar">
-                <div style={{ width: `${(pos / Math.max(1, dur)) * 100}%` }} />
-              </div>
+            <div className="player-progress">
+              <input
+                type="range"
+                className="seek-slider"
+                min={0}
+                max={Math.round(dur)}
+                step={1000}
+                value={Math.round(drag ?? pos)}
+                disabled={!canSeek}
+                aria-label="Song position"
+                aria-valuetext={`${fmt(drag ?? pos)} of ${fmt(dur)}`}
+                style={{ ["--fill" as string]: `${((drag ?? pos) / Math.max(1, dur)) * 100}%` }}
+                onChange={(e) => setDrag(Number(e.target.value))}
+                onPointerUp={commitSeek}
+                onKeyUp={commitSeek}
+                onBlur={commitSeek}
+              />
               <span>
-                {fmt(pos)} / {fmt(dur)}
+                {fmt(drag ?? pos)} / {fmt(dur)}
               </span>
             </div>
           )}
@@ -135,9 +166,10 @@ export function PlayerCard({
         ))}
       </div>
       <div className="cta-row">
-        <button type="button" className="btn primary" disabled={busy || !ready} onClick={() => void playNext()}>
-          Play next ▶
+        <button type="button" className="btn primary" disabled={busy || !ready || (state?.tracks.length ?? 0) < 1} onClick={() => void skip()}>
+          Skip ⏭
         </button>
+        <span className="host-sub">Plays your queue first, then the top votes.</span>
       </div>
       <div role="status" aria-live="polite">
         {msg && <p className={`feedback feedback-${msg.kind}`}>{msg.text}</p>}
@@ -166,7 +198,7 @@ export function PlayerCard({
           <SpotifySetup
             clientId={config?.spotifyClientId ?? null}
             loading={!config}
-            connected={spotifyConnected()}
+            connected={spotifyConnected}
             returnTo={window.location.pathname + window.location.search}
             onDisconnect={() => {
               disconnectSpotify();
@@ -211,6 +243,12 @@ export function PlayerCard({
               Stop audio here
             </button>
           </div>
+        )}
+        {standIn && (
+          <p className="feedback feedback-warn" role="status">
+            This is a generated 1-minute stand-in, not the real song. Choose <strong>Spotify</strong> above,
+            connect a Premium account and press Start audio to hear real songs.
+          </p>
         )}
         {engine.error && (
           <p className="feedback feedback-warn" role="status">

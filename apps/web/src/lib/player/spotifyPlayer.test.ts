@@ -36,7 +36,12 @@ function fakeSdk(opts: { accountError?: boolean } = {}) {
       async activateElement() {}
     } as unknown as SpotifySdk["Player"],
   };
-  return { sdk, pause, emit: (s: SdkState | null) => listeners.player_state_changed?.forEach((cb) => cb(s)) };
+  return {
+    sdk,
+    pause,
+    emit: (s: SdkState | null) => listeners.player_state_changed?.forEach((cb) => cb(s)),
+    fire: (ev: string, arg: unknown) => listeners[ev]?.forEach((cb) => cb(arg)),
+  };
 }
 
 function setup(apiImpl?: (url: string, init?: RequestInit) => Response, sdkOpts = {}) {
@@ -121,5 +126,40 @@ describe("SpotifyPlayer", () => {
   it("a non-Premium account fails at Start audio with a clear message", async () => {
     const { player } = setup(undefined, { accountError: true });
     await expect(player.unlock()).rejects.toThrow(/Spotify Premium is required/);
+  });
+});
+
+describe("SpotifyPlayer reconnects (start → stop → start)", () => {
+  it("picks up Spotify's reconnect after the device drops, and plays on the new device id", async () => {
+    const { player, calls, emit, fire } = setup();
+    await player.unlock();
+    player.stop();
+    fire("not_ready", { device_id: "dev123" });
+    fire("ready", { device_id: "dev456" }); // Spotify brings the device back
+    await player.unlock(); // Start audio again: no new connection needed
+    const p = player.play({ ...track, spotifyUri: URI });
+    await vi.waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0].url).toBe("https://api.spotify.com/v1/me/player/play?device_id=dev456");
+    emit(state());
+    await p;
+  });
+
+  it("a refused play (no Premium) is a player problem, not a bad song", async () => {
+    const { player } = setup(() => Response.json({ error: { message: "Premium required" } }, { status: 403 }));
+    await player.unlock();
+    const err = await player.play({ ...track, spotifyUri: URI }).catch((e: Error & { playerUnavailable?: boolean }) => e);
+    expect(err).toMatchObject({ playerUnavailable: true });
+  });
+
+  it("seek moves Spotify to the new position", async () => {
+    const { player, calls, emit } = setup();
+    await player.unlock();
+    const p = player.play({ ...track, spotifyUri: URI });
+    await vi.waitFor(() => expect(calls.length).toBe(1));
+    emit(state());
+    await p;
+    await player.seek(61_000);
+    expect(calls[1].url).toBe("https://api.spotify.com/v1/me/player/seek?position_ms=61000&device_id=dev123");
+    expect(calls[1].init?.method).toBe("PUT");
   });
 });

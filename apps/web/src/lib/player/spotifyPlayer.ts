@@ -1,5 +1,5 @@
 import { pickCover } from "@crowdpulse/shared";
-import type { PlayableTrack, PlayerAdapter, StartedInfo } from "./types";
+import { PlayerUnavailableError, type PlayableTrack, type PlayerAdapter, type StartedInfo } from "./types";
 
 // Spotify player: this browser tab becomes a Spotify Connect device ("CrowdPulse") via the Web
 // Playback SDK, and the Web API starts tracks on it. Needs Spotify Premium on the signed-in account.
@@ -77,6 +77,7 @@ export class SpotifyPlayer implements PlayerAdapter {
   private last: { position: number; paused: boolean; at: number } | null = null;
   private uriCache = new Map<string, string>();
   private stateWaiters: ((s: SdkState) => void)[] = [];
+  private deviceWaiters: { resolve: (id: string) => void; reject: (err: Error) => void }[] = [];
   private lastError: string | null = null;
   private getToken: () => Promise<string>;
   private loadSdk: () => Promise<SpotifySdk>;
@@ -89,9 +90,15 @@ export class SpotifyPlayer implements PlayerAdapter {
   }
 
   async unlock() {
-    if (this.player && this.deviceId) {
+    if (this.player) {
+      // Must run inside the click that called unlock(), or browsers block audio.
       await this.player.activateElement?.();
-      return;
+      if (this.deviceId) return;
+      // Spotify dropped the device (idle, network blip): give it a moment to come back, else start
+      // a fresh connection instead of waiting on a dead one.
+      if (await this.waitForDevice(4_000).then(() => true, () => false)) return;
+      this.player.disconnect();
+      this.player = null;
     }
     const sdk = await this.loadSdk();
     const player = new sdk.Player({
@@ -102,30 +109,71 @@ export class SpotifyPlayer implements PlayerAdapter {
       },
     });
     this.player = player;
-    const ready = new Promise<string>((resolve, reject) => {
-      const timer = window.setTimeout(() => reject(new Error(this.lastError ?? "Spotify player didn't start")), READY_TIMEOUT_MS);
-      player.addListener("ready", ({ device_id }: { device_id: string }) => {
-        window.clearTimeout(timer);
-        resolve(device_id);
-      });
-      for (const kind of Object.keys(ERROR_TEXT)) {
-        player.addListener(kind, ({ message }: { message: string }) => {
-          this.lastError = `${ERROR_TEXT[kind]} (${message})`;
-          if (kind !== "playback_error") {
-            window.clearTimeout(timer);
-            reject(new Error(this.lastError));
-          }
-        });
-      }
+    this.lastError = null;
+    // Every "ready" (first connect and each reconnect) updates the device id.
+    player.addListener("ready", ({ device_id }: { device_id: string }) => {
+      this.deviceId = device_id;
+      const waiters = this.deviceWaiters;
+      this.deviceWaiters = [];
+      for (const w of waiters) w.resolve(device_id);
     });
     player.addListener("not_ready", () => {
       this.deviceId = null;
     });
+    for (const kind of Object.keys(ERROR_TEXT)) {
+      player.addListener(kind, ({ message }: { message: string }) => {
+        this.lastError = `${ERROR_TEXT[kind]} (${message})`;
+        if (kind !== "playback_error") {
+          this.deviceId = null;
+          const waiters = this.deviceWaiters;
+          this.deviceWaiters = [];
+          for (const w of waiters) w.reject(new PlayerUnavailableError(this.lastError));
+        }
+      });
+    }
     player.addListener("player_state_changed", (state: SdkState | null) => this.onState(state));
-    // Must run inside the click that called unlock(), or browsers block audio.
     await player.activateElement?.();
-    if (!(await player.connect())) throw new Error("Couldn't connect to Spotify");
-    this.deviceId = await ready;
+    const ready = this.waitForDevice(READY_TIMEOUT_MS);
+    if (!(await player.connect())) {
+      this.player = null;
+      throw new PlayerUnavailableError("Couldn't connect to Spotify");
+    }
+    try {
+      await ready;
+    } catch (err) {
+      player.disconnect();
+      this.player = null;
+      throw err;
+    }
+  }
+
+  /** Resolves with the device id once the Web Playback SDK reports ready. */
+  private waitForDevice(timeoutMs: number): Promise<string> {
+    if (this.deviceId) return Promise.resolve(this.deviceId);
+    return new Promise((resolve, reject) => {
+      const waiter = {
+        resolve: (id: string) => {
+          window.clearTimeout(timer);
+          resolve(id);
+        },
+        reject: (err: Error) => {
+          window.clearTimeout(timer);
+          reject(err);
+        },
+      };
+      const timer = window.setTimeout(() => {
+        this.deviceWaiters = this.deviceWaiters.filter((w) => w !== waiter);
+        reject(new PlayerUnavailableError(this.lastError ?? "Spotify player didn't start — check the Spotify login and try again"));
+      }, timeoutMs);
+      this.deviceWaiters.push(waiter);
+    });
+  }
+
+  async seek(ms: number) {
+    if (!this.player || !this.deviceId || !this.current) return;
+    const pos = Math.max(0, Math.round(ms));
+    await this.call(`/me/player/seek?position_ms=${pos}&device_id=${encodeURIComponent(this.deviceId)}`, { method: "PUT" });
+    this.last = { position: pos, paused: false, at: Date.now() };
   }
 
   onEnded(cb: () => void) {
@@ -148,22 +196,30 @@ export class SpotifyPlayer implements PlayerAdapter {
   }
 
   async play(track: PlayableTrack, { startAtMs = 0 }: { startAtMs?: number } = {}): Promise<StartedInfo> {
-    if (!this.player || !this.deviceId) throw new Error(this.lastError ?? "Spotify isn't connected — press Start audio");
+    if (!this.player) throw new PlayerUnavailableError(this.lastError ?? "Spotify isn't connected — press Start audio");
+    // The device may be reconnecting after an idle drop; wait a little rather than failing the song.
+    const deviceId = this.deviceId ?? (await this.waitForDevice(6_000));
     const uri = await this.resolveUri(track);
     this.current = { uri, confirmed: false };
     const started = this.waitForState((s) => sameTrack(s.track_window.current_track, uri) && !s.paused);
-    const res = await this.call(`/me/player/play?device_id=${encodeURIComponent(this.deviceId)}`, {
+    const res = await this.call(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
       method: "PUT",
       body: JSON.stringify({ uris: [uri], position_ms: Math.max(0, Math.round(startAtMs)) }),
     });
     if (!res.ok && res.status !== 202 && res.status !== 204) {
       const data = await res.json().catch(() => ({}));
       this.current = null;
-      throw new Error(
-        res.status === 403
-          ? "Spotify refused playback (Premium required, or this account isn't on the app's user list)"
-          : `Spotify play failed (${res.status}${data.error?.message ? `: ${data.error.message}` : ""})`,
-      );
+      // 401/403/404 are about the account or device, not this song.
+      if (res.status === 401 || res.status === 403 || res.status === 404) {
+        throw new PlayerUnavailableError(
+          res.status === 403
+            ? "Spotify refused playback (Premium required, or this account isn't on the app's user list)"
+            : res.status === 401
+              ? "Spotify login expired — connect Spotify again"
+              : "Spotify lost this device — press Start audio again",
+        );
+      }
+      throw new Error(`Spotify play failed (${res.status}${data.error?.message ? `: ${data.error.message}` : ""})`);
     }
     const state = await started;
     const cover = pickCover(state.track_window.current_track?.album?.images) ?? track.imageUrl;

@@ -316,7 +316,7 @@ code {
 }
 
 .library-results,
-.library-list ul {
+ul.library-list {
   display: grid;
   gap: 0;
   max-height: 22rem;
@@ -327,7 +327,7 @@ code {
 }
 
 .library-results li,
-.library-list li {
+ul.library-list li {
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -336,7 +336,7 @@ code {
 }
 
 .library-results li:last-child,
-.library-list li:last-child {
+ul.library-list li:last-child {
   border-bottom: 0;
 }
 
@@ -372,11 +372,85 @@ code {
   color: var(--warn);
 }
 
-.library-list summary {
+.library-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.75rem;
+}
+
+.library-head .cta-row {
+  margin: 0;
+}
+
+.library-import summary {
   cursor: pointer;
-  margin-top: 0.5rem;
+  margin: 0.5rem 0;
   font-size: 14px;
   text-decoration: underline;
+}
+
+/* ---------- Queue (host page) ---------- */
+.host-queue-list {
+  display: grid;
+  max-height: 26rem;
+  overflow-y: auto;
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.6rem;
+  list-style: none;
+}
+
+.host-queue-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px dotted var(--ink);
+}
+
+.host-queue-list li:last-child {
+  border-bottom: 0;
+}
+
+.host-queue-list .q-rank {
+  flex: none;
+  width: 1.6rem;
+  font-family: var(--font-num);
+  font-size: 22px;
+  text-align: right;
+}
+
+.queue-voted .library-meta strong {
+  font-weight: 400;
+}
+
+.queue-actions {
+  display: flex;
+  gap: 0.25rem;
+}
+
+/* ---------- Attendee song list, by genre ---------- */
+.genre-group {
+  margin: 0.75rem 0 0;
+}
+
+.genre-group summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  padding: 0.35rem 0;
+  font-family: var(--font-caps);
+  font-size: 13px;
+  text-transform: uppercase;
+}
+
+.genre-count {
+  font-family: var(--font-num);
+  font-size: 18px;
+  color: var(--muted);
 }
 
 /* ---------- Appearance (host page) ---------- */
@@ -1106,7 +1180,7 @@ input[type="range"] {
   padding: 20px 16px;
 }
 
-.host-grid > .host-block:first-child,
+.host-grid > .session-block:first-child,
 .host-grid > .metric-strip,
 .host-grid > .analytics {
   grid-column: 1 / -1;
@@ -1575,11 +1649,76 @@ input[type="range"] {
 }
 
 /* Now playing window (host page and /player): album cover beside the song. */
-.host-grid > .player-card {
-  grid-column: 1 / -1;
+/* Wide screens: Now playing and Songs take two columns, Gemini and Queue sit beside them. */
+.host-grid > .player-card,
+.host-grid > .library-card {
+  grid-column: span 2;
 }
 
-.now-playing {
+@media (max-width: 1150px) {
+  .host-grid > .player-card,
+  .host-grid > .library-card {
+    grid-column: 1 / -1;
+  }
+}
+
+.seek-slider {
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+
+.seek-slider::-webkit-slider-runnable-track {
+  height: 14px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--pool) var(--fill, 0%), var(--paper) var(--fill, 0%));
+}
+
+.seek-slider::-moz-range-track {
+  height: 14px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: linear-gradient(to right, var(--pool) var(--fill, 0%), var(--paper) var(--fill, 0%));
+}
+
+.seek-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 22px;
+  margin-top: -5px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--cream);
+  box-shadow: var(--bevel);
+}
+
+.seek-slider::-moz-range-thumb {
+  width: 12px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: var(--cream);
+}
+
+.seek-slider:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.seek-slider:disabled::-webkit-slider-thumb {
+  visibility: hidden;
+}
+
+.seek-slider:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.np-layout {
   display: grid;
   grid-template-columns: clamp(140px, 24vw, 220px) minmax(0, 1fr);
   gap: 20px;
@@ -1587,7 +1726,7 @@ input[type="range"] {
   margin: 0.75rem 0 1rem;
 }
 
-.now-playing .cover {
+.np-layout .cover {
   aspect-ratio: 1;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -1596,7 +1735,7 @@ input[type="range"] {
   box-shadow: var(--bevel);
 }
 
-.now-playing .cover img {
+.np-layout .cover img {
   display: block;
   width: 100%;
   height: 100%;
@@ -1638,11 +1777,11 @@ input[type="range"] {
 }
 
 @media (max-width: 520px) {
-  .now-playing {
+  .np-layout {
     grid-template-columns: 1fr;
   }
 
-  .now-playing .cover {
+  .np-layout .cover {
     width: min(240px, 100%);
     justify-self: center;
   }
@@ -1687,7 +1826,7 @@ input[type="range"] {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 3px;
-  background: #000;
+  background: var(--desk);
 }
 
 .stage-canvas {
@@ -1707,7 +1846,7 @@ input[type="range"] {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  background-image: radial-gradient(rgba(0, 0, 0, 0.45) 0.9px, transparent 1.1px);
+  background-image: radial-gradient(var(--dots) 0.9px, transparent 1.1px);
   background-size: 3px 3px;
   mix-blend-mode: multiply;
 }
@@ -1718,7 +1857,7 @@ input[type="range"] {
   display: grid;
   place-items: center;
   text-align: center;
-  color: #fff;
+  color: var(--ink);
   pointer-events: none;
 }
 
@@ -1729,7 +1868,7 @@ input[type="range"] {
   font-family: var(--font-caps);
   font-size: clamp(12px, 1.2vw, 16px);
   text-transform: uppercase;
-  text-shadow: 1px 1px 0 #000;
+  text-shadow: 1px 1px 0 var(--paper);
 }
 
 .energy-block {
@@ -1741,20 +1880,20 @@ input[type="range"] {
   font-family: var(--font-num);
   font-size: clamp(6rem, 16vw, 13rem);
   line-height: 0.8;
-  text-shadow: 3px 3px 0 rgba(0, 0, 0, 0.6);
+  text-shadow: 3px 3px 0 var(--paper);
 }
 
 .tv-overlay .energy-bar-track {
   width: min(460px, 60vw);
   height: 16px;
   margin-top: 0.6rem;
-  border-color: #fff;
-  background: rgba(0, 0, 0, 0.35);
+  border-color: var(--line);
+  background: var(--paper);
 }
 
 .tv-overlay .energy-bar-fill {
   background: var(--butter);
-  border-right-color: #fff;
+  border-right-color: var(--line);
 }
 
 .energy-caption {
@@ -1762,7 +1901,7 @@ input[type="range"] {
   font-family: var(--font-caps);
   font-size: clamp(12px, 1.1vw, 15px);
   text-transform: uppercase;
-  text-shadow: 1px 1px 0 #000;
+  text-shadow: 1px 1px 0 var(--paper);
 }
 
 .tv-strip {
@@ -1791,6 +1930,22 @@ input[type="range"] {
 .on-air-dot {
   color: #ff3b3b;
   animation: blink 1.2s steps(2, end) infinite;
+}
+
+.stage-now {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.stage-cover {
+  flex: none;
+  width: clamp(48px, 5vw, 72px);
+  height: clamp(48px, 5vw, 72px);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  object-fit: cover;
+  image-rendering: auto;
 }
 
 .now-playing-title {

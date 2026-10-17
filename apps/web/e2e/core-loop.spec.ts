@@ -168,7 +168,7 @@ test("Music: the player plays the host's pick, auto mode moves on by itself, DJ 
   const current = (await state()).nowPlaying?.trackId;
   await expect.poll(async () => (await state()).playback.status, { timeout: 12_000 }).toBe("ended");
   expect((await state()).nowPlaying?.trackId).toBe(current);
-  await expect(laptop.getByText("Song finished")).toBeVisible();
+  await expect(laptop.getByText(/Finished — pick the next song/)).toBeVisible();
 });
 
 test("The stage QR code decodes to the join link, even when small in a phone's camera", async ({ browser }) => {
@@ -221,10 +221,10 @@ test("The host picks the look; the big screen and attendee phones follow it live
   await host.goto("/host/demo");
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
   const card = host.locator(".appearance-card");
-  await card.getByText("Mint").click();
-  await expect(host.getByText(/Look changed to mint · light/)).toBeVisible();
+  await card.getByText("Green").click();
+  await expect(host.getByText(/Look changed to Green · light/)).toBeVisible();
   await card.getByText("Dark", { exact: true }).click();
-  await expect(host.getByText(/Look changed to mint · dark/)).toBeVisible();
+  await expect(host.getByText(/Look changed to Green · dark/)).toBeVisible();
 
   // Both other screens switch without reloading.
   for (const p of [stage, phone, host]) {

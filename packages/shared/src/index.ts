@@ -48,6 +48,8 @@ export interface QueueItem {
   artist: string;
   votes: number;
   boosts: number;
+  /** Put in the queue by the host (plays before voted songs, in the host's order). */
+  hostPick?: boolean;
 }
 
 export interface VisualState {
@@ -195,6 +197,8 @@ export interface PlaybackState {
   /** A player page has reported in the last 15 seconds. */
   playerOnline: boolean;
   message: string | null;
+  /** Bumped when the host moves the song position; the player jumps to the new startedAt. */
+  seekSeq: number;
 }
 
 export type PlaybackReportEvent = "started" | "progress" | "ended" | "error";

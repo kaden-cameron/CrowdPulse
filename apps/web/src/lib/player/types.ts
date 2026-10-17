@@ -32,8 +32,19 @@ export interface PlayerAdapter {
   /** Crossfades from whatever is playing into this track. */
   play(track: PlayableTrack, opts?: { startAtMs?: number }): Promise<StartedInfo>;
   stop(): void;
+  /** Jump within the current song (the host moved the position). */
+  seek(ms: number): Promise<void>;
   setVolume(v: number): void;
   positionMs(): number;
   /** Called once when the current track finishes on its own (not when stopped or replaced). */
   onEnded(cb: () => void): void;
+}
+
+/**
+ * The player itself can't play anything right now (not connected, no Premium, login expired).
+ * Not the song's fault, so it isn't reported to the server as a failed song — otherwise auto mode
+ * would skip through the whole library.
+ */
+export class PlayerUnavailableError extends Error {
+  readonly playerUnavailable = true;
 }

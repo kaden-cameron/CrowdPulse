@@ -6,12 +6,15 @@ import { DEFAULT_APPEARANCE, type Appearance, type AppearancePreset } from "@cro
 // preset has the same perceived lightness (OKLCH L 0.90 light / 0.26 dark). Palette: styles.css.
 
 export const THEME_PRESETS: { id: AppearancePreset; label: string; light: string; dark: string }[] = [
-  { id: "sky", label: "Sky", light: "#cce1f6", dark: "#122539" },
-  { id: "flamingo", label: "Flamingo", light: "#f6d5d5", dark: "#371a1c" },
-  { id: "mint", label: "Mint", light: "#c9e7d8", dark: "#0a2b1e" },
-  { id: "lemon", label: "Lemon", light: "#e9e0ab", dark: "#2a2403" },
-  { id: "lavender", label: "Lavender", light: "#e2d9f4", dark: "#271f37" },
+  { id: "sky", label: "Blue", light: "#cce1f6", dark: "#122539" },
+  { id: "flamingo", label: "Pink", light: "#f6d5d5", dark: "#371a1c" },
+  { id: "mint", label: "Green", light: "#c9e7d8", dark: "#0a2b1e" },
+  { id: "lemon", label: "Yellow", light: "#e9e0ab", dark: "#2a2403" },
+  { id: "lavender", label: "Purple", light: "#e2d9f4", dark: "#271f37" },
 ];
+
+/** Plain color name for a preset id ("flamingo" → "Pink"). Ids stay as-is for saved sessions. */
+export const presetLabel = (id: AppearancePreset) => THEME_PRESETS.find((p) => p.id === id)?.label ?? id;
 
 const cacheKey = (sessionId: string) => `crowdpulse.appearance.${sessionId}`;
 

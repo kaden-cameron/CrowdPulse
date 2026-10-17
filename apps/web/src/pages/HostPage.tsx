@@ -16,8 +16,9 @@ import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useSessionAppearance } from "../lib/theme";
 import { AppearanceCard } from "../components/AppearanceCard";
 import { LibraryCard } from "../components/LibraryCard";
-import { SpotifySearch } from "../components/SpotifySearch";
-import { hostAdvance, hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
+import { QueueCard } from "../components/QueueCard";
+import { hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
+import { presetLabel } from "../lib/theme";
 import { PlayerCard } from "../components/PlayerCard";
 
 
@@ -58,53 +59,33 @@ export function HostPage() {
 
   const totalMoods = state ? MOODS.reduce((n, m) => n + state.moods[m], 0) : 0;
 
+  // Shown at the top until the host signs in; afterwards it moves down to the session settings.
+  const sessionBlock = (
+    <div className="host-block session-block">
+      <h1>Host · {state?.sessionName ?? sessionCode}</h1>
+      <p className="host-sub">
+        Stage controls and AI decisions need a signed-in host — the server checks every request.
+      </p>
+      <HostSignIn />
+      <div className="cta-row">
+        <Link className="btn ghost compact" to={`/stage/${sessionCode}`}>
+          Open stage
+        </Link>
+        <Link className="btn ghost compact" to={`/join/${sessionCode}`}>
+          Attendee link
+        </Link>
+      </div>
+    </div>
+  );
+
   return (
     <main className="host-page">
       <MenuBar title="Host" status={status} lastMessageAt={lastMessageAt} />
 
       <section className="host-grid">
-        <div className="host-block">
-          <h1>Host · {state?.sessionName ?? sessionCode}</h1>
-          <p className="host-sub">
-            Live metrics are server-owned. Stage controls and AI decisions
-            require a signed-in host — the server checks every request.
-          </p>
-          <HostSignIn />
-        </div>
+        {!access.ready && sessionBlock}
 
-        <div className="metric-strip" role="group" aria-label="Session metrics">
-          <div>
-            <span className="metric-label">Energy</span>
-            <strong>{state?.energyScore ?? "—"}</strong>
-          </div>
-          <div>
-            <span className="metric-label">Crowd</span>
-            <strong>{state?.participants ?? "—"}</strong>
-            {!!state?.simulatedParticipants && (
-              <span className="demo-data-badge small">
-                Demo data · {state.simulatedParticipants} simulated
-              </span>
-            )}
-          </div>
-          <div>
-            <span className="metric-label">Theme</span>
-            <strong>
-              {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
-            </strong>
-          </div>
-          <div>
-            <span className="metric-label">
-              Intensity · {state?.visualMode ?? "—"}
-            </span>
-            <strong>
-              {state
-                ? Math.round(state.visualState.intensity * 100)
-                : "—"}
-              %
-            </strong>
-          </div>
-        </div>
-
+        {/* Now playing, with the Gemini DJ beside it */}
         <PlayerCard
           sessionCode={sessionCode}
           state={state}
@@ -112,29 +93,15 @@ export function HostPage() {
           getHeaders={access.getHeaders}
           onState={applyState}
         />
-
-        <AnalyticsPanel
-          metrics={metrics}
-          error={metricsError}
+        <AiPanel
+          sessionId={sessionCode}
+          getHeaders={access.getHeaders}
+          ready={access.ready}
           tracks={state?.tracks ?? []}
+          onState={applyState}
         />
 
-        <div className="host-block">
-          <h2>Add songs from Spotify</h2>
-          <p className="host-sub">
-            Search real tracks, add them for the crowd to vote on, or play one now.
-          </p>
-          <SpotifySearch
-            sessionId={sessionCode}
-            allowClientLogin
-            onPlayNow={async (trackId) => {
-              await run(`Playing ${trackId}`, async () =>
-                hostAdvance(sessionCode, await access.getHeaders(), trackId),
-              );
-            }}
-          />
-        </div>
-
+        {/* Picking songs */}
         <LibraryCard
           sessionCode={sessionCode}
           state={state}
@@ -142,15 +109,12 @@ export function HostPage() {
           getHeaders={access.getHeaders}
           onState={applyState}
         />
-
-        <AppearanceCard
-          appearance={state?.appearance}
-          disabled={busy || !access.ready}
-          onChange={(next) =>
-            run(`Look changed to ${next.preset} · ${next.mode}`, async () =>
-              hostSetAppearance(sessionCode, await access.getHeaders(), next),
-            )
-          }
+        <QueueCard
+          sessionCode={sessionCode}
+          state={state}
+          ready={access.ready}
+          getHeaders={access.getHeaders}
+          onState={applyState}
         />
 
         <div className="host-block">
@@ -243,13 +207,51 @@ export function HostPage() {
           </div>
         </div>
 
-        <AiPanel
-          sessionId={sessionCode}
-          getHeaders={access.getHeaders}
-          ready={access.ready}
-          tracks={state?.tracks ?? []}
-          onState={applyState}
+        <AppearanceCard
+          appearance={state?.appearance}
+          disabled={busy || !access.ready}
+          onChange={(next) =>
+            run(`Look changed to ${presetLabel(next.preset)} · ${next.mode}`, async () =>
+              hostSetAppearance(sessionCode, await access.getHeaders(), next),
+            )
+          }
         />
+
+        {access.ready && sessionBlock}
+
+        {/* Numbers and charts */}
+        <div className="metric-strip" role="group" aria-label="Session metrics">
+          <div>
+            <span className="metric-label">Energy</span>
+            <strong>{state?.energyScore ?? "—"}</strong>
+          </div>
+          <div>
+            <span className="metric-label">Crowd</span>
+            <strong>{state?.participants ?? "—"}</strong>
+            {!!state?.simulatedParticipants && (
+              <span className="demo-data-badge small">
+                Demo data · {state.simulatedParticipants} simulated
+              </span>
+            )}
+          </div>
+          <div>
+            <span className="metric-label">Theme</span>
+            <strong>
+              {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
+            </strong>
+          </div>
+          <div>
+            <span className="metric-label">
+              Intensity · {state?.visualMode ?? "—"}
+            </span>
+            <strong>
+              {state
+                ? Math.round(state.visualState.intensity * 100)
+                : "—"}
+              %
+            </strong>
+          </div>
+        </div>
 
         <div className="host-block">
           <h2>Crowd mood</h2>
@@ -273,29 +275,11 @@ export function HostPage() {
           </p>
         </div>
 
-        <div className="host-block">
-          <h2>Queue</h2>
-          <p className="host-sub">
-            Now playing: {state?.nowPlaying?.title ?? "—"}
-          </p>
-          <ol className="host-queue">
-            {(state?.queue ?? []).map((item) => (
-              <li key={item.trackId}>
-                {item.title} — {item.artist} ({item.votes}
-                {item.boosts > 0 && ` · ⚡${item.boosts} devnet`})
-              </li>
-            ))}
-            {!state?.queue.length && <li>No votes yet</li>}
-          </ol>
-          <div className="cta-row">
-            <Link className="btn ghost" to={`/stage/${sessionCode}`}>
-              Open stage
-            </Link>
-            <Link className="btn ghost" to={`/join/${sessionCode}`}>
-              Attendee link
-            </Link>
-          </div>
-        </div>
+        <AnalyticsPanel
+          metrics={metrics}
+          error={metricsError}
+          tracks={state?.tracks ?? []}
+        />
       </section>
       <Dock sessionCode={sessionCode} />
     </main>

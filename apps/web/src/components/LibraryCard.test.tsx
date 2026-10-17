@@ -36,11 +36,15 @@ function mockNet() {
     "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
       calls.push({ url, method: init?.method ?? "GET", body: init?.body ? JSON.parse(String(init.body)) : null });
-      if (url === "/api/public-config") return Response.json({ publicUrl: null, lanIp: null, spotifyClientId: "cid" });
-      if (url.startsWith("https://api.spotify.com/v1/search")) {
-        return Response.json({ tracks: { items: [{ name: "One More Time", uri: URI, type: "track", duration_ms: 320_000, artists: [{ name: "Daft Punk" }] }] } });
+      if (url === "/api/public-config") return Response.json({ publicUrl: null, lanIp: null, spotifyClientId: "cid", spotifySearch: true });
+      if (url.startsWith("/api/spotify/search")) {
+        return Response.json({
+          tracks: [{ id: "4uLU6hMCjMI75M1A2tKUQC", title: "One More Time", artist: "Daft Punk", album: "Discovery", spotifyUri: URI, durationMs: 320_000, popularity: 80, imageUrl: null, coverUrl: null }],
+        });
       }
+      if (url.endsWith("/library") && init?.method === "DELETE") return Response.json({ status: "accepted", state });
       if (url.endsWith("/library")) return Response.json({ added: 1, skipped: 0, estimatedBy: "gemini", note: null, trackIds: ["sp_4uLU6hMCjMI75M1A2tKUQC"] });
+      if (url.endsWith("/queue")) return Response.json({ status: "accepted", state });
       if (url.endsWith("/advance")) return Response.json({ status: "accepted", state });
       return new Response("{}", { status: 404 });
     }),
@@ -62,17 +66,17 @@ describe("LibraryCard", () => {
     expect(add.body).toEqual({ tracks: [{ title: "One More Time", artist: "Daft Punk", spotifyUri: URI }] });
   });
 
-  it("Play next adds the song if needed, then plays it", async () => {
+  it("Play now adds the song if needed, then plays it", async () => {
     const calls = mockNet();
     const onState = vi.fn();
     render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({ "x-host-key": "k" })} onState={onState} />);
     await userEvent.type(await screen.findByPlaceholderText("Song or artist"), "daft punk");
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
-    await userEvent.click(await screen.findByRole("button", { name: "Play One More Time next" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Play One More Time now" }));
     await waitFor(() => expect(onState).toHaveBeenCalled());
     const advance = calls.find((c) => c.url.endsWith("/advance"))!;
     expect(advance.body).toEqual({ trackId: "sp_4uLU6hMCjMI75M1A2tKUQC" });
-    expect(screen.getByText(/Playing “One More Time” next/)).toBeInTheDocument();
+    expect(screen.getByText(/Playing “One More Time” now/)).toBeInTheDocument();
   });
 
   it("asks the host to reconnect when the login lacks the playlist permission", async () => {
@@ -80,5 +84,42 @@ describe("LibraryCard", () => {
     sessionStorage.setItem("crowdpulse.spotify.tokens", JSON.stringify({ accessToken: "t", refreshToken: null, expiresAt: Date.now() + 1e6, clientId: "cid", scope: "streaming" }));
     render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
     expect(await screen.findByRole("button", { name: /Reconnect Spotify/ })).toBeInTheDocument();
+  });
+
+  it("+ Queue appends a library song to the host's queue", async () => {
+    const calls = mockNet();
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({ "x-host-key": "k" })} onState={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: "Add Midnight to the queue" }));
+    await waitFor(() => expect(calls.find((c) => c.url.endsWith("/queue"))?.body).toEqual({ trackIds: ["track_02"] }));
+    expect(calls.find((c) => c.url.endsWith("/queue"))?.method).toBe("PUT");
+  });
+
+  it("Shuffle puts every library song into the queue in random order", async () => {
+    const calls = mockNet();
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: "🔀 Shuffle" }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/queue"))).toBe(true));
+    const ids = (calls.find((c) => c.url.endsWith("/queue"))!.body as { trackIds: string[] }).trackIds;
+    expect([...ids].sort()).toEqual(["track_01", "track_02"]);
+  });
+
+  it("Clear library asks first, then empties it", async () => {
+    const calls = mockNet();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValueOnce(false).mockReturnValueOnce(true);
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: "Clear library" }));
+    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
+    await userEvent.click(screen.getByRole("button", { name: "Clear library" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "DELETE")?.url).toBe("/api/host/sessions/demo/library"));
+    expect(await screen.findByText("Library cleared.")).toBeInTheDocument();
+    confirm.mockRestore();
+  });
+});
+
+describe("shuffled", () => {
+  it("keeps every item exactly once", async () => {
+    const { shuffled } = await import("./LibraryCard");
+    const out = shuffled([1, 2, 3, 4, 5]);
+    expect([...out].sort()).toEqual([1, 2, 3, 4, 5]);
   });
 });

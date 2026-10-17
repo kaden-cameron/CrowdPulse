@@ -6,6 +6,7 @@ import { StageCanvas } from "../components/StageCanvas";
 import { Window } from "../components/Window";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useSessionAppearance } from "../lib/theme";
+import { useSpotifyCover } from "../lib/spotify/cover";
 
 export function StagePage() {
   const { sessionCode = "demo" } = useParams();
@@ -37,9 +38,8 @@ export function StagePage() {
     intensity: 0.35,
   };
 
-  const questPct = state
-    ? Math.round((state.crowdQuest.progress / state.crowdQuest.goal) * 100)
-    : 0;
+  const playingTrack = state?.nowPlaying ? state.tracks.find((t) => t.id === state.nowPlaying!.trackId) : undefined;
+  const cover = useSpotifyCover(playingTrack?.spotifyUri, playingTrack?.imageUrl);
 
   return (
     <main className="stage-page desktop" data-theme={visual.theme}>
@@ -69,9 +69,12 @@ export function StagePage() {
             <p className="on-air">
               CrowdPulse: <strong>ON AIR</strong> <span className="on-air-dot" aria-hidden>●</span>
             </p>
-            <p className="now-playing-title">
-              {state?.nowPlaying ? `${state.nowPlaying.artist} – ${state.nowPlaying.title}` : "Waiting for the first pick"}
-            </p>
+            <div className="stage-now">
+              {cover && <img className="stage-cover" src={cover} alt="" width={72} height={72} />}
+              <p className="now-playing-title">
+                {state?.nowPlaying ? `${state.nowPlaying.artist} – ${state.nowPlaying.title}` : "Waiting for the first pick"}
+              </p>
+            </div>
             <SongProgress state={state} />
             <p className="latest-event" aria-live="polite">
               {state?.latestEvent?.message ?? "Session warming up"}
@@ -119,15 +122,6 @@ export function StagePage() {
             </ol>
           </Window>
 
-          <Window title="Crowd quest" className="stage-quest">
-            <p className="quest-label">{state?.crowdQuest.label ?? "Crowd quest"}</p>
-            <div className="quest-bar">
-              <div style={{ width: `${questPct}%` }} />
-            </div>
-            <p className="quest-count">
-              {state?.crowdQuest.progress ?? 0} / {state?.crowdQuest.goal ?? 100}
-            </p>
-          </Window>
         </div>
       </div>
 

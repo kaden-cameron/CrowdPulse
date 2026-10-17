@@ -25,6 +25,7 @@ const TrackSchema = z
       )
       .optional(),
     imageUrl: z.string().regex(SPOTIFY_IMAGE_URL, "imageUrl must be a Spotify album image").optional(),
+    metaSource: z.enum(["catalog", "gemini", "default"]).optional(),
   })
   .strict();
 

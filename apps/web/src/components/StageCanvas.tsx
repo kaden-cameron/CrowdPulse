@@ -49,6 +49,14 @@ type Particle = {
   life: number;
 };
 
+/** The page's desktop colors (CSS custom properties set by the session's Appearance). */
+function pageColors(): { desk: string; cream: string } | null {
+  const css = getComputedStyle(document.documentElement);
+  const desk = css.getPropertyValue("--desk").trim();
+  const cream = css.getPropertyValue("--cream").trim();
+  return desk && cream ? { desk, cream } : null;
+}
+
 /** Only allowlisted themes render; intensity is clamped to 0–1. */
 export function sanitizeVisual(visual: VisualState): VisualState {
   return {
@@ -87,6 +95,8 @@ export function StageCanvas({
     let h = 0;
     let particles: Particle[] = [];
     let t = 0;
+    let frame = 0;
+    let page: { desk: string; cream: string } | null = null;
 
     const resize = () => {
       const parent = canvas.parentElement;
@@ -125,9 +135,11 @@ export function StageCanvas({
       const palette = THEMES[v.theme];
       t += 0.008 + v.intensity * 0.02;
 
+      // Background follows the session's colors (host Appearance), like the rest of the screen.
+      if (frame++ % 30 === 0) page = pageColors();
       const grad = ctx.createLinearGradient(0, 0, w, h);
-      grad.addColorStop(0, palette.bg0);
-      grad.addColorStop(1, palette.bg1);
+      grad.addColorStop(0, page?.desk ?? palette.bg0);
+      grad.addColorStop(1, page?.cream ?? palette.bg1);
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, w, h);
 
@@ -164,7 +176,7 @@ export function StageCanvas({
           particles = particles.slice(0, targetCount);
         }
 
-        ctx.fillStyle = palette.particle;
+        ctx.fillStyle = page ? `${palette.accent}cc` : palette.particle;
         particles = particles.filter((p) => {
           p.x += p.vx;
           p.y += p.vy;

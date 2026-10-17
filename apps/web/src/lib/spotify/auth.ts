@@ -1,6 +1,10 @@
+import { useEffect, useState } from "react";
+
 // Spotify login for the player page: Authorization Code with PKCE, entirely in the browser.
 // Only the app's Client ID is needed — the Client Secret is never used, sent or stored.
 // Tokens live in this tab's sessionStorage and are refreshed automatically.
+// The login runs in a popup, so the host page never reloads: a reload would drop the host's Auth0
+// sign-in, which is kept in memory only. If popups are blocked it falls back to a full redirect.
 
 const AUTHORIZE_URL = "https://accounts.spotify.com/authorize";
 const TOKEN_URL = "https://accounts.spotify.com/api/token";
@@ -69,10 +73,16 @@ export function redirectProblem(loc: Location = window.location): string | null 
   return null;
 }
 
+/** Fired on window when this tab's Spotify login changes (connected in the popup, or disconnected). */
+export const SPOTIFY_AUTH_EVENT = "crowdpulse:spotify-auth";
+
 export async function startSpotifyLogin(clientId: string, returnTo: string) {
+  // Open the popup first, synchronously inside the click, or the browser blocks it.
+  const popup = window.open("", "crowdpulse-spotify-login", "popup,width=480,height=760");
   const verifier = randomVerifier();
   const state = randomVerifier().slice(0, 24);
-  sessionStorage.setItem(PENDING_KEY, JSON.stringify({ verifier, state, returnTo, clientId }));
+  // localStorage, so the popup can read it; removed as soon as the login finishes.
+  localStorage.setItem(PENDING_KEY, JSON.stringify({ verifier, state, returnTo, clientId, popup: Boolean(popup) }));
   const url = new URL(AUTHORIZE_URL);
   url.search = new URLSearchParams({
     client_id: clientId,
@@ -83,18 +93,23 @@ export async function startSpotifyLogin(clientId: string, returnTo: string) {
     code_challenge: await codeChallenge(verifier),
     state,
   }).toString();
-  window.location.assign(url.toString());
+  if (popup) popup.location.href = url.toString();
+  else window.location.assign(url.toString());
 }
 
-/** On /spotify/callback: swap the code for tokens. Returns where to go next. */
+/**
+ * On /spotify/callback: swap the code for tokens. In the popup, the tokens go to the page that
+ * opened it and the result is "popup" (close this window); otherwise it's where to go next.
+ */
 export async function finishSpotifyLogin(params: URLSearchParams): Promise<string> {
-  const pending = JSON.parse(sessionStorage.getItem(PENDING_KEY) ?? "null") as {
+  const pending = JSON.parse(localStorage.getItem(PENDING_KEY) ?? "null") as {
     verifier: string;
     state: string;
     returnTo: string;
     clientId: string;
+    popup?: boolean;
   } | null;
-  sessionStorage.removeItem(PENDING_KEY);
+  localStorage.removeItem(PENDING_KEY);
   if (params.get("error")) throw new Error(`Spotify login was cancelled (${params.get("error")})`);
   if (!pending || params.get("state") !== pending.state) throw new Error("Spotify login expired — try again");
   const code = params.get("code");
@@ -106,8 +121,25 @@ export async function finishSpotifyLogin(params: URLSearchParams): Promise<strin
     client_id: pending.clientId,
     code_verifier: pending.verifier,
   });
-  saveTokens({ ...tokens, clientId: pending.clientId });
+  const saved: Tokens = { ...tokens, clientId: pending.clientId };
+  const opener = openerWindow();
+  if (pending.popup && opener) {
+    opener.sessionStorage.setItem(TOKENS_KEY, JSON.stringify(saved));
+    opener.dispatchEvent(new Event(SPOTIFY_AUTH_EVENT));
+    return "popup";
+  }
+  saveTokens(saved);
   return pending.returnTo;
+}
+
+/** The same-origin page that opened this popup, if any. */
+function openerWindow(): Window | null {
+  try {
+    const o = window.opener as Window | null;
+    return o && o.location.origin === window.location.origin ? o : null;
+  } catch {
+    return null; // cross-origin opener
+  }
 }
 
 export function spotifyConnected(): boolean {
@@ -116,6 +148,18 @@ export function spotifyConnected(): boolean {
 
 export function disconnectSpotify() {
   sessionStorage.removeItem(TOKENS_KEY);
+  window.dispatchEvent(new Event(SPOTIFY_AUTH_EVENT));
+}
+
+/** spotifyConnected(), re-rendering when the login changes (popup finished, disconnect). */
+export function useSpotifyConnected(): boolean {
+  const [connected, setConnected] = useState(spotifyConnected);
+  useEffect(() => {
+    const update = () => setConnected(spotifyConnected());
+    window.addEventListener(SPOTIFY_AUTH_EVENT, update);
+    return () => window.removeEventListener(SPOTIFY_AUTH_EVENT, update);
+  }, []);
+  return connected;
 }
 
 /** A valid access token, refreshed a minute before it expires. */

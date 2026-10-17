@@ -83,6 +83,11 @@ export interface SessionOptions {
   persist?: Persist;
 }
 
+/** Auto mode stops skipping ahead after this many songs in a row fail to play. */
+export const MAX_AUTO_FAILURES = 3;
+const SEEK_GRACE_MS = 5_000;
+const PRESET_LABEL: Record<string, string> = { sky: "Blue", flamingo: "Pink", mint: "Green", lemon: "Yellow", lavender: "Purple" };
+
 export class SessionStore {
   readonly sessionId: string;
   readonly sessionName: string;
@@ -124,8 +129,15 @@ export class SessionStore {
     durationMs: null,
     source: null,
     message: null,
+    seekSeq: 0,
   };
   private playerLastSeen = 0;
+  /** Host-ordered queue (track ids). Plays before voted songs. Saved and replayed. */
+  private hostQueue: string[] = [];
+  /** Songs in a row the player couldn't play; auto mode stops skipping at MAX_AUTO_FAILURES. */
+  private autoFailures = 0;
+  /** When the host last moved the song position (progress reports don't undo it right away). */
+  private seekedAt = 0;
   private playerWasOnline = false;
   private now: () => number;
   private persist: Persist;
@@ -383,13 +395,69 @@ export class SessionStore {
     });
   }
 
+  /**
+   * Host action: set the host's queue (ordered track ids). These play before voted songs.
+   * Unknown ids, duplicates and the playing song are dropped. Saved and replayed.
+   */
+  setHostQueue(trackIds: string[]): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const known = new Set(this.catalog.map((t) => t.id));
+      const unknown = trackIds.find((id) => !known.has(id));
+      if (unknown) return this.reject(`Unknown track ID ${unknown}`, 400);
+      const next = [...new Set(trackIds)].filter((id) => id !== this.nowPlaying?.id).slice(0, MAX_CATALOG_TRACKS);
+      const saved = await this.persistHostAction("host_queue", { trackIds: next });
+      if (saved) return saved;
+      this.hostQueue = next;
+      this.change({
+        type: "queue.host",
+        message: next.length ? `Host queue: ${next.length} song${next.length === 1 ? "" : "s"}` : "Host queue cleared — votes decide",
+      });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /** Host action: remove every song from the library except the one playing. Saved and replayed. */
+  clearLibrary(): Promise<EventOutcome & { removed?: number }> {
+    return this.exclusive(async () => {
+      const ids = this.catalog.filter((t) => t.id !== this.nowPlaying?.id).map((t) => t.id);
+      if (!ids.length) return this.reject("The library is already empty", 409);
+      const saved = await this.persistHostAction("catalog_clear", {});
+      if (saved) return saved;
+      this.applyClear();
+      this.change({ type: "library.cleared", message: `Cleared ${ids.length} song${ids.length === 1 ? "" : "s"} from the library` });
+      return { status: "accepted", state: this.getState(), removed: ids.length };
+    });
+  }
+
+  /**
+   * Host action: move the playing song to `positionMs`. The player follows (seekSeq). Not saved:
+   * a restart picks the position up from the player's next progress report.
+   */
+  seek(positionMs: number): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const pb = this.playback;
+      if (!this.nowPlaying || pb.status !== "playing" || !pb.durationMs) return this.reject("Nothing is playing", 409);
+      const pos = Math.max(0, Math.min(Math.round(positionMs), pb.durationMs - 1_000));
+      this.seekedAt = this.now();
+      this.playback = { ...pb, startedAt: new Date(this.now() - pos).toISOString(), seekSeq: pb.seekSeq + 1 };
+      this.bump();
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /** Recently played track ids, newest first (the playing song first). For Gemini's variety. */
+  recentlyPlayed(n: number): string[] {
+    const past = [...this.lastPlayedAt.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
+    return [...(this.nowPlaying ? [this.nowPlaying.id] : []), ...past.filter((id) => id !== this.nowPlaying?.id)].slice(0, n);
+  }
+
   /** Host action: the session's look. Stage and attendee screens follow it. Saved and replayed. */
   setAppearance(appearance: Appearance): Promise<EventOutcome> {
     return this.exclusive(async () => {
       const saved = await this.persistHostAction("appearance", { ...appearance });
       if (saved) return saved;
       this.appearance = { ...appearance };
-      this.change({ type: "appearance", message: `New look: ${appearance.preset} · ${appearance.mode}` });
+      this.change({ type: "appearance", message: `New look: ${PRESET_LABEL[appearance.preset] ?? appearance.preset} · ${appearance.mode}` });
       return { status: "accepted", state: this.getState() };
     });
   }
@@ -433,12 +501,15 @@ export class SessionStore {
     switch (input.event) {
       case "started":
       case "progress": {
+        this.autoFailures = 0;
         const wasPlaying = this.playback.status === "playing";
         const drift = this.playback.startedAt ? Math.abs(Date.parse(this.playback.startedAt) - Date.parse(startedAt)) : Infinity;
         this.playback = {
           ...this.playback,
           status: "playing",
-          startedAt: wasPlaying && drift < 2_000 ? this.playback.startedAt : startedAt,
+          // Right after a host seek the player hasn't jumped yet — keep the server's position.
+          startedAt:
+            wasPlaying && (drift < 2_000 || this.now() - this.seekedAt < SEEK_GRACE_MS) ? this.playback.startedAt : startedAt,
           durationMs: input.durationMs ?? this.playback.durationMs,
           source: input.source ?? this.playback.source,
           message: null,
@@ -454,14 +525,20 @@ export class SessionStore {
       case "error": {
         if (this.playback.status === "ended") return { status: "duplicate", state: this.getState() };
         const failed = input.event === "error";
-        if (this.playbackMode === "auto") {
+        this.autoFailures = failed ? this.autoFailures + 1 : 0;
+        const tooManyFailures = this.autoFailures >= MAX_AUTO_FAILURES;
+        if (this.playbackMode === "auto" && !tooManyFailures) {
           const next = await this.advanceAuto();
           if (next.status === "accepted") return next;
         }
         this.playback = {
           ...this.playback,
           status: failed ? "error" : "ended",
-          message: failed ? (input.message ?? "Playback failed").slice(0, 200) : null,
+          message: failed
+            ? (tooManyFailures && this.playbackMode === "auto"
+                ? `Auto play paused: ${this.autoFailures} songs in a row couldn't play. Last error: `
+                : "") + (input.message ?? "Playback failed").slice(0, 200)
+            : null,
         };
         this.change({
           type: failed ? "playback.error" : "playback.ended",
@@ -475,12 +552,7 @@ export class SessionStore {
   /** Auto mode: the top of the queue, or else the least-recently-played other track. */
   private advanceAuto(): Promise<EventOutcome> {
     return this.exclusive(() => {
-      const [top] = this.buildQueue();
-      const fallback = this.catalog
-        .map((t, idx) => ({ t, idx, played: this.lastPlayedAt.get(t.id) ?? 0 }))
-        .filter(({ t }) => t.id !== this.nowPlaying?.id)
-        .sort((a, b) => a.played - b.played || a.idx - b.idx)[0]?.t.id;
-      const nextId = top?.trackId ?? fallback;
+      const nextId = this.nextTrackId();
       if (!nextId) return Promise.resolve(this.reject("Nothing to play", 409));
       return this.advanceNow(nextId);
     });
@@ -524,9 +596,10 @@ export class SessionStore {
       if (this.nowPlaying?.id === trackId) return this.reject("Track is already playing", 409);
       nextId = trackId;
     } else {
-      const [next] = this.buildQueue();
-      if (!next) return this.reject("Queue is empty — no votes yet", 409);
-      nextId = next.trackId;
+      // Skip: the host's queue, then the top-voted song, then the least recently played one.
+      const next = this.nextTrackId();
+      if (!next) return this.reject("Nothing else to play — add more songs", 409);
+      nextId = next;
     }
     const saved = await this.persistHostAction("track_advance", { trackId: nextId });
     if (saved) return saved;
@@ -663,6 +736,15 @@ export class SessionStore {
           ) {
             this.appearance = { preset: meta.preset as Appearance["preset"], mode: meta.mode };
           }
+          break;
+        case "host_queue":
+          if (Array.isArray(meta.trackIds)) {
+            const known = new Set(this.catalog.map((t) => t.id));
+            this.hostQueue = (meta.trackIds as unknown[]).filter((id): id is string => typeof id === "string" && known.has(id));
+          }
+          break;
+        case "catalog_clear":
+          this.applyClear();
           break;
         case "playback_mode":
           if (meta.mode === "auto" || meta.mode === "dj") this.playbackMode = meta.mode;
@@ -811,7 +893,9 @@ export class SessionStore {
       | "playback_mode"
       | "appearance"
       | "catalog_add"
-      | "catalog_remove",
+      | "catalog_remove"
+      | "catalog_clear"
+      | "host_queue",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {
@@ -836,8 +920,13 @@ export class SessionStore {
     this.votes.set(trackId, voters);
   }
 
+  private applyClear() {
+    for (const t of this.catalog) if (t.id !== this.nowPlaying?.id) this.applyRemove(t.id);
+  }
+
   private applyRemove(trackId: string) {
     this.catalog = this.catalog.filter((t) => t.id !== trackId);
+    this.hostQueue = this.hostQueue.filter((id) => id !== trackId);
     this.votes.delete(trackId);
     this.boosts.delete(trackId);
     this.plays.delete(trackId);
@@ -870,6 +959,7 @@ export class SessionStore {
     if (!track) return trackId;
     if (this.nowPlaying) this.lastPlayedAt.set(this.nowPlaying.id, at);
     this.nowPlaying = track;
+    this.hostQueue = this.hostQueue.filter((id) => id !== track.id);
     this.votes.delete(track.id);
     this.boosts.delete(track.id);
     this.plays.set(track.id, (this.plays.get(track.id) ?? 0) + 1);
@@ -882,6 +972,7 @@ export class SessionStore {
       durationMs: null,
       source: null,
       message: null,
+      seekSeq: this.playback.seekSeq,
     };
     return track.title;
   }
@@ -901,7 +992,8 @@ export class SessionStore {
     this.questLevel = 1;
     this.questProgress = 0;
     this.hostVisual = null;
-    this.playback = { status: "idle", trackId: null, round: 0, startedAt: null, durationMs: null, source: null, message: null };
+    this.playback = { status: "idle", trackId: null, round: 0, startedAt: null, durationMs: null, source: null, message: null, seekSeq: this.playback.seekSeq };
+    this.hostQueue = [];
   }
 
   private playerOnline(): boolean {
@@ -970,10 +1062,17 @@ export class SessionStore {
 
   // Tracks with votes or boosts, ordered by score (votes + capped boost bonus) desc,
   // then least-recently-played, then catalog order.
+  /** The host's queue first (in order), then the top-voted songs. */
   private buildQueue(): QueueItem[] {
-    return this.catalog
+    const byId = new Map(this.catalog.map((t) => [t.id, t]));
+    const picked = this.hostQueue
+      .map((id) => byId.get(id))
+      .filter((t): t is CatalogTrack => !!t && t.id !== this.nowPlaying?.id)
+      .map((t) => ({ ...this.toQueueItem(t), hostPick: true }));
+    const hostIds = new Set(this.hostQueue);
+    const voted = this.catalog
       .map((t, idx) => ({ t, idx, score: this.voteCount(t.id) + BOOST_VOTE_WEIGHT * this.boostCount(t.id) }))
-      .filter(({ t, score }) => score > 0 && t.id !== this.nowPlaying?.id)
+      .filter(({ t, score }) => score > 0 && t.id !== this.nowPlaying?.id && !hostIds.has(t.id))
       .sort(
         (a, b) =>
           b.score - a.score ||
@@ -982,6 +1081,19 @@ export class SessionStore {
       )
       .slice(0, 5)
       .map(({ t }) => this.toQueueItem(t));
+    return [...picked, ...voted];
+  }
+
+  /** What plays next: the queue's first song, else the least recently played other song. */
+  private nextTrackId(): string | null {
+    const [top] = this.buildQueue();
+    if (top) return top.trackId;
+    return (
+      this.catalog
+        .map((t, idx) => ({ t, idx, played: this.lastPlayedAt.get(t.id) ?? 0 }))
+        .filter(({ t }) => t.id !== this.nowPlaying?.id)
+        .sort((a, b) => a.played - b.played || a.idx - b.idx)[0]?.t.id ?? null
+    );
   }
 
   private voteCount(trackId: string): number {

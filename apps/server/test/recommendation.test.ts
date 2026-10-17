@@ -212,3 +212,32 @@ describe.skipIf(!process.env.GEMINI_API_KEY)("Gemini live call", () => {
     expect(recommendation.responseId).toBeTruthy();
   });
 });
+
+describe("Gemini variety", () => {
+  it("leaves out songs that just played and recent suggestions", async () => {
+    const { buildSummary } = await import("../src/recommendation.js");
+    const store = new SessionStore("demo", "Demo");
+    await store.advance("track_01");
+    await store.advance("track_02");
+    const history = [{ proposal: { recommended_track_id: "track_03" }, status: "rejected" }] as never;
+    const s = buildSummary(store.getState(), 0, "hold_steady", history, store.recentlyPlayed(4));
+    const ids = s.eligible_tracks.map((t) => t.track_id);
+    expect(ids).not.toContain("track_01");
+    expect(ids).not.toContain("track_02");
+    expect(ids).not.toContain("track_03");
+    expect(s.recently_played).toEqual(["track_02", "track_01"]);
+  });
+
+  it("still offers something in a tiny library", async () => {
+    const { buildSummary } = await import("../src/recommendation.js");
+    const two = [
+      { id: "a", title: "A", artist: "x", genre: "pop", bpm: 100, energy: 0.5 },
+      { id: "b", title: "B", artist: "y", genre: "pop", bpm: 100, energy: 0.5 },
+    ];
+    const store = new SessionStore("demo", "Demo", { catalog: two });
+    await store.advance("a");
+    await store.advance("b");
+    const s = buildSummary(store.getState(), 0, "hold_steady", [], store.recentlyPlayed(4));
+    expect(s.eligible_tracks.map((t) => t.track_id)).toEqual(["a"]);
+  });
+});

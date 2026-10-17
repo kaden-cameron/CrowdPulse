@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   APPEARANCE_PRESETS,
   HOST_TARGETS,
+  MAX_CATALOG_TRACKS,
   MAX_TRACKS_PER_ADD,
   SPOTIFY_IMAGE_URL,
   PLAYBACK_MODES,
@@ -183,7 +184,8 @@ export function createApp(options: AppOptions) {
   const smallJson = express.json({ limit: "4kb" });
   const libraryJson = express.json({ limit: "64kb" });
   app.use((req, res, next) =>
-    req.method === "POST" && /^\/api\/host\/sessions\/[^/]+\/library$/.test(req.path)
+    (req.method === "POST" && /^\/api\/host\/sessions\/[^/]+\/library$/.test(req.path)) ||
+    (req.method === "PUT" && /^\/api\/host\/sessions\/[^/]+\/queue$/.test(req.path))
       ? libraryJson(req, res, next)
       : smallJson(req, res, next),
   );
@@ -288,8 +290,18 @@ export function createApp(options: AppOptions) {
         popularity: parsed.data.popularity,
         imageUrl: parsed.data.imageUrl,
       });
+      // New song from an attendee: Gemini estimates its genre (for the by-genre song list) and
+      // BPM/energy, like host imports. Songs already in the session skip the call.
+      const known = session.catalogTracks().some((t) => t.id === fromSpotify.id || t.spotifyUri === fromSpotify.spotifyUri);
+      const estimate =
+        !known && !parsed.data.genre && trackEstimator
+          ? (await estimateSongs(trackEstimator, [{ title: fromSpotify.title, artist: fromSpotify.artist }])).meta[0]
+          : null;
       const track = parseLiveTrack({
         ...fromSpotify,
+        ...(estimate?.metaSource === "gemini"
+          ? { genre: estimate.genre, bpm: estimate.bpm, energy: estimate.energy, metaSource: "gemini" }
+          : {}),
         ...(parsed.data.genre ? { genre: parsed.data.genre } : {}),
         ...(parsed.data.bpm != null ? { bpm: parsed.data.bpm } : {}),
         ...(parsed.data.energy != null ? { energy: parsed.data.energy } : {}),
@@ -495,6 +507,48 @@ export function createApp(options: AppOptions) {
     }
     log({ kind: "host.library_remove", sessionId: req.params.id, trackId: req.params.trackId });
     res.json({ status: "accepted" });
+  });
+
+  app.delete("/api/host/sessions/:id/library", ...requireHost, hostSession, async (req, res) => {
+    const outcome = await sessions.get(req.params.id)!.clearLibrary();
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    log({ kind: "host.library_clear", sessionId: req.params.id, removed: outcome.removed });
+    res.json(outcome);
+  });
+
+  // The host's own queue: ordered song ids that play before voted songs (also used by Shuffle).
+  const QueueSchema = z.object({ trackIds: z.array(z.string().regex(/^[A-Za-z0-9_-]{1,64}$/)).max(MAX_CATALOG_TRACKS) }).strict();
+  app.put("/api/host/sessions/:id/queue", ...requireHost, hostSession, async (req, res) => {
+    const parsed = QueueSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid queue" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.setHostQueue(parsed.data.trackIds);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    log({ kind: "host.queue", sessionId: req.params.id, songs: parsed.data.trackIds.length });
+    res.json(outcome);
+  });
+
+  const SeekSchema = z.object({ positionMs: z.number().int().min(0).max(24 * 3_600_000) }).strict();
+  app.post("/api/host/sessions/:id/playback/seek", ...requireHost, hostSession, async (req, res) => {
+    const parsed = SeekSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid position" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.seek(parsed.data.positionMs);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    res.json(outcome);
   });
 
   const AppearanceSchema = z

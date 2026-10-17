@@ -1,5 +1,5 @@
 import { startGeneratedTrack, type GeneratedTrack } from "./synth";
-import type { PlayableTrack, PlayerAdapter, StartedInfo } from "./types";
+import { PlayerUnavailableError, type PlayableTrack, type PlayerAdapter, type StartedInfo } from "./types";
 
 // Plays on the device this page runs on (the DJ laptop plugged into the PA). For each track it uses
 // an audio file listed in /audio/manifest.json, or else the generated demo version. Songs crossfade.
@@ -22,6 +22,7 @@ export class LocalPlayer implements PlayerAdapter {
   private endedCb: () => void = () => {};
   private endTimer: number | undefined;
   private generatedDurationS: number;
+  private lastTrack: PlayableTrack | null = null;
 
   constructor({ generatedDurationS = 60 }: { generatedDurationS?: number } = {}) {
     this.generatedDurationS = generatedDurationS;
@@ -65,8 +66,13 @@ export class LocalPlayer implements PlayerAdapter {
     this.token++;
   }
 
+  async seek(ms: number) {
+    if (this.current && this.lastTrack) await this.play(this.lastTrack, { startAtMs: ms });
+  }
+
   async play(track: PlayableTrack, { startAtMs = 0 }: { startAtMs?: number } = {}): Promise<StartedInfo> {
-    if (!this.ctx || !this.master) throw new Error("Audio is locked — press Start audio first");
+    if (!this.ctx || !this.master) throw new PlayerUnavailableError("Audio is locked — press Start audio first");
+    this.lastTrack = track;
     window.clearTimeout(this.endTimer);
     this.current?.stop(CROSSFADE_S); // crossfade: old fades out while the new one fades in
     const token = ++this.token;

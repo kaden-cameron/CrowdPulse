@@ -105,3 +105,93 @@ describe("playback", () => {
     expect(restored.getState().playback.mode).toBe("auto");
   });
 });
+
+describe("host queue, skip, seek, clear", () => {
+  it("the host's queue plays first, in order, before voted songs", async () => {
+    const { store, app } = setup();
+    await vote(store, "track_05");
+    const r = await request(app).put("/api/host/sessions/demo/queue").set(HOST).send({ trackIds: ["track_03", "track_01"] });
+    expect(r.status).toBe(200);
+    expect(store.getState().queue.map((q) => [q.trackId, !!q.hostPick])).toEqual([
+      ["track_03", true],
+      ["track_01", true],
+      ["track_05", false],
+    ]);
+    await store.advance(); // Skip
+    expect(store.getState().nowPlaying?.trackId).toBe("track_03");
+    expect(store.getState().queue[0].trackId).toBe("track_01"); // played pick leaves the queue
+  });
+
+  it("Skip works with no votes and no queue (least recently played song)", async () => {
+    const { store, app } = setup();
+    await store.advance("track_01");
+    const r = await request(app).post("/api/host/sessions/demo/advance").set(HOST).send({});
+    expect(r.status).toBe(200);
+    expect(store.getState().nowPlaying?.trackId).toBe("track_02");
+  });
+
+  it("the queue is host-only, validated, and survives a restart", async () => {
+    const saved: Required<EventRecord>[] = [];
+    let n = Date.now();
+    const store = new SessionStore("demo", "Demo", {
+      persist: async (r) => (saved.push({ ...r, time: new Date((n += 10)) } as Required<EventRecord>), "stored"),
+    });
+    const { app } = createApp({ sessions: new Map([["demo", store]]), hostKey: "k" });
+    expect((await request(app).put("/api/host/sessions/demo/queue").send({ trackIds: [] })).status).toBe(401);
+    expect((await request(app).put("/api/host/sessions/demo/queue").set(HOST).send({ trackIds: ["nope"] })).status).toBe(400);
+    await request(app).put("/api/host/sessions/demo/queue").set(HOST).send({ trackIds: ["track_04", "track_02", "track_04"] });
+    const restored = new SessionStore("demo", "Demo");
+    restored.replay(saved);
+    expect(restored.getState().queue.filter((q) => q.hostPick).map((q) => q.trackId)).toEqual(["track_04", "track_02"]);
+  });
+
+  it("Clear library removes everything but the playing song, and replays", async () => {
+    const saved: Required<EventRecord>[] = [];
+    let n = Date.now();
+    const store = new SessionStore("demo", "Demo", {
+      persist: async (r) => (saved.push({ ...r, time: new Date((n += 10)) } as Required<EventRecord>), "stored"),
+    });
+    const { app } = createApp({ sessions: new Map([["demo", store]]), hostKey: "k" });
+    await store.advance("track_03");
+    const r = await request(app).delete("/api/host/sessions/demo/library").set(HOST);
+    expect(r.status).toBe(200);
+    expect(store.getState().tracks.map((t) => t.id)).toEqual(["track_03"]);
+    expect((await request(app).delete("/api/host/sessions/demo/library").set(HOST)).status).toBe(409);
+    const restored = new SessionStore("demo", "Demo");
+    restored.replay(saved);
+    expect(restored.getState().tracks.map((t) => t.id)).toEqual(["track_03"]);
+  });
+
+  it("seek moves the song position and bumps seekSeq; progress reports don't undo it", async () => {
+    let t = Date.now();
+    const { store, app, report } = setup(() => t);
+    await store.advance("track_03");
+    await report({ event: "started", trackId: "track_03", round: 1, durationMs: 200_000, positionMs: 0 });
+    const r = await request(app).post("/api/host/sessions/demo/playback/seek").set(HOST).send({ positionMs: 90_000 });
+    expect(r.status).toBe(200);
+    const pb = store.getState().playback;
+    expect(pb.seekSeq).toBe(1);
+    expect(t - Date.parse(pb.startedAt!)).toBe(90_000);
+    t += 1_000;
+    await report({ event: "progress", trackId: "track_03", round: 1, positionMs: 6_000 }); // player hasn't jumped yet
+    expect(t - Date.parse(store.getState().playback.startedAt!)).toBe(91_000);
+  });
+
+  it("seek is refused when nothing is playing", async () => {
+    const { app } = setup();
+    expect((await request(app).post("/api/host/sessions/demo/playback/seek").set(HOST).send({ positionMs: 1000 })).status).toBe(409);
+  });
+
+  it("auto mode stops skipping after 3 songs in a row fail (no endless cycling)", async () => {
+    const { store, report, mode } = setup();
+    await mode("auto");
+    await store.advance("track_01");
+    for (let i = 0; i < 3; i++) {
+      const np = store.getState().playback;
+      await report({ event: "error", trackId: np.trackId, round: np.round, message: "not found on Spotify" });
+    }
+    const pb = store.getState().playback;
+    expect(pb.status).toBe("error");
+    expect(pb.message).toMatch(/Auto play paused: 3 songs in a row/);
+  });
+});

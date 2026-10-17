@@ -15,7 +15,7 @@ votes · boosts · Gemini · host ──▶ server: nowPlaying + playback state 
    - **Now playing** shows the album cover, the song, and a progress bar. Covers are saved when a song is added from Spotify. For songs added before that, the server looks the cover up on Spotify, which needs `SPOTIFY_CLIENT_SECRET`.
 2. On the host page, use the **Music playback** card:
    - **Auto play:** when a song ends, the top-voted track starts. If nothing has votes, it plays the least-recently-played track. Music never stops on its own.
-   - **DJ picks:** when a song ends, nothing else starts until the host taps **Play next ▶** or approves a Gemini recommendation.
+   - **DJ picks:** when a song ends, nothing else starts until the host taps **Skip ⏭** or approves a Gemini recommendation.
    - The card shows whether the player is online (it reports every 5 s), what's playing, and any playback error.
 3. The stage shows a progress bar under **Now playing** while a song is actually playing.
 
@@ -36,7 +36,7 @@ Songs crossfade over 1.5 s, and a limiter keeps the output from clipping the PA.
 
 - Only the host can send player reports or change the mode (Auth0 or the dev key), so attendees can't fake "song ended".
 - A report only counts for the **current track and round**. A second player tab, a stale report or a duplicate "ended" can't skip songs.
-- Host actions ("Play next", Gemini approval, "Start new run") are applied in order with in-flight votes, so the song that plays is the one the crowd and host see.
+- Host actions (Skip, Gemini approval, "Start new run") are applied in order with in-flight votes, so the song that plays is the one the crowd and host see.
 - The mode is saved in TigerData and survives restarts. If the player page reloads mid-song, it picks up where the server says the song is.
 
 API: `POST /api/host/sessions/:id/playback/mode {mode: "auto"|"dj"}` and `POST /api/host/sessions/:id/playback/report {event, trackId, round, positionMs?, durationMs?, source?, message?}`. The state is in `session.state.playback`.
@@ -67,15 +67,24 @@ The player page can play through **Spotify** instead of the laptop's own audio. 
 
 ### Building the song list from the host page
 
-The **Music library** window on `/host/demo` builds the session's song list straight from Spotify, so no catalog file is needed:
+The **Songs** window on `/host/demo` builds the session's song list straight from Spotify, so no catalog file is needed:
 
 1. **Connect Spotify** in that window. It's the same login as the player, plus permission to read your playlists. If you connected before this feature existed, the window shows **Reconnect Spotify** once.
 2. **Import a playlist:** paste its link (Share → Copy link to playlist) → **Preview** → **Add to library**. Up to 100 songs per import, and 150 in the library. Local files, podcasts and unavailable songs are skipped, and songs already in the library aren't added twice.
    - **Spotify only lets apps read playlists you own or collaborate on.** For someone else's playlist (even a public one), open it in Spotify, select the songs and add them to a playlist of your own, then import that.
-3. **Search:** type a song or artist → **Add** puts it in the library for attendees to vote on. **Play next** adds it if needed and starts it on the player straight away.
+3. **Search:** type a song or artist → **Add** puts it in the library for attendees to vote on. **Play now** adds it if needed and starts it straight away. Search runs on the server (needs `SPOTIFY_CLIENT_SECRET`), so it works without connecting Spotify; only playlist import needs your Spotify login, which opens in a popup so the host sign-in is kept.
 4. **Gemini estimates genre, BPM and energy** for new songs, in batches, using its general knowledge of each song. These are estimates, and the library list marks them "≈ Gemini estimate". Every value is checked before it's stored: plain-text genre, BPM 40–220, energy 0–1.
    - **If Gemini isn't configured or can't answer,** the song is still added with neutral values (110 BPM, energy 0.5), marked "default values".
 5. Remove songs with ✕ (not the one playing). The library is saved in TigerData and survives restarts and new runs, and Gemini isn't called again for songs already stored.
+
+### The queue, skipping and moving within a song
+
+- **The host's queue comes first.** **+ Queue** on a library song adds it to the end of the **Queue** window, and **🔀 Shuffle** puts the whole library there in random order. In the Queue window, ↑ / ↓ reorder, ✕ takes a song out, and **Clear queue** empties it. The crowd's top-voted songs play after the host's picks. Saved in TigerData.
+- **Skip ⏭** plays the next song in the queue now. If the queue is empty it plays the least recently played song, so it always works.
+- **Drag the position slider** in Now playing to jump within the song. The player, wherever it is, jumps too, and the projector's progress bar follows.
+- **Clear library** removes every song except the one playing (after a confirmation).
+- **Auto play never loops through broken songs.** If the player itself can't play (Spotify disconnected, not Premium), that device stops and asks the host to press Start audio again; nothing is skipped. If 3 songs in a row fail, auto play pauses and the host page shows the error.
+- **Gemini avoids repeats.** It's never offered the last 4 songs played or its own last 3 suggestions (unless the library is too small), and it sees how often it has suggested each song.
 
 A catalog file (below) is still supported for a fixed starting list. Songs added from the host page go on top of it.
 

@@ -30,7 +30,9 @@ export type PersistedEventType =
   | "playback_mode"
   | "appearance"
   | "catalog_add"
-  | "catalog_remove";
+  | "catalog_remove"
+  | "catalog_clear"
+  | "host_queue";
 
 export type PersistResult = "stored" | "duplicate";
 
