@@ -52,6 +52,8 @@ if (hostAuth.mode === "auth0" && !process.env.AUTH0_CLIENT_ID) {
 }
 // Browser origins allowed in production: the public URL plus any extras. Development allows any.
 const publicUrl = process.env.PUBLIC_URL?.trim();
+// Optional: QR / join link origin when developing locally (does not lock CORS the way PUBLIC_URL does).
+const joinPublicUrl = (process.env.JOIN_PUBLIC_URL?.trim() || publicUrl) || undefined;
 const corsOrigins = [
   ...(publicUrl ? [new URL(publicUrl).origin] : []),
   ...(process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean) ?? []),
@@ -136,7 +138,7 @@ const { app, handleEvent, isOriginAllowed } = createApp({
   recommenders,
   boosts,
   ipLimitPerMinute: Number(process.env.RATE_LIMIT_IP_PER_MIN || 6000),
-  publicUrl: publicUrl ? new URL(publicUrl).origin : undefined,
+  publicUrl: joinPublicUrl ? new URL(joinPublicUrl).origin : undefined,
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID?.trim() || undefined,
   exposeLanIp: !isProd,
 });

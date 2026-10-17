@@ -3,7 +3,7 @@ import type { IncomingMessage } from "node:http";
 import request from "supertest";
 import { describe, expect, it } from "vitest";
 import { createApp, type Sessions } from "../src/app.js";
-import { clientIp } from "../src/http.js";
+import { clientIp, pickLanIp } from "../src/http.js";
 import { SessionStore } from "../src/session.js";
 
 const req = (remoteAddress: string, xff?: string) =>
@@ -89,5 +89,18 @@ describe("stage QR link config", () => {
     const body = (await request(dev).get("/api/public-config")).body;
     expect(body.publicUrl).toBeNull();
     expect(body.lanIp === null || /^\d+\.\d+\.\d+\.\d+$/.test(body.lanIp)).toBe(true);
+  });
+
+  it("prefers Wi‑Fi over VPN / VMware when picking a LAN IP for the QR", () => {
+    const ifaces = {
+      ProtonVPN: [{ address: "10.2.0.2", family: "IPv4" as const, internal: false, cidr: "10.2.0.2/32", netmask: "255.255.255.255", mac: "" }],
+      "VMware Network Adapter VMnet1": [
+        { address: "192.168.152.1", family: "IPv4" as const, internal: false, cidr: "192.168.152.1/24", netmask: "255.255.255.0", mac: "" },
+      ],
+      "Wi-Fi": [
+        { address: "10.136.97.105", family: "IPv4" as const, internal: false, cidr: "10.136.97.105/16", netmask: "255.255.0.0", mac: "" },
+      ],
+    };
+    expect(pickLanIp(ifaces)).toBe("10.136.97.105");
   });
 });

@@ -1,6 +1,5 @@
 import cors from "cors";
 import express, { type RequestHandler } from "express";
-import { networkInterfaces } from "node:os";
 import { z } from "zod";
 import {
   HOST_TARGETS,
@@ -17,7 +16,7 @@ import {
 import { log } from "./log.js";
 import { RateLimiter } from "./rateLimit.js";
 import { authErrorHandler, createDevKeyHostAuth, type HostAuth } from "./auth.js";
-import { clientIp, originPolicy, securityHeaders } from "./http.js";
+import { clientIp, originPolicy, pickLanIp, securityHeaders } from "./http.js";
 import type { Database } from "./db.js";
 import type { RecommendationService } from "./recommendation.js";
 import { httpStatusFor, type BoostVerifier } from "./solana.js";
@@ -167,20 +166,14 @@ export function createApp(options: AppOptions) {
   app.use(cors(origins.list.length ? { origin: origins.list } : undefined));
   app.use(express.json({ limit: "4kb" }));
 
-  // Where the stage QR code should send phones. In production that's PUBLIC_URL. In development,
-  // a stage opened at localhost would encode a URL phones can't open, so offer the LAN IP instead.
+  // Where the stage QR code should send phones. Prefer PUBLIC_URL / JOIN_PUBLIC_URL; in
+  // development fall back to a real Wi‑Fi LAN IP (never the first VPN adapter).
   app.get("/api/public-config", (_req, res) => {
-    let lanIp: string | null = null;
-    if (options.exposeLanIp) {
-      for (const list of Object.values(networkInterfaces())) {
-        const v4 = list?.find((a) => a.family === "IPv4" && !a.internal);
-        if (v4) {
-          lanIp = v4.address;
-          break;
-        }
-      }
-    }
-    res.json({ publicUrl: options.publicUrl ?? null, lanIp, spotifyClientId: options.spotifyClientId ?? null });
+    res.json({
+      publicUrl: options.publicUrl ?? null,
+      lanIp: options.exposeLanIp ? pickLanIp() : null,
+      spotifyClientId: options.spotifyClientId ?? null,
+    });
   });
 
   app.get("/api/health", async (_req, res) => {
