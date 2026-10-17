@@ -11,6 +11,8 @@ sudo -u crowdpulse git config --global --add safe.directory "$APP" 2>/dev/null |
 echo "→ pulling latest code"
 sudo -u crowdpulse git fetch --quiet origin
 sudo -u crowdpulse git reset --hard --quiet origin/main
+# Normalize if the script was edited on Windows (CRLF breaks the shebang).
+sed -i 's/\r$//' "$APP/deploy/update.sh" 2>/dev/null || true
 echo "  now at $(sudo -u crowdpulse git log --oneline -1)"
 
 echo "→ installing dependencies"

@@ -22,8 +22,9 @@ export function pickLanIp(
   for (const [name, list] of Object.entries(ifaces)) {
     if (!list || SKIP_IFACE.test(name)) continue;
     for (const a of list) {
-      const family = typeof a.family === "string" ? a.family : a.family === 4 ? "IPv4" : "IPv6";
-      if (family !== "IPv4" || a.internal) continue;
+      // Node types use "IPv4" | "IPv6"; older runtimes used numeric 4 / 6.
+      const family = String(a.family);
+      if ((family !== "IPv4" && family !== "4") || a.internal) continue;
       if (a.cidr?.endsWith("/32")) continue;
       const address = a.address;
       let score = 0;
