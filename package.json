@@ -1,0 +1,13 @@
+{
+  "name": "crowdpulse",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=@crowdpulse/web",
+    "dev:server": "npm run dev --workspace=@crowdpulse/server",
+    "build": "npm run build --workspace=@crowdpulse/shared && npm run build --workspace=@crowdpulse/web && npm run build --workspace=@crowdpulse/server"
+  }
+}
