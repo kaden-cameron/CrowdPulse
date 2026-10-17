@@ -16,3 +16,5 @@ apps/server/data/
 *.sqlite-wal
 test-results
 playwright-report
+
+.local/
