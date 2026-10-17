@@ -2,12 +2,14 @@ import cors from "cors";
 import express, { type RequestHandler } from "express";
 import { z } from "zod";
 import {
+  APPEARANCE_PRESETS,
   HOST_TARGETS,
   PLAYBACK_MODES,
   MAX_TAPS_PER_BATCH,
   MOODS,
   THEME_ALLOWLIST,
   type EventResultMessage,
+  type AppearancePreset,
   type HostTarget,
   type PlaybackMode,
   type VisualTheme,
@@ -284,6 +286,28 @@ export function createApp(options: AppOptions) {
       message: z.string().max(200).optional(),
     })
     .strict();
+
+  const AppearanceSchema = z
+    .object({
+      preset: z.enum(APPEARANCE_PRESETS as unknown as [AppearancePreset, ...AppearancePreset[]]),
+      mode: z.enum(["light", "dark"]),
+    })
+    .strict();
+
+  app.post("/api/host/sessions/:id/appearance", ...requireHost, hostSession, async (req, res) => {
+    const parsed = AppearanceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid appearance" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.setAppearance(parsed.data);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    log({ kind: "host.appearance", sessionId: req.params.id, ...parsed.data });
+    res.json(outcome);
+  });
 
   app.post("/api/host/sessions/:id/playback/mode", ...requireHost, hostSession, async (req, res) => {
     const parsed = ModeSchema.safeParse(req.body ?? {});

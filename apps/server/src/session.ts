@@ -4,6 +4,9 @@ import {
   DEMO_TRACKS,
   MAX_BOOSTS_PER_TRACK,
   MOODS,
+  APPEARANCE_PRESETS,
+  DEFAULT_APPEARANCE,
+  type Appearance,
   type LatestEvent,
   type PlaybackMode,
   type PlaybackReportEvent,
@@ -111,6 +114,7 @@ export class SessionStore {
   private listeners = new Set<() => void>();
   private energyHistory: { at: number; score: number }[] = [];
   private playbackMode: PlaybackMode = "dj";
+  private appearance: Appearance = DEFAULT_APPEARANCE;
   private playback: Omit<PlaybackState, "mode" | "playerOnline"> = {
     status: "idle",
     trackId: null,
@@ -181,6 +185,7 @@ export class SessionStore {
       },
       visualMode: this.hostVisual ? "host" : "auto",
       playback: { ...this.playback, mode: this.playbackMode, playerOnline: this.playerOnline() },
+      appearance: { ...this.appearance },
       crowdQuest: {
         label: `Quest ${this.questLevel}: send ${this.questGoal()} hype taps`,
         progress: this.questProgress,
@@ -320,6 +325,17 @@ export class SessionStore {
         : "Stage visuals follow the crowd again",
     });
     return { status: "accepted", state: this.getState() };
+  }
+
+  /** Host action: the session's look. Stage and attendee screens follow it. Saved and replayed. */
+  setAppearance(appearance: Appearance): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const saved = await this.persistHostAction("appearance", { ...appearance });
+      if (saved) return saved;
+      this.appearance = { ...appearance };
+      this.change({ type: "appearance", message: `New look: ${appearance.preset} · ${appearance.mode}` });
+      return { status: "accepted", state: this.getState() };
+    });
   }
 
   /** Host action: auto (songs follow each other) or DJ picks (host starts each song). Saved and replayed. */
@@ -544,6 +560,14 @@ export class SessionStore {
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
           }
           break;
+        case "appearance":
+          if (
+            APPEARANCE_PRESETS.includes(meta.preset as Appearance["preset"]) &&
+            (meta.mode === "light" || meta.mode === "dark")
+          ) {
+            this.appearance = { preset: meta.preset as Appearance["preset"], mode: meta.mode };
+          }
+          break;
         case "playback_mode":
           if (meta.mode === "auto" || meta.mode === "dj") this.playbackMode = meta.mode;
           break;
@@ -676,7 +700,7 @@ export class SessionStore {
 
   /** Returns a rejection if the host action could not be saved; otherwise null. */
   private async persistHostAction(
-    eventType: "host_visual" | "track_advance" | "session_reset" | "playback_mode",
+    eventType: "host_visual" | "track_advance" | "session_reset" | "playback_mode" | "appearance",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {

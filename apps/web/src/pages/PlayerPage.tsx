@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
-import { ConnectionBadge } from "../components/ConnectionBadge";
+import { useParams, useSearchParams } from "react-router-dom";
+import { Dock } from "../components/Dock";
+import { MenuBar } from "../components/MenuBar";
 import { useHostAccess } from "../components/HostAccess";
 import { useSessionSocket } from "../hooks/useSessionSocket";
+import { useSessionAppearance } from "../lib/theme";
 import { reportPlayback, type PlaybackReport } from "../lib/host";
 import { decide, type Playing } from "../lib/player/follow";
 import { LocalPlayer } from "../lib/player/localPlayer";
@@ -37,6 +39,7 @@ export function PlayerPage() {
   const generatedDurationS = Math.max(3, Math.min(600, Number(params.get("demoSeconds")) || 60));
   const access = useHostAccess();
   const { state, status, lastMessageAt } = useSessionSocket(sessionCode, "stage");
+  useSessionAppearance(sessionCode, state?.appearance);
   const config = usePublicConfig();
   const [source, setSource] = useState<Source>(() => {
     try {
@@ -184,13 +187,8 @@ export function PlayerPage() {
 
   return (
     <main className="host-page">
-      <header className="page-top">
-        <Link to="/" className="brand-inline">
-          CrowdPulse
-        </Link>
-        <ConnectionBadge status={status} lastMessageAt={lastMessageAt} />
-      </header>
-      <section className="host-grid">
+      <MenuBar title="Player" status={status} lastMessageAt={lastMessageAt} />
+      <section className="host-grid player-grid">
         <div className="host-block">
           <h1>Player · {state?.sessionName ?? sessionCode}</h1>
           <p className="host-sub">
@@ -201,6 +199,7 @@ export function PlayerPage() {
         </div>
 
         <div className="host-block player-block">
+          <h2>Now playing</h2>
           <fieldset className="mood-field compact-field">
             <legend>Play music from</legend>
             <div className="target-row two">
@@ -285,6 +284,7 @@ export function PlayerPage() {
           )}
         </div>
       </section>
+      <Dock sessionCode={sessionCode} />
     </main>
   );
 }

@@ -81,6 +81,8 @@ export interface SessionState {
   visualState: VisualState;
   visualMode: VisualMode;
   playback: PlaybackState;
+  /** Session look (color preset + light/dark), set by the host. */
+  appearance: Appearance;
   crowdQuest: {
     label: string;
     progress: number;
@@ -156,6 +158,17 @@ export const THEME_ALLOWLIST: VisualTheme[] = [
 export const MOODS: Mood[] = ["chill", "hyped", "focused", "wild"];
 
 export const MAX_TAPS_PER_BATCH = 30;
+
+// --- Appearance: chosen on the host page; every screen in the session (stage, phones) follows it ---
+
+export const APPEARANCE_PRESETS = ["sky", "flamingo", "mint", "lemon", "lavender"] as const;
+export type AppearancePreset = (typeof APPEARANCE_PRESETS)[number];
+export type AppearanceMode = "light" | "dark";
+export interface Appearance {
+  preset: AppearancePreset;
+  mode: AppearanceMode;
+}
+export const DEFAULT_APPEARANCE: Appearance = { preset: "sky", mode: "light" };
 
 // --- Playback (the player page on the DJ laptop follows nowPlaying and reports back) ---
 

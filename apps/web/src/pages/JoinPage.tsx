@@ -3,9 +3,11 @@ import { Link, useParams } from "react-router-dom";
 import type { BoostConfig, Mood } from "@crowdpulse/shared";
 import { BoostPanel } from "../components/BoostPanel";
 import { fetchBoostConfig } from "../lib/solana";
-import { ConnectionBadge } from "../components/ConnectionBadge";
+import { MenuBar } from "../components/MenuBar";
+import { Window } from "../components/Window";
 import { VoteButton } from "../components/VoteButton";
 import { useSessionSocket } from "../hooks/useSessionSocket";
+import { useSessionAppearance } from "../lib/theme";
 
 const MOODS: { id: Mood; label: string; hint: string }[] = [
   { id: "chill", label: "Chill", hint: "Laid-back waves" },
@@ -28,6 +30,7 @@ export function JoinPage() {
     submitVote,
     tap,
   } = useSessionSocket(sessionCode, "attendee");
+  useSessionAppearance(sessionCode, state?.appearance);
 
   // Which run this phone joined. A host "Start new run" bumps state.run, which sends everyone
   // back to the mood step for the new run.
@@ -64,40 +67,31 @@ export function JoinPage() {
   if (status === "not_found") {
     return (
       <main className="join-page">
-        <header className="page-top">
-          <Link to="/" className="brand-inline">
-            CrowdPulse
-          </Link>
-          <ConnectionBadge status={status} />
-        </header>
-        <section className="join-panel">
-          <h1>Session not found</h1>
-          <p className="privacy-note">
-            Check the code on the stage screen and try again.
-          </p>
-        </section>
+        <MenuBar status={status} />
+        <div className="join-stack">
+          <Window title="Hmm…" className="join-panel" headingLevel={1}>
+            <p className="window-heading">Session not found</p>
+            <p className="privacy-note">Check the code on the stage screen and try again.</p>
+          </Window>
+        </div>
       </main>
     );
   }
 
   return (
     <main className="join-page">
-      <header className="page-top">
-        <Link to="/" className="brand-inline">
-          CrowdPulse
-        </Link>
-        <ConnectionBadge status={status} lastMessageAt={lastMessageAt} />
-      </header>
+      <MenuBar status={status} lastMessageAt={lastMessageAt} />
 
+      <div className="join-stack">
       {step === "join" ? (
-        <section className="join-panel">
+        <Window title="Welcome" className="join-panel" headingLevel={2}>
           {newRun && (
             <p className="feedback feedback-pending" role="status">
               A new run just started — pick your mood to jump back in.
             </p>
           )}
           <p className="session-kicker">You&apos;re joining</p>
-          <h1>{state?.sessionName ?? "Loading session…"}</h1>
+          <h1 className="window-heading">{state?.sessionName ?? "Loading session…"}</h1>
           <p className="privacy-note">
             We use a random anonymous ID on this device — no name, email,
             location, or microphone. Votes and taps are shared only as totals.
@@ -129,14 +123,23 @@ export function JoinPage() {
           >
             Continue to vote
           </button>
-        </section>
+        </Window>
       ) : (
-        <section className="vote-panel">
+        <>
+        <Window title="Vote" className="vote-panel">
           <div className="vote-heading">
-            <h1>Shape the queue</h1>
-            <p>
-              Energy {state?.energyScore ?? "—"} · Theme{" "}
-              {state?.visualState.theme.replace("_", " ") ?? "—"}
+            <h1 className="window-heading">Shape the queue</h1>
+            <p className="on-air">
+              {state?.nowPlaying ? (
+                <>
+                  <strong>ON AIR</strong> <span className="on-air-dot" aria-hidden>●</span> {state.nowPlaying.title}
+                </>
+              ) : (
+                "Nothing playing yet"
+              )}
+            </p>
+            <p className="vote-stats">
+              Energy {state?.energyScore ?? "—"} · {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
             </p>
           </div>
 
@@ -157,7 +160,7 @@ export function JoinPage() {
             </p>
           )}
 
-          <ul className="track-list">
+          <ul className="track-list panel">
             {(state?.tracks ?? []).map((track) => (
               <li key={track.id} className="track-row">
                 <div>
@@ -204,10 +207,10 @@ export function JoinPage() {
             />
           )}
 
-          <section className="hype-panel" aria-labelledby="hype-title">
-            <h2 id="hype-title">
-              {state?.crowdQuest.label ?? "Crowd quest"}
-            </h2>
+        </Window>
+
+        <Window title="Crowd quest" className="hype-panel">
+            <p className="quest-label">{state?.crowdQuest.label ?? "Crowd quest"}</p>
             <div className="quest-bar">
               <div
                 style={{
@@ -226,14 +229,14 @@ export function JoinPage() {
             >
               Hype tap 🔥 <span className="hype-count">({myTaps} from you)</span>
             </button>
-          </section>
+        </Window>
 
           <p className="stage-link">
-            Watching on the big screen?{" "}
-            <Link to={`/stage/${sessionCode}`}>Open stage view</Link>
+            Watching on the big screen? <Link to={`/stage/${sessionCode}`}>Open stage view</Link>
           </p>
-        </section>
+        </>
       )}
+      </div>
     </main>
   );
 }

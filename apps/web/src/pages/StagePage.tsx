@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import QRCode from "qrcode";
-import { ConnectionBadge } from "../components/ConnectionBadge";
+import { MenuBar } from "../components/MenuBar";
 import { StageCanvas } from "../components/StageCanvas";
+import { Window } from "../components/Window";
 import { useSessionSocket } from "../hooks/useSessionSocket";
+import { useSessionAppearance } from "../lib/theme";
 
 export function StagePage() {
   const { sessionCode = "demo" } = useParams();
@@ -11,6 +13,7 @@ export function StagePage() {
     sessionCode,
     "stage",
   );
+  useSessionAppearance(sessionCode, state?.appearance);
   const joinBase = useJoinBase();
   const joinUrl = `${joinBase.origin}/join/${encodeURIComponent(sessionCode)}`;
   const [qr, setQr] = useState<string | null>(null);
@@ -39,53 +42,66 @@ export function StagePage() {
     : 0;
 
   return (
-    <main className="stage-page" data-theme={visual.theme}>
-      <StageCanvas visual={visual} paused={!live} />
+    <main className="stage-page desktop" data-theme={visual.theme}>
+      <MenuBar title={state?.sessionName ?? "Stage"} status={status} lastMessageAt={lastMessageAt} />
 
-      <div className="stage-overlay">
-        <header className="stage-header">
-          <div>
-            <p className="brand-mark stage-brand">CrowdPulse</p>
-            <h1 className="stage-session">
-              {state?.sessionName ?? "Connecting…"}
-            </h1>
-          </div>
-          <div className="stage-header-meta">
-            <ConnectionBadge status={status} lastMessageAt={lastMessageAt} />
-            <p className="freshness">
-              {state
-                ? `Updated ${new Date(state.updatedAt).toLocaleTimeString()}`
-                : "Waiting for server"}
-            </p>
-          </div>
-        </header>
-
-        <div className="stage-center">
-          <p className="theme-label">{visual.theme.replaceAll("_", " ")}</p>
-          <div className="energy-block" aria-label="Energy meter">
-            <div className="energy-score">{state?.energyScore ?? 0}</div>
-            <div className="energy-bar-track">
-              <div
-                className="energy-bar-fill"
-                style={{ width: `${state?.energyScore ?? 0}%` }}
-              />
+      <div className="stage-desktop">
+        <Window title="CrowdPulse TV" className="stage-tv" headingLevel={1}>
+          <div className="tv-screen">
+            <StageCanvas visual={visual} paused={!live} />
+            <div className="tv-dither" aria-hidden />
+            <div className="tv-overlay">
+              <span className="tv-tag">{visual.theme.replaceAll("_", " ")}</span>
+              <div className="energy-block" aria-label={`Crowd energy ${state?.energyScore ?? 0}`}>
+                <div className="energy-score">{state?.energyScore ?? 0}</div>
+                <div className="energy-bar-track">
+                  <div className="energy-bar-fill" style={{ width: `${state?.energyScore ?? 0}%` }} />
+                </div>
+                <p className="energy-caption">crowd energy</p>
+              </div>
             </div>
-            <p className="energy-caption">Live engagement</p>
+            <div className="tv-strip" aria-hidden>
+              <span>▶ live</span>
+              <span>{Math.round(visual.intensity * 100)}% intensity</span>
+            </div>
           </div>
-          <div className="now-playing">
-            <p className="theme-label">Now playing</p>
+          <div className="panel now-playing">
+            <p className="on-air">
+              CrowdPulse: <strong>ON AIR</strong> <span className="on-air-dot" aria-hidden>●</span>
+            </p>
             <p className="now-playing-title">
-              {state?.nowPlaying
-                ? `${state.nowPlaying.title} — ${state.nowPlaying.artist}`
-                : "Waiting for the first pick"}
+              {state?.nowPlaying ? `${state.nowPlaying.artist} – ${state.nowPlaying.title}` : "Waiting for the first pick"}
             </p>
             <SongProgress state={state} />
+            <p className="latest-event" aria-live="polite">
+              {state?.latestEvent?.message ?? "Session warming up"}
+            </p>
           </div>
-        </div>
+        </Window>
 
-        <footer className="stage-footer">
-          <section className="stage-queue">
-            <h2>Next up</h2>
+        <div className="stage-col">
+          <Window title="Join the party" className="join-window">
+            <div className="join-qr">
+              {qr && (
+                <div className="join-qr-code">
+                  <img src={qr} alt={`QR code to join at ${joinUrl}`} />
+                </div>
+              )}
+              <p className="join-qr-hint">
+                Scan to vote
+                <strong>{joinUrl.replace(/^https?:\/\//, "")}</strong>
+                <span>{state?.participants ?? 0} in the crowd</span>
+                {joinBase.warning && <span className="join-qr-warning">{joinBase.warning}</span>}
+              </p>
+            </div>
+            {!!state?.simulatedParticipants && (
+              <p className="demo-data-badge" role="note">
+                Demo data · {state.simulatedParticipants} simulated attendees
+              </p>
+            )}
+          </Window>
+
+          <Window title="Up next" className="stage-queue" bodyClassName="panel">
             <ol>
               {(state?.queue.length ? state.queue : []).map((item, i) => (
                 <li key={item.trackId}>
@@ -99,53 +115,25 @@ export function StagePage() {
                   </span>
                 </li>
               ))}
-              {!state?.queue.length && (
-                <li className="empty-queue">Votes will fill the queue</li>
-              )}
+              {!state?.queue.length && <li className="empty-queue">Votes will fill the queue</li>}
             </ol>
-          </section>
+          </Window>
 
-          <section className="stage-side">
-            <div className="quest">
-              <h2>{state?.crowdQuest.label ?? "Crowd quest"}</h2>
-              <div className="quest-bar">
-                <div style={{ width: `${questPct}%` }} />
-              </div>
-              <p>
-                {state?.crowdQuest.progress ?? 0} /{" "}
-                {state?.crowdQuest.goal ?? 100}
-              </p>
+          <Window title="Crowd quest" className="stage-quest">
+            <p className="quest-label">{state?.crowdQuest.label ?? "Crowd quest"}</p>
+            <div className="quest-bar">
+              <div style={{ width: `${questPct}%` }} />
             </div>
-            <div className="latest-event" aria-live="polite">
-              <h2>Latest</h2>
-              <p>{state?.latestEvent?.message ?? "Session warming up"}</p>
-            </div>
-            <div className="join-qr">
-              {qr && (
-                <div className="join-qr-code">
-                  <img src={qr} alt={`QR code to join at ${joinUrl}`} />
-                </div>
-              )}
-              <p className="join-qr-hint">
-                {joinUrl.replace(/^https?:\/\//, "")}
-                <span>{state?.participants ?? 0} in the crowd</span>
-                {joinBase.warning && <span className="join-qr-warning">{joinBase.warning}</span>}
-              </p>
-            </div>
-            {!!state?.simulatedParticipants && (
-              <p className="demo-data-badge" role="note">
-                Demo data · {state.simulatedParticipants} simulated attendees
-              </p>
-            )}
-          </section>
-        </footer>
+            <p className="quest-count">
+              {state?.crowdQuest.progress ?? 0} / {state?.crowdQuest.goal ?? 100}
+            </p>
+          </Window>
+        </div>
       </div>
 
       {!live && status !== "connecting" && (
         <div className="stage-stale" role="alert">
-          {status === "not_found"
-            ? "Session not found"
-            : "Disconnected — live data paused"}
+          {status === "not_found" ? "Session not found" : "Disconnected — live data paused"}
         </div>
       )}
     </main>

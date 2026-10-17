@@ -1,5 +1,6 @@
 import type {
   AiStatus,
+  Appearance,
   HostTarget,
   PlaybackMode,
   PlaybackReportEvent,
@@ -95,3 +96,6 @@ export async function reportPlayback(sessionId: string, auth: HostHeaders, repor
   if (!res.ok) throw new Error(data.error ?? `Report failed (${res.status})`);
   return { stale: false as const };
 }
+
+export const hostSetAppearance = (sessionId: string, auth: HostHeaders, appearance: Appearance) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/appearance`, auth, appearance);

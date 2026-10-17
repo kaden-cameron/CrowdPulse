@@ -206,3 +206,35 @@ test("Spotify source explains what's missing instead of failing silently", async
   await page.getByRole("button", { name: /^This laptop/ }).click();
   await expect(page.locator(".player-start")).toBeEnabled();
 });
+
+test("The host picks the look; the big screen and attendee phones follow it live", async ({ browser, request }) => {
+  const stage = await openStage(browser);
+  const phone = await openPhone(browser);
+  for (const p of [stage, phone]) {
+    await expect(p.locator("html")).toHaveAttribute("data-preset", "sky");
+    await expect(p.locator("html")).toHaveAttribute("data-mode", "light");
+  }
+  // Attendees and the projector don't get their own theme control.
+  await expect(phone.getByRole("button", { name: /Theme/ })).toHaveCount(0);
+
+  const host = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
+  await host.goto("/host/demo");
+  await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  const card = host.locator(".appearance-card");
+  await card.getByText("Mint").click();
+  await expect(host.getByText(/Look changed to mint · light/)).toBeVisible();
+  await card.getByText("Dark", { exact: true }).click();
+  await expect(host.getByText(/Look changed to mint · dark/)).toBeVisible();
+
+  // Both other screens switch without reloading.
+  for (const p of [stage, phone, host]) {
+    await expect(p.locator("html")).toHaveAttribute("data-preset", "mint");
+    await expect(p.locator("html")).toHaveAttribute("data-mode", "dark");
+  }
+  await expect(phone.locator("body")).toHaveCSS("background-color", "rgb(10, 43, 30)");
+  await phone.reload();
+  await expect(phone.locator("html")).toHaveAttribute("data-preset", "mint");
+
+  // Put the default back for other tests.
+  await request.post("/api/host/sessions/demo/appearance", { headers: { "x-host-key": HOST_KEY }, data: { preset: "sky", mode: "light" } });
+});

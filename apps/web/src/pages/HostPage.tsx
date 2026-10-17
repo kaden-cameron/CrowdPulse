@@ -8,11 +8,14 @@ import {
 } from "@crowdpulse/shared";
 import { AiPanel } from "../components/AiPanel";
 import { AnalyticsPanel } from "../components/AnalyticsPanel";
-import { ConnectionBadge } from "../components/ConnectionBadge";
+import { Dock } from "../components/Dock";
+import { MenuBar } from "../components/MenuBar";
 import { useHostAccess } from "../components/HostAccess";
 import { useMetrics } from "../hooks/useMetrics";
 import { useSessionSocket } from "../hooks/useSessionSocket";
-import { hostAdvance, hostPlaybackMode, hostReset, hostSetVisual } from "../lib/host";
+import { useSessionAppearance } from "../lib/theme";
+import { AppearanceCard } from "../components/AppearanceCard";
+import { hostAdvance, hostPlaybackMode, hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
 
 
 export function HostPage() {
@@ -21,6 +24,7 @@ export function HostPage() {
     sessionCode,
     "host",
   );
+  useSessionAppearance(sessionCode, state?.appearance);
   const { metrics, error: metricsError } = useMetrics(sessionCode);
   const access = useHostAccess();
   const [theme, setTheme] = useState<VisualTheme>("calm_waves");
@@ -53,12 +57,7 @@ export function HostPage() {
 
   return (
     <main className="host-page">
-      <header className="page-top">
-        <Link to="/" className="brand-inline">
-          CrowdPulse
-        </Link>
-        <ConnectionBadge status={status} lastMessageAt={lastMessageAt} />
-      </header>
+      <MenuBar title="Host" status={status} lastMessageAt={lastMessageAt} />
 
       <section className="host-grid">
         <div className="host-block">
@@ -121,6 +120,16 @@ export function HostPage() {
           }
           onPlayNext={() =>
             run("Playing the top-voted track", async () => hostAdvance(sessionCode, await access.getHeaders()))
+          }
+        />
+
+        <AppearanceCard
+          appearance={state?.appearance}
+          disabled={busy || !access.ready}
+          onChange={(next) =>
+            run(`Look changed to ${next.preset} · ${next.mode}`, async () =>
+              hostSetAppearance(sessionCode, await access.getHeaders(), next),
+            )
           }
         />
 
@@ -268,6 +277,7 @@ export function HostPage() {
           </div>
         </div>
       </section>
+      <Dock sessionCode={sessionCode} />
     </main>
   );
 }
@@ -290,7 +300,7 @@ export function HostSignIn() {
             autoComplete="off"
             value={access.devKey}
             onChange={(e) => access.setDevKey(e.target.value)}
-            placeholder="local-dev-host-key"
+            placeholder="Type the dev host key"
           />
         </label>
       </div>
