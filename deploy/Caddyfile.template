@@ -1,0 +1,17 @@
+# Caddy reverse proxy (Doc 07). cloud-init fills in the site address on the next line.
+# Caddy gets a Let's Encrypt certificate automatically and proxies WebSockets without extra config.
+__DOMAIN__ {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8787 {
+		# Express trusts X-Forwarded-For only from loopback, which is where Caddy connects from.
+		header_up X-Forwarded-For {remote_host}
+	}
+	log {
+		output stdout
+		format console
+	}
+}

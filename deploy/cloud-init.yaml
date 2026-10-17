@@ -1,0 +1,77 @@
+#cloud-config
+# CrowdPulse on a Vultr Cloud Compute instance (Ubuntu 24.04 LTS). Doc 07.
+# Paste this into "Cloud-Init User-Data" when creating the instance. It installs Node 24, Caddy
+# (automatic HTTPS) and the app, then waits for you to fill in /etc/crowdpulse/crowdpulse.env.
+# No secrets belong in this file.
+#
+# Optional: replace the empty DOMAIN below with your own domain (an A record pointing at the
+# instance). Left empty, it uses <public-ip>.sslip.io, which gets a real certificate too.
+
+package_update: true
+packages:
+  - git
+  - curl
+  - ufw
+  - debian-keyring
+  - debian-archive-keyring
+  - apt-transport-https
+  - gnupg
+
+write_files:
+  - path: /etc/crowdpulse/setup.conf
+    permissions: "0644"
+    content: |
+      REPO=https://github.com/kaden-cameron/SwampHacks.git
+      BRANCH=main
+      DOMAIN=
+
+runcmd:
+  - set -eux
+  - . /etc/crowdpulse/setup.conf
+
+  # Node.js 24 (NodeSource) and Caddy (official apt repo)
+  - curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
+  - apt-get install -y nodejs
+  - curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  - curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt -o /etc/apt/sources.list.d/caddy-stable.list
+  - apt-get update
+  - apt-get install -y caddy
+
+  # App user and code
+  - id crowdpulse || useradd --system --create-home --home-dir /home/crowdpulse --shell /usr/sbin/nologin crowdpulse
+  - git clone --branch "$BRANCH" "$REPO" /opt/crowdpulse || true
+  - chown -R crowdpulse:crowdpulse /opt/crowdpulse
+  - cd /opt/crowdpulse && sudo -u crowdpulse npm ci --no-audit --no-fund --loglevel=error
+  - cd /opt/crowdpulse && sudo -u crowdpulse npm run build --silent
+
+  # Public hostname: your DOMAIN, or <ip-with-dashes>.sslip.io (Vultr metadata, then a fallback)
+  - |
+    . /etc/crowdpulse/setup.conf
+    if [ -z "$DOMAIN" ]; then
+      IP=$(curl -fsS http://169.254.169.254/v1/interfaces/0/ipv4/address || curl -fsS https://api.ipify.org)
+      DOMAIN="$(echo "$IP" | tr . -).sslip.io"
+    fi
+    echo "$DOMAIN" > /etc/crowdpulse/domain
+    sed "s/__DOMAIN__/$DOMAIN/g" /opt/crowdpulse/deploy/Caddyfile.template > /etc/caddy/Caddyfile
+    if [ ! -f /etc/crowdpulse/crowdpulse.env ]; then
+      sed "s/__DOMAIN__/$DOMAIN/g" /opt/crowdpulse/deploy/crowdpulse.env.example > /etc/crowdpulse/crowdpulse.env
+    fi
+    chown crowdpulse:crowdpulse /etc/crowdpulse/crowdpulse.env
+    chmod 600 /etc/crowdpulse/crowdpulse.env
+
+  # Service: enabled now, started once the env file is filled in (production needs Auth0 + PUBLIC_URL)
+  - cp /opt/crowdpulse/deploy/crowdpulse.service /etc/systemd/system/crowdpulse.service
+  - systemctl daemon-reload
+  - systemctl enable crowdpulse
+  - systemctl restart caddy
+
+  # Firewall: SSH + HTTP(S) only. The app port (8787) stays private behind Caddy.
+  - ufw allow OpenSSH
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+
+final_message: |
+  CrowdPulse installed at /opt/crowdpulse after $UPTIME seconds.
+  Public hostname is in /etc/crowdpulse/domain.
+  Next: sudo nano /etc/crowdpulse/crowdpulse.env, then sudo systemctl start crowdpulse

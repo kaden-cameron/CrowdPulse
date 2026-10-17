@@ -123,6 +123,12 @@ The runbook is **[docs/08_JUDGE_DEMO.md](docs/08_JUDGE_DEMO.md)**: the 3-minute 
 - `npm run demo:crowd -- --url <url> --people 20 --seconds 45` simulates attendees (IDs start with `sim_`). The stage and host page show **Demo data**.
 - **Start new run ↺** on the host page (or `POST /api/host/sessions/:id/reset`) starts a fresh run. It's saved as a `session_reset` event, so restarts and dashboard counts begin from there, and earlier history stays in TigerData.
 
+## Deployment on Vultr (Doc 07)
+
+Step-by-step guide: **[docs/07_DEPLOYMENT.md](docs/07_DEPLOYMENT.md)**. Paste [`deploy/cloud-init.yaml`](deploy/cloud-init.yaml) into a new Ubuntu 24.04 instance. It installs Node 24 and Caddy (automatic HTTPS at `<ip>.sslip.io` or your domain), builds the app and installs a hardened systemd service. Fill in `/etc/crowdpulse/crowdpulse.env` on the server, then `systemctl start crowdpulse`. To ship updates, run `deploy/update.sh`.
+
+In production, the server needs Auth0 and `PUBLIC_URL`. It rejects other browser origins over HTTP and WebSocket (403), takes real client IPs from Caddy, and shuts down cleanly with a "server restarting" close code so clients reconnect. `npm run load:plan -- --url https://<host>` runs the 5 → 10 → 25 → 50 attendee load plan and writes `evidence/vultr/load-test-summary.txt`.
+
 ## Test matrix (Doc 09)
 
 `npm run test:matrix` runs every suite (server, web, browser, build plus secret scan) and writes **[docs/09_TEST_MATRIX.md](docs/09_TEST_MATRIX.md)**. It covers all 78 playbook test IDs (FE, BE, TD, GM, SOL, AU, VU, E2E) with their P0/P1/P2 priority. For each one it shows the automated tests that cover it (found by the ID in the test name) and its real status. It also lists the P0 tests that aren't passing yet (the go/no-go blockers) and checks the minimum evidence package. A test only shows as PASS if a tagged test actually ran and passed. Rerun it after adding keys or running `e2e:check` against the deployment; it picks up `evidence/e2e/latest.md`.

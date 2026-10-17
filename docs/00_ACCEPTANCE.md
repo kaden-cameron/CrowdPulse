@@ -14,7 +14,7 @@ Derived from the master roadmap. Core loop to protect:
 - [x] Real Gemini API recommendation (Doc 04)
 - [x] Solana devnet boost, verified server-side (Doc 05) — live paid boost still to run
 - [x] Auth0-protected host controls (Doc 06) — real tenant login still to run
-- [ ] Vultr deployment (Doc 07)
+- [x] Vultr deployment tooling (Doc 07): cloud-init, systemd, Caddy, load plan — instance not yet created
 
 ## Exit criterion — build order step 1
 

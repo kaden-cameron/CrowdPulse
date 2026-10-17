@@ -10,6 +10,7 @@ import {
   type ServerToClientMessage,
 } from "@crowdpulse/shared";
 import { createApp, type Sessions } from "./app.js";
+import { clientIp } from "./http.js";
 import { createAuth0HostAuth, createDevKeyHostAuth } from "./auth.js";
 import { Database } from "./db.js";
 import { DEFAULT_GEMINI_MODEL, GeminiClient } from "./gemini.js";
@@ -48,7 +49,16 @@ if (hostAuth.mode === "auth0" && !process.env.AUTH0_CLIENT_ID) {
   console.error("AUTH0_CLIENT_ID (the SPA application's client ID) is required for host login");
   process.exit(1);
 }
-const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
+// Browser origins allowed in production: the public URL plus any extras. Development allows any.
+const publicUrl = process.env.PUBLIC_URL?.trim();
+const corsOrigins = [
+  ...(publicUrl ? [new URL(publicUrl).origin] : []),
+  ...(process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean) ?? []),
+];
+if (isProd && !corsOrigins.length) {
+  console.error("Production requires PUBLIC_URL (e.g. https://203-0-113-7.sslip.io) to lock down allowed origins");
+  process.exit(1);
+}
 
 // With DATABASE_URL set, every accepted event is written to TigerData before it is applied.
 const db = process.env.DATABASE_URL ? new Database(process.env.DATABASE_URL) : undefined;
@@ -105,7 +115,15 @@ const gemini = process.env.GEMINI_API_KEY
   : undefined;
 const recommenders = new Map([...sessions].map(([id, s]) => [id, new RecommendationService(s, gemini)]));
 
-const { app, handleEvent } = createApp({ sessions, hostAuth, corsOrigins, db, recommenders, boosts });
+const { app, handleEvent, isOriginAllowed } = createApp({
+  sessions,
+  hostAuth,
+  corsOrigins,
+  db,
+  recommenders,
+  boosts,
+  ipLimitPerMinute: Number(process.env.RATE_LIMIT_IP_PER_MIN || 6000),
+});
 
 // In production, serve the built web app and fall back to index.html for SPA routes.
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
@@ -131,11 +149,17 @@ function broadcast(sessionId: string) {
 for (const [id, session] of sessions) session.onChange(() => broadcast(id));
 
 const server = createServer(app);
-const wss = new WebSocketServer({ server, path: "/ws", maxPayload: 2048 });
+const wss = new WebSocketServer({
+  server,
+  path: "/ws",
+  maxPayload: 2048,
+  // CORS doesn't cover WebSockets, so check the browser's Origin here too (VU-08).
+  verifyClient: ({ origin }: { origin?: string }) => isOriginAllowed(origin),
+});
 const alive = new WeakSet<WebSocket>();
 
 wss.on("connection", (ws, req) => {
-  const ip = req.socket.remoteAddress ?? "unknown";
+  const ip = clientIp(req);
   let boundSessionId: string | null = null;
   alive.add(ws);
   ws.on("pong", () => alive.add(ws));
@@ -204,6 +228,23 @@ if (db) {
   }, 5_000);
 }
 
+// Clean shutdown for restarts and deploys (VU-04): tell clients to reconnect, finish in-flight
+// requests, close the database pool. systemd restarts the process; clients reload state on reconnect.
+let shuttingDown = false;
+async function shutdown(signal: string) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  log({ kind: "shutdown", signal, clients: wss.clients.size });
+  for (const ws of wss.clients) ws.close(1012, "server restarting");
+  server.close();
+  const force = setTimeout(() => process.exit(0), 5_000);
+  force.unref();
+  await db?.close().catch(() => {});
+  process.exit(0);
+}
+process.on("SIGTERM", () => void shutdown("SIGTERM"));
+process.on("SIGINT", () => void shutdown("SIGINT"));
+
 server.listen(PORT, () => {
   log({
     kind: "startup",
@@ -213,6 +254,7 @@ server.listen(PORT, () => {
     gemini: gemini ? gemini.model : "off",
     boosts: boosts ? "devnet" : "off",
     hostAuth: hostAuth.mode,
+    allowedOrigins: corsOrigins.length ? corsOrigins : "any (development)",
     servingWeb: existsSync(webDist),
   });
 });

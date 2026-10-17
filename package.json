@@ -17,7 +17,8 @@
     "e2e:check": "node scripts/e2e-check.mjs",
     "demo:crowd": "node scripts/demo-crowd.mjs",
     "e2e:browser": "npm run e2e --workspace=@crowdpulse/web",
-    "test:matrix": "node scripts/test-matrix.mjs"
+    "test:matrix": "node scripts/test-matrix.mjs",
+    "load:plan": "node scripts/load-plan.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.6"

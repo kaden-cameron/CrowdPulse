@@ -14,6 +14,7 @@ import {
 import { log } from "./log.js";
 import { RateLimiter } from "./rateLimit.js";
 import { authErrorHandler, createDevKeyHostAuth, type HostAuth } from "./auth.js";
+import { clientIp, originPolicy, securityHeaders } from "./http.js";
 import type { Database } from "./db.js";
 import type { RecommendationService } from "./recommendation.js";
 import { httpStatusFor, type BoostVerifier } from "./solana.js";
@@ -74,13 +75,17 @@ export interface AppOptions {
   recommenders?: Map<string, RecommendationService>;
   /** Solana devnet boost verifier; omitted means boosts are disabled. */
   boosts?: BoostVerifier;
+  /** Browser origins allowed to call the API (and open WebSockets). Empty = any (development). */
   corsOrigins?: string[];
+  /** Per-IP backstop per minute. High on purpose: a whole venue can share one Wi-Fi IP. */
+  ipLimitPerMinute?: number;
   now?: () => number;
 }
 
-export function createEventHandler({ sessions, now = Date.now }: AppOptions) {
-  // Per-participant limits live in SessionStore; this IP limit is generous because venue Wi-Fi shares IPs.
-  const ipLimiter = new RateLimiter(600, 60_000, now);
+export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute = 6000 }: AppOptions) {
+  // Per-participant limits live in SessionStore. This per-IP limit is only an abuse backstop:
+  // every attendee on venue Wi-Fi can share one public IP, so it must stay far above real use.
+  const ipLimiter = new RateLimiter(ipLimitPerMinute, 60_000, now);
 
   /** Validates and applies one client event from either HTTP or WebSocket. */
   return async function handleEvent(
@@ -144,7 +149,10 @@ export function createApp(options: AppOptions) {
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", "loopback");
-  app.use(cors(corsOrigins?.length ? { origin: corsOrigins } : undefined));
+  const origins = originPolicy(corsOrigins ?? []);
+  app.use(securityHeaders);
+  app.use("/api", origins.middleware);
+  app.use(cors(origins.list.length ? { origin: origins.list } : undefined));
   app.use(express.json({ limit: "4kb" }));
 
   app.get("/api/health", async (_req, res) => {
@@ -190,7 +198,7 @@ export function createApp(options: AppOptions) {
         res.status(400).json({ status: "rejected", reason: "Session mismatch" });
         return;
       }
-      const { result, httpStatus, outcome } = await handleEvent(body, req.ip ?? "unknown", "http");
+      const { result, httpStatus, outcome } = await handleEvent(body, req.ip ?? clientIp(req), "http");
       res.status(httpStatus).json(
         outcome && outcome.status !== "rejected"
           ? { status: outcome.status, state: outcome.state }
@@ -349,5 +357,5 @@ export function createApp(options: AppOptions) {
   });
   app.use(authErrorHandler);
 
-  return { app, handleEvent };
+  return { app, handleEvent, isOriginAllowed: origins.isAllowed };
 }

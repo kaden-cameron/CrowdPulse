@@ -1,0 +1,35 @@
+# systemd unit for the CrowdPulse server (Doc 07). Installed by cloud-init.yaml.
+# Secrets live only in /etc/crowdpulse/crowdpulse.env (mode 600), never in the repo.
+[Unit]
+Description=CrowdPulse server
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=crowdpulse
+Group=crowdpulse
+WorkingDirectory=/opt/crowdpulse
+EnvironmentFile=/etc/crowdpulse/crowdpulse.env
+Environment=NODE_ENV=production
+Environment=PORT=8787
+ExecStart=/opt/crowdpulse/node_modules/.bin/tsx apps/server/src/index.ts
+# Crash → back within ~2s; clients reconnect and reload state (VU-04).
+Restart=always
+RestartSec=2
+KillSignal=SIGTERM
+TimeoutStopSec=10
+# Hardening: the app writes nothing to disk; logs go to journald.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

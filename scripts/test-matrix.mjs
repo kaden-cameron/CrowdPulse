@@ -87,9 +87,9 @@ const CATALOG = [
   C("VU-03", "P0", "WebSocket upgrade works through the proxy", "Two devices on the deployed URL receive the same event.", { needs: "Vultr deployment (Doc 07)" }),
   C("VU-04", "P1", "Backend restart → clients reconnect and reload state", "Restart the service; clients show Reconnecting → Live with the same state.", { needs: "Vultr deployment (Doc 07)" }),
   C("VU-05", "P0", "No secrets in the repo or bundle", "npm run build && npm run scan:secrets"),
-  C("VU-06", "P1", "Load test 25–50 clients recorded", "npm run load-test against the deployed URL; save the summary to evidence/vultr/.", { needs: "Vultr deployment (Doc 07)" }),
+  C("VU-06", "P1", "Load test 25–50 clients recorded", "npm run load:plan -- --url https://<host> (writes evidence/vultr/load-test-summary.txt).", { autoBy: "npm run load:plan -- --url https://<host>", needs: "Vultr deployment (Doc 07)" }),
   C("VU-07", "P1", "Gemini key removed → vote loop still works", "Unset GEMINI_API_KEY in staging and restart.", { needs: "Vultr deployment (Doc 07)" }),
-  C("VU-08", "P1", "TLS + CORS: allowed origin works, others rejected", "Set CORS_ORIGINS; a fetch from another origin is blocked.", { needs: "Vultr deployment (Doc 07)" }),
+  C("VU-08", "P1", "TLS + CORS: allowed origin works, others rejected", "curl -X POST https://<host>/api/sessions/demo/votes -H 'origin: https://evil.example' → 403.", { scope: "Origin policy unit-tested for HTTP and WebSocket; confirm with curl on the deployed URL." }),
   C("E2E-01", "P0", "Phone joins via QR/short URL", "Part of the 3-minute rehearsal."),
   C("E2E-02", "P0", "Phone submits valid vote", "Part of the rehearsal."),
   C("E2E-03", "P0", "Second browser updates without refresh", "Part of the rehearsal."),
@@ -180,6 +180,21 @@ if (existsSync(e2eFile)) {
   }
 }
 
+// Staged load test (VU-06): only counts when it ran against a non-local target.
+const loadFile = path.join(root, "evidence/vultr/load-test-results.json");
+if (existsSync(loadFile)) {
+  const lr = JSON.parse(readFileSync(loadFile, "utf8"));
+  const local = /localhost|127\.0\.0\.1/.test(lr.target);
+  const ok = lr.stages.every((st) => st.p95Ms < 500 && st.errorRate < 0.01 && st.wsDropped === 0 && st.wsFailed === 0);
+  const desc = lr.stages.map((st) => `${st.users}u p95 ${st.p95Ms}ms`).join(", ");
+  sources.push({
+    source: `load:plan vs ${lr.target} (${String(lr.startedAt).slice(0, 16)})`,
+    title: `VU-06 staged load: ${desc}`,
+    status: local ? "skipped" : ok ? "passed" : "failed",
+    ids: ["VU-06"],
+  });
+}
+
 // ---------------- Aggregate ----------------
 const envHas = (k) => {
   if (process.env[k]) return true;
@@ -236,7 +251,7 @@ lines.push(
   `| 04 Gemini AI DJ | Context, structured output, safety, baseline | AI/analytics | README § Gemini |`,
   `| 05 Solana Devnet | Boost flow, verification, replay protection | Blockchain/backend | README § Solana |`,
   `| 06 Auth0 Security | Login, roles, protected endpoints | Security/backend | README § Auth0 |`,
-  `| 07 Vultr Deployment | Public deployment, resilience, load tests | Infrastructure | *not started* |`,
+  `| 07 Vultr Deployment | Public deployment, resilience, load tests | Infrastructure | [07_DEPLOYMENT.md](07_DEPLOYMENT.md) · [deploy/](../deploy) |`,
   `| 08 Integration & Judge Demo | End-to-end tests, evidence, rehearsal | Whole team | [08_JUDGE_DEMO.md](08_JUDGE_DEMO.md) |`,
   ``,
   `## 2. Summary`,
