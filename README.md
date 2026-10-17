@@ -117,7 +117,7 @@ The host page reads these public values from `GET /api/auth/config`. It signs in
 
 ## Music playback
 
-Open **`/player/demo`** on the laptop plugged into the speakers, sign in as host, and press **Start audio**. It plays whatever CrowdPulse picks: the host's "Play next", an approved Gemini recommendation, or, in **Auto play**, the next song in the queue as soon as one ends. **DJ picks** mode waits for the host after each song. Tracks play from audio files you add to `apps/web/public/audio/` (only music you're allowed to play in public), or as **generated demo tracks** built from each track's BPM, energy and genre. Details, and how Spotify would plug in later: [docs/10_MUSIC_PLAYBACK.md](docs/10_MUSIC_PLAYBACK.md).
+Open **`/player/demo`** on the laptop plugged into the speakers, sign in as host, and press **Start audio**. It plays whatever CrowdPulse picks: the host's "Play next", an approved Gemini recommendation, or, in **Auto play**, the next song in the queue as soon as one ends. **DJ picks** mode waits for the host after each song. Tracks play from audio files you add to `apps/web/public/audio/` (only music you're allowed to play in public), or as **generated demo tracks** built from each track's BPM, energy and genre. With a Spotify app's Client ID (`SPOTIFY_CLIENT_ID`) and a Premium account, the player page can play **real songs through Spotify** instead. Load your song list from `CATALOG_FILE`; Spotify links are optional, and missing ones are found by title + artist. Setup: [docs/10_MUSIC_PLAYBACK.md](docs/10_MUSIC_PLAYBACK.md).
 
 ## Testing and judge demo (Doc 08)
 

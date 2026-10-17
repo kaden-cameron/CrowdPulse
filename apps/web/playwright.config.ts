@@ -12,6 +12,8 @@ const isolatedEnv = {
   AUTH0_DOMAIN: "",
   AUTH0_AUDIENCE: "",
   BOOST_RECIPIENT: "",
+  SPOTIFY_CLIENT_ID: "",
+  CATALOG_FILE: "",
   HOST_DEV_KEY: "e2e-host-key",
 };
 

@@ -12,6 +12,7 @@ import {
 import { createApp, type Sessions } from "./app.js";
 import { clientIp } from "./http.js";
 import { createAuth0HostAuth, createDevKeyHostAuth } from "./auth.js";
+import { loadCatalog } from "./catalog.js";
 import { Database } from "./db.js";
 import { DEFAULT_GEMINI_MODEL, GeminiClient } from "./gemini.js";
 import { RecommendationService } from "./recommendation.js";
@@ -74,9 +75,20 @@ if (db) {
 }
 const persist = db ? db.persist.bind(db) : undefined;
 
+// Song list: CATALOG_FILE (real songs, optionally with Spotify URIs) or the built-in demo tracks.
+let catalog;
+try {
+  // Relative paths are from the repo root, so the same value works for `npm run dev` and the service.
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+  catalog = loadCatalog(process.env.CATALOG_FILE ? path.resolve(repoRoot, process.env.CATALOG_FILE) : undefined);
+} catch (err) {
+  console.error(`CATALOG_FILE: ${(err as Error).message}`);
+  process.exit(1);
+}
+
 // Only known sessions exist; unknown codes get 404 instead of silently creating state.
 const sessions: Sessions = new Map([
-  [DEMO_SESSION_ID, new SessionStore(DEMO_SESSION_ID, DEMO_SESSION_NAME, { persist })],
+  [DEMO_SESSION_ID, new SessionStore(DEMO_SESSION_ID, DEMO_SESSION_NAME, { persist, catalog })],
 ]);
 
 // Solana devnet boosts are optional: they need a public recipient address. Mainnet is refused.
@@ -125,6 +137,7 @@ const { app, handleEvent, isOriginAllowed } = createApp({
   boosts,
   ipLimitPerMinute: Number(process.env.RATE_LIMIT_IP_PER_MIN || 6000),
   publicUrl: publicUrl ? new URL(publicUrl).origin : undefined,
+  spotifyClientId: process.env.SPOTIFY_CLIENT_ID?.trim() || undefined,
   exposeLanIp: !isProd,
 });
 
@@ -265,6 +278,8 @@ server.listen(PORT, () => {
     sessions: [...sessions.keys()],
     persistence: db ? "tigerdata" : "memory",
     gemini: gemini ? gemini.model : "off",
+    catalog: process.env.CATALOG_FILE ? `${catalog.length} tracks from CATALOG_FILE` : "demo tracks",
+    spotify: process.env.SPOTIFY_CLIENT_ID ? "client id set" : "off",
     boosts: boosts ? "devnet" : "off",
     hostAuth: hostAuth.mode,
     allowedOrigins: corsOrigins.length ? corsOrigins : "any (development)",

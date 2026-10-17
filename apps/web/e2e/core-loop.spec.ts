@@ -193,3 +193,16 @@ test("The stage QR code decodes to the join link, even when small in a phone's c
   // Opened at localhost, the code must not send phones to localhost.
   expect(code?.data).not.toMatch(/localhost|127\.0\.0\.1/);
 });
+
+test("Spotify source explains what's missing instead of failing silently", async ({ browser }) => {
+  const page = await (await browser.newContext()).newPage();
+  await page.goto("/player/demo");
+  await page.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await page.getByRole("button", { name: /^Spotify/ }).click();
+  // This test server has no SPOTIFY_CLIENT_ID.
+  await expect(page.getByText(/Spotify isn't set up on this server/)).toBeVisible();
+  await expect(page.locator(".player-start")).toBeDisabled();
+  // Switching back to the laptop's own audio works immediately.
+  await page.getByRole("button", { name: /^This laptop/ }).click();
+  await expect(page.locator(".player-start")).toBeEnabled();
+});

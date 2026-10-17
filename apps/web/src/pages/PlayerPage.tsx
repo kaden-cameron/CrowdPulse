@@ -6,13 +6,24 @@ import { useSessionSocket } from "../hooks/useSessionSocket";
 import { reportPlayback, type PlaybackReport } from "../lib/host";
 import { decide, type Playing } from "../lib/player/follow";
 import { LocalPlayer } from "../lib/player/localPlayer";
-import type { StartedInfo } from "../lib/player/types";
+import { SpotifyPlayer } from "../lib/player/spotifyPlayer";
+import type { PlayerAdapter, StartedInfo } from "../lib/player/types";
+import { usePublicConfig } from "../lib/publicConfig";
+import {
+  disconnectSpotify,
+  redirectProblem,
+  spotifyAccessToken,
+  spotifyConnected,
+  startSpotifyLogin,
+} from "../lib/spotify/auth";
 import { HostSignIn } from "./HostPage";
 
 // Open this on the laptop connected to the speakers. It plays whatever the server says is now
 // playing (host pick, Gemini approval, or auto mode) and reports started / progress / ended.
 
 const PROGRESS_EVERY_MS = 5000;
+const SOURCE_KEY = "crowdpulse.player.source";
+type Source = "local" | "spotify";
 
 const fmt = (ms: number) => {
   const s = Math.max(0, Math.round(ms / 1000));
@@ -26,7 +37,22 @@ export function PlayerPage() {
   const generatedDurationS = Math.max(3, Math.min(600, Number(params.get("demoSeconds")) || 60));
   const access = useHostAccess();
   const { state, status, lastMessageAt } = useSessionSocket(sessionCode, "stage");
-  const player = useMemo(() => new LocalPlayer({ generatedDurationS }), [generatedDurationS]);
+  const config = usePublicConfig();
+  const [source, setSource] = useState<Source>(() => {
+    try {
+      return sessionStorage.getItem(SOURCE_KEY) === "spotify" ? "spotify" : "local";
+    } catch {
+      return "local";
+    }
+  });
+  const spotifyReady = source === "spotify" && spotifyConnected();
+  const player: PlayerAdapter = useMemo(
+    () =>
+      source === "spotify"
+        ? new SpotifyPlayer({ getToken: spotifyAccessToken })
+        : new LocalPlayer({ generatedDurationS }),
+    [source, generatedDurationS],
+  );
 
   const [unlocked, setUnlocked] = useState(false);
   const [volume, setVolume] = useState(0.8);
@@ -123,7 +149,23 @@ export function PlayerPage() {
     return () => window.clearInterval(t);
   }, [unlocked, access.ready, info, player]);
 
-  useEffect(() => () => player.stop(), [player]);
+  useEffect(() => {
+    // New player (source switched): it needs its own Start audio click, then picks up mid-song.
+    setUnlocked(false);
+    playing.current = null;
+    setInfo(null);
+    return () => player.stop();
+  }, [player]);
+
+  const chooseSource = (next: Source) => {
+    try {
+      sessionStorage.setItem(SOURCE_KEY, next);
+    } catch {
+      /* storage blocked */
+    }
+    setError(null);
+    setSource(next);
+  };
   useEffect(() => player.setVolume(volume), [player, volume, unlocked]);
 
   const start = async () => {
@@ -159,15 +201,58 @@ export function PlayerPage() {
         </div>
 
         <div className="host-block player-block">
+          <fieldset className="mood-field compact-field">
+            <legend>Play music from</legend>
+            <div className="target-row two">
+              {(["local", "spotify"] as const).map((s) => (
+                <button
+                  key={s}
+                  type="button"
+                  className={`mood-chip ${source === s ? "selected" : ""}`}
+                  aria-pressed={source === s}
+                  onClick={() => chooseSource(s)}
+                >
+                  <span className="mood-label">{s === "local" ? "This laptop" : "Spotify"}</span>
+                  <span className="mood-hint">
+                    {s === "local" ? "Audio files or generated demo tracks" : "Real songs · needs Spotify Premium"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          {source === "spotify" && (
+            <SpotifySetup
+              clientId={config?.spotifyClientId ?? null}
+              loading={!config}
+              connected={spotifyConnected()}
+              returnTo={window.location.pathname + window.location.search}
+              onDisconnect={() => {
+                disconnectSpotify();
+                chooseSource("spotify");
+                setUnlocked(false);
+              }}
+            />
+          )}
+
           {!unlocked ? (
-            <button type="button" className="btn primary wide player-start" disabled={!access.ready} onClick={start}>
-              {access.ready ? "▶ Start audio on this device" : "Sign in as host first"}
+            <button
+              type="button"
+              className="btn primary wide player-start"
+              disabled={!access.ready || (source === "spotify" && !spotifyReady)}
+              onClick={start}
+            >
+              {!access.ready
+                ? "Sign in as host first"
+                : source === "spotify" && !spotifyReady
+                  ? "Connect Spotify first"
+                  : "▶ Start audio on this device"}
             </button>
           ) : (
             <>
               <p className="metric-label">
                 {pb?.mode === "auto" ? "Auto play" : "DJ picks"} ·{" "}
-                {info ? (info.source === "file" ? "audio file" : "generated demo track") : "waiting"}
+                {info ? ({ file: "audio file", generated: "generated demo track", spotify: "Spotify" } as const)[info.source] : "waiting"}
               </p>
               <p className="player-title">{info ? info.title : pb?.status === "ended" ? "Song finished" : "Nothing playing"}</p>
               <p className="host-sub">
@@ -201,5 +286,43 @@ export function PlayerPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function SpotifySetup({
+  clientId,
+  loading,
+  connected,
+  returnTo,
+  onDisconnect,
+}: {
+  clientId: string | null;
+  loading: boolean;
+  connected: boolean;
+  returnTo: string;
+  onDisconnect: () => void;
+}) {
+  if (loading) return <p className="host-sub">Loading Spotify settings…</p>;
+  if (!clientId) {
+    return (
+      <p className="feedback feedback-warn">
+        Spotify isn&apos;t set up on this server. Add <code>SPOTIFY_CLIENT_ID</code> to the server&apos;s env file
+        and restart (see docs/10_MUSIC_PLAYBACK.md).
+      </p>
+    );
+  }
+  const problem = redirectProblem();
+  if (problem) return <p className="feedback feedback-warn">{problem}</p>;
+  return connected ? (
+    <div className="host-auth">
+      <span className="host-user">✓ Spotify connected. Spotify will list this tab as the &ldquo;CrowdPulse&rdquo; device.</span>
+      <button type="button" className="btn ghost compact" onClick={onDisconnect}>
+        Disconnect
+      </button>
+    </div>
+  ) : (
+    <button type="button" className="btn ghost wide" onClick={() => void startSpotifyLogin(clientId, returnTo)}>
+      Connect Spotify (Premium account)
+    </button>
   );
 }

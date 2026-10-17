@@ -10,6 +10,8 @@ export interface PlayableTrack {
   bpm: number;
   /** 0–1 */
   energy: number;
+  /** Used by the Spotify player; when missing it searches by title + artist. */
+  spotifyUri?: string;
 }
 
 export type PlaybackSource = "file" | "generated" | "spotify";

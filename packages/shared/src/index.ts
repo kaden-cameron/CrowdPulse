@@ -28,6 +28,8 @@ export interface Track {
   bpm: number;
   /** Catalog energy, 0–1. */
   energy: number;
+  /** Optional Spotify track URI (spotify:track:…). Without it, the Spotify player searches by title + artist. */
+  spotifyUri?: string;
   votes: number;
   /** Verified Solana devnet boosts currently counting for this track (capped). */
   boosts: number;

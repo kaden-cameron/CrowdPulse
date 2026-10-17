@@ -58,7 +58,7 @@ export type EventOutcome =
   | { status: "accepted" | "duplicate"; state: SessionState }
   | { status: "rejected"; reason: string; httpStatus: number };
 
-type CatalogTrack = Omit<Track, "votes" | "status" | "boosts" | "round">;
+type CatalogTrack = import("./catalog.js").CatalogTrack;
 
 /** Participant IDs from the demo crowd simulator start with this; the UI labels them "Demo data". */
 export const SIMULATED_PREFIX = "sim_";

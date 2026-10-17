@@ -1,0 +1,58 @@
+[
+  {
+    "id": "track_01",
+    "title": "Gator Glow",
+    "artist": "Orange & Blue",
+    "genre": "house",
+    "bpm": 122,
+    "energy": 0.6
+  },
+  {
+    "id": "track_02",
+    "title": "Midnight Cypress",
+    "artist": "Lake Beat",
+    "genre": "lofi",
+    "bpm": 84,
+    "energy": 0.2
+  },
+  {
+    "id": "track_03",
+    "title": "Hackathon Heat",
+    "artist": "Pulse Lab",
+    "genre": "techno",
+    "bpm": 130,
+    "energy": 0.85
+  },
+  {
+    "id": "track_04",
+    "title": "Spanish Moss",
+    "artist": "Night Circuit",
+    "genre": "downtempo",
+    "bpm": 96,
+    "energy": 0.35
+  },
+  {
+    "id": "track_05",
+    "title": "Voltage Swamp",
+    "artist": "Neon Bayou",
+    "genre": "electro",
+    "bpm": 126,
+    "energy": 0.75
+  },
+  {
+    "id": "track_06",
+    "title": "Crowd Current",
+    "artist": "Signal Kids",
+    "genre": "synthwave",
+    "bpm": 110,
+    "energy": 0.5
+  },
+  {
+    "id": "track_07",
+    "title": "Stage Lightning",
+    "artist": "DJ Hydra",
+    "genre": "drum & bass",
+    "bpm": 174,
+    "energy": 0.95
+  }
+]

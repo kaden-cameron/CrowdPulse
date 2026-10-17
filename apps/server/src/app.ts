@@ -82,6 +82,11 @@ export interface AppOptions {
   corsOrigins?: string[];
   /** The address attendees should open (production). Used for the stage QR code. */
   publicUrl?: string;
+  /**
+   * Spotify app Client ID for the player page's Spotify login (PKCE). Public by design — the
+   * Client Secret is never needed or used.
+   */
+  spotifyClientId?: string;
   /** Development only: share this machine's LAN IP so a stage opened at localhost gets a scannable QR. */
   exposeLanIp?: boolean;
   /** Per-IP backstop per minute. High on purpose: a whole venue can share one Wi-Fi IP. */
@@ -175,7 +180,7 @@ export function createApp(options: AppOptions) {
         }
       }
     }
-    res.json({ publicUrl: options.publicUrl ?? null, lanIp });
+    res.json({ publicUrl: options.publicUrl ?? null, lanIp, spotifyClientId: options.spotifyClientId ?? null });
   });
 
   app.get("/api/health", async (_req, res) => {

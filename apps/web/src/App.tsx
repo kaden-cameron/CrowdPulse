@@ -4,6 +4,7 @@ import { HostPage } from "./pages/HostPage";
 import { JoinPage } from "./pages/JoinPage";
 import { LandingPage } from "./pages/LandingPage";
 import { PlayerPage } from "./pages/PlayerPage";
+import { SpotifyCallbackPage } from "./pages/SpotifyCallbackPage";
 import { StagePage } from "./pages/StagePage";
 
 /**
@@ -31,6 +32,7 @@ export function AppRoutes() {
         <Route path="/player/:sessionCode" element={<PlayerPage />} />
         <Route path="/auth/callback" element={<AuthCallbackPage />} />
       </Route>
+      <Route path="/spotify/callback" element={<SpotifyCallbackPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

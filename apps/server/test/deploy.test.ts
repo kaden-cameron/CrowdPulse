@@ -84,7 +84,7 @@ describe("stage QR link config", () => {
   it("returns PUBLIC_URL, and only shares the LAN IP when allowed (development)", async () => {
     const sessions: Sessions = new Map([["demo", new SessionStore("demo", "Demo")]]);
     const prod = createApp({ sessions, hostKey: "k", publicUrl: "https://203-0-113-7.sslip.io" }).app;
-    expect((await request(prod).get("/api/public-config")).body).toEqual({ publicUrl: "https://203-0-113-7.sslip.io", lanIp: null });
+    expect((await request(prod).get("/api/public-config")).body).toEqual({ publicUrl: "https://203-0-113-7.sslip.io", lanIp: null, spotifyClientId: null });
     const dev = createApp({ sessions, hostKey: "k", exposeLanIp: true }).app;
     const body = (await request(dev).get("/api/public-config")).body;
     expect(body.publicUrl).toBeNull();
