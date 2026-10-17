@@ -1,0 +1,6 @@
+POST /api/host/sessions/demo/visual → 401
+POST /api/host/sessions/demo/advance → 401
+POST /api/host/sessions/demo/reset → 401
+POST /api/host/sessions/demo/recommendations → 401
+forged bearer → 401
+state version unchanged: 6

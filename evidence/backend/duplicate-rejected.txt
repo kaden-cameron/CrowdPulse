@@ -1,0 +1,6 @@
+eventId 793cd006-2217-4719-8ae8-155703c9d1f6
+first: 200 accepted
+retry: 200 duplicate
+votes before retry 3, after 3
+unknown track: 400 {"status":"rejected","reason":"Unknown track ID"}
+missing sessionId: 400 {"status":"rejected","reason":"Session mismatch"}
