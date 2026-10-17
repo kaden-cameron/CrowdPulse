@@ -30,7 +30,7 @@ describe("AnalyticsPanel", () => {
     expect(screen.getByText("Persistence off")).toBeInTheDocument();
   });
 
-  it("shows SQL-backed counts, freshness, and both chart sources", () => {
+  it("TD-05: shows SQL-backed counts, freshness, and both chart sources", () => {
     render(
       <AnalyticsPanel
         metrics={tiger}
@@ -45,7 +45,7 @@ describe("AnalyticsPanel", () => {
     expect(screen.getAllByRole("row")).toHaveLength(3); // header + 2 buckets in the table view
   });
 
-  it("keeps the last good data visible when a poll fails", () => {
+  it("TD-07: keeps the last good data visible when a poll fails", () => {
     render(<AnalyticsPanel metrics={tiger} error="Metrics unavailable" tracks={[]} />);
     expect(screen.getByRole("alert")).toHaveTextContent("showing the last good result");
     expect(screen.getByText("57")).toBeInTheDocument();

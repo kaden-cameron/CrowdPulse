@@ -123,6 +123,10 @@ The runbook is **[docs/08_JUDGE_DEMO.md](docs/08_JUDGE_DEMO.md)**: the 3-minute 
 - `npm run demo:crowd -- --url <url> --people 20 --seconds 45` simulates attendees (IDs start with `sim_`). The stage and host page show **Demo data**.
 - **Start new run ↺** on the host page (or `POST /api/host/sessions/:id/reset`) starts a fresh run. It's saved as a `session_reset` event, so restarts and dashboard counts begin from there, and earlier history stays in TigerData.
 
+## Test matrix (Doc 09)
+
+`npm run test:matrix` runs every suite (server, web, browser, build plus secret scan) and writes **[docs/09_TEST_MATRIX.md](docs/09_TEST_MATRIX.md)**. It covers all 78 playbook test IDs (FE, BE, TD, GM, SOL, AU, VU, E2E) with their P0/P1/P2 priority. For each one it shows the automated tests that cover it (found by the ID in the test name) and its real status. It also lists the P0 tests that aren't passing yet (the go/no-go blockers) and checks the minimum evidence package. A test only shows as PASS if a tagged test actually ran and passed. Rerun it after adding keys or running `e2e:check` against the deployment; it picks up `evidence/e2e/latest.md`.
+
 ## Architecture (current)
 
 ```

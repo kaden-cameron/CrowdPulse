@@ -92,7 +92,7 @@ const verify = (i: BoostIntent, signature: string, sessionId = i.sessionId) =>
 const boostsOn = (s: SessionStore, trackId: string) => s.getState().tracks.find((t) => t.id === trackId)!.boosts;
 
 describe("Solana devnet boosts", () => {
-  it("SOL-01/09: a confirmed matching transaction is verified and boosts the track", async () => {
+  it("SOL-09: a confirmed matching transaction (fake RPC) is verified and boosts the track", async () => {
     const i = await intent("track_02");
     expect(i.memo).toBe(`crowdpulse:demo:track_02:${i.intentId}`);
     const s = sig();

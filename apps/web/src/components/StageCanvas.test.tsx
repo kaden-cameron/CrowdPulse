@@ -6,7 +6,7 @@ import { StageCanvas } from "./StageCanvas";
 const canvas = (container: HTMLElement) => container.querySelector("canvas")!;
 
 describe("StageCanvas", () => {
-  it("renders a known theme and intensity from valid visual state", () => {
+  it("FE-08: renders a known theme and intensity from valid visual state", () => {
     const { container } = render(
       <StageCanvas visual={{ theme: "neon_pulse", intensity: 0.8 }} />,
     );

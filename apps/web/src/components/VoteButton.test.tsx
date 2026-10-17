@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { VoteButton } from "./VoteButton";
 
 describe("VoteButton", () => {
-  it("walks idle → pending → accepted / rejected", () => {
+  it("FE-02: walks idle → pending → accepted / rejected", () => {
     const { rerender } = render(
       <VoteButton feedback="idle" trackTitle="Gator Glow" onVote={() => {}} />,
     );
@@ -30,7 +30,7 @@ describe("VoteButton", () => {
     expect(screen.getByRole("button")).toHaveTextContent("Voted ✓");
   });
 
-  it("is keyboard-activatable", async () => {
+  it("FE-06: is keyboard-activatable", async () => {
     const onVote = vi.fn();
     render(<VoteButton feedback="idle" trackTitle="Gator Glow" onVote={onVote} />);
     await userEvent.tab();

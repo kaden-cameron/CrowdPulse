@@ -167,7 +167,7 @@ describe("recommendation flow", () => {
     expect((await local.approve(recommendation.id)).ok).toBe(false);
   });
 
-  it("GM-07: when Gemini fails, voting still works and the AI status says why", async () => {
+  it("GM-07 / BE-06: when Gemini fails, voting still works and the AI status says why", async () => {
     model.generate = async () => {
       throw new ModelError("timeout", "Gemini timed out after 8000 ms", 8000);
     };

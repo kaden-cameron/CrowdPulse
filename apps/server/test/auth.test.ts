@@ -76,7 +76,7 @@ const setVisual = (auth?: Record<string, string>) => {
 const bearer = (t: string) => ({ authorization: `Bearer ${t}` });
 
 describe("Auth0 host authorization (Doc 06)", () => {
-  it("AU-01/04: a host token with host:demo can change the stage", async () => {
+  it("AU-04: a host token with host:demo can change the stage", async () => {
     const res = await setVisual(bearer(await token({ permissions: ["host:demo"] })));
     expect(res.status).toBe(200);
     expect(store.getState().visualState).toEqual({ theme: "sunset", intensity: 0.9 });

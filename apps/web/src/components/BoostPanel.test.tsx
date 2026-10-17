@@ -43,7 +43,7 @@ describe("BoostPanel", () => {
     expect(screen.getByText(intent.recipient)).toBeInTheDocument();
   });
 
-  it("only reports success after the server verifies", async () => {
+  it("SOL-02: only reports success after the server verifies", async () => {
     mockServer("verified");
     renderPanel();
     await userEvent.type(await screen.findByPlaceholderText(/Paste the devnet signature/), "5abc");

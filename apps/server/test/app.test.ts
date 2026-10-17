@@ -27,14 +27,14 @@ beforeEach(() => {
 });
 
 describe("votes", () => {
-  it("accepts a valid vote and puts the track in the queue", async () => {
+  it("FE-02: accepts a valid vote and puts the track in the queue", async () => {
     const res = await request(app).post("/api/sessions/demo/votes").send(vote("track_07"));
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("accepted");
     expect(res.body.state.queue[0]).toMatchObject({ trackId: "track_07", votes: 1 });
   });
 
-  it("rejects an unknown track without changing state (FE-05)", async () => {
+  it("FE-05/BE-02: rejects an unknown track without changing state", async () => {
     const before = store.getState();
     const res = await request(app).post("/api/sessions/demo/votes").send(vote("nope"));
     expect(res.status).toBe(400);
@@ -50,12 +50,19 @@ describe("votes", () => {
     ).toBe(400);
   });
 
+  it("BE-01: a vote missing sessionId gets 400 and is not counted", async () => {
+    const { sessionId: _omit, ...body } = vote("track_01");
+    const res = await request(app).post("/api/sessions/demo/votes").send(body);
+    expect(res.status).toBe(400);
+    expect(store.getState().tracks.every((t) => t.votes === 0)).toBe(true);
+  });
+
   it("rejects unknown fields", async () => {
     const res = await request(app).post("/api/sessions/demo/votes").send(vote("track_01", { css: "body{}" }));
     expect(res.status).toBe(400);
   });
 
-  it("counts a retried event ID only once (FE-04)", async () => {
+  it("BE-03: counts a retried event ID only once (no duplicate votes on reconnect, FE-04)", async () => {
     const body = vote("track_03");
     await request(app).post("/api/sessions/demo/votes").send(body);
     const retry = await request(app).post("/api/sessions/demo/votes").send(body);
@@ -70,7 +77,7 @@ describe("votes", () => {
     expect(votesFor("track_03")).toBe(1);
   });
 
-  it("rate limits bursts from one participant", async () => {
+  it("BE-04: rate limits bursts from one participant", async () => {
     const statuses: number[] = [];
     for (let i = 0; i < 35; i++) {
       const res = await request(app)
@@ -131,7 +138,7 @@ describe("host actions", () => {
     expect(store.getState().visualMode).toBe("auto");
   });
 
-  it("applies a validated visual state, then returns to auto (FE-08)", async () => {
+  it("FE-08: applies a validated visual state, then returns to auto", async () => {
     const res = await visual({ visual: { theme: "neon_pulse", intensity: 0.8 } }, HOST_KEY);
     expect(res.status).toBe(200);
     expect(store.getState()).toMatchObject({ visualMode: "host", visualState: { theme: "neon_pulse", intensity: 0.8 } });

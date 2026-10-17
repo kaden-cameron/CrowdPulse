@@ -81,7 +81,7 @@ describe("AiPanel", () => {
     expect(screen.queryByRole("button", { name: /Approve/ })).toBeNull();
   });
 
-  it("says AI is unavailable when the server has no key", async () => {
+  it("GM-07: says AI is unavailable when the server has no key", async () => {
     mockFetch(rec(), false);
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
     expect(await screen.findByText(/set GEMINI_API_KEY/)).toBeInTheDocument();

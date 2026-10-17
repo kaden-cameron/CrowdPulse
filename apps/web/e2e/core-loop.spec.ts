@@ -32,7 +32,7 @@ test.beforeEach(async ({ request }) => {
   expect(r.status()).toBe(200);
 });
 
-test("E2E-01/02/03: a phone joins and votes; the stage updates without refresh", async ({ browser }) => {
+test("FE-01/02/03 BE-05 E2E-01/02/03/11: a phone joins and votes; the stage updates without refresh (Gemini off)", async ({ browser }) => {
   const stage = await openStage(browser);
   const phone = await openPhone(browser);
 
@@ -41,6 +41,9 @@ test("E2E-01/02/03: a phone joins and votes; the stage updates without refresh",
   await expect(phone.getByRole("button", { name: "Voted ✓: Stage Lightning" })).toBeVisible();
   await expect(stage.locator(".stage-queue")).toContainText("Stage Lightning");
   const ms = Date.now() - t0;
+  // BE-05: both clients converge on the same server-computed count.
+  await expect(stage.locator(".stage-queue li", { hasText: "Stage Lightning" })).toContainText("DJ Hydra · 1");
+  await expect(phone.locator(".track-row", { hasText: "Stage Lightning" })).toContainText("1 vote ·");
   console.log(`vote click → stage shows it: ${ms} ms (includes UI round trip)`);
   expect(ms).toBeLessThan(2000);
 

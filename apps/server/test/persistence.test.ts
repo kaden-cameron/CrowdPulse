@@ -10,7 +10,7 @@ const vote = (trackId: string, participantId = "participant_aaaa") => ({
 });
 
 describe("persist-then-apply", () => {
-  it("does not apply or broadcast an event the database failed to save (BE-07 / TD-07)", async () => {
+  it("BE-07/TD-07: does not apply or broadcast an event the database failed to save", async () => {
     const failing: Persist = async () => {
       throw new Error("connection refused");
     };
