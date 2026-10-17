@@ -10,3 +10,7 @@ build
 coverage
 .turbo
 *.tsbuildinfo
+apps/server/data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
