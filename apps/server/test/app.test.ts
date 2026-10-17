@@ -89,25 +89,25 @@ describe("votes", () => {
 });
 
 describe("websocket event path", () => {
-  it("uses the same validation as HTTP", () => {
-    expect(handleEvent({ type: "vote.submit", ...vote("nope") }, "1.2.3.4", "ws").result.status).toBe("rejected");
-    const ok = handleEvent({ type: "vote.submit", ...vote("track_02") }, "1.2.3.4", "ws");
+  it("uses the same validation as HTTP", async () => {
+    expect((await handleEvent({ type: "vote.submit", ...vote("nope") }, "1.2.3.4", "ws")).result.status).toBe("rejected");
+    const ok = await handleEvent({ type: "vote.submit", ...vote("track_02") }, "1.2.3.4", "ws");
     expect(ok.result.status).toBe("accepted");
-    expect(handleEvent({ type: "vote.submit", ...vote("track_02"), extra: 1 }, "1.2.3.4", "ws").httpStatus).toBe(400);
+    expect((await handleEvent({ type: "vote.submit", ...vote("track_02"), extra: 1 }, "1.2.3.4", "ws")).httpStatus).toBe(400);
   });
 });
 
 describe("moods and taps", () => {
-  it("counts each participant's latest mood once", () => {
+  it("counts each participant's latest mood once", async () => {
     const base = { type: "session.join", sessionId: "demo", participantId: "participant_cccc" };
-    handleEvent({ ...base, eventId: randomUUID(), mood: "chill" }, "ip", "ws");
-    handleEvent({ ...base, eventId: randomUUID(), mood: "wild" }, "ip", "ws");
+    await handleEvent({ ...base, eventId: randomUUID(), mood: "chill" }, "ip", "ws");
+    await handleEvent({ ...base, eventId: randomUUID(), mood: "wild" }, "ip", "ws");
     expect(store.getState().moods).toEqual({ chill: 0, hyped: 0, focused: 0, wild: 1 });
   });
 
-  it("completes a quest and starts the next one", () => {
+  it("completes a quest and starts the next one", async () => {
     for (let i = 0; i < 4; i++) {
-      handleEvent(
+      await handleEvent(
         { type: "tap.batch", sessionId: "demo", participantId: "participant_dddd", eventId: randomUUID(), count: 25 },
         "ip",
         "ws",

@@ -37,6 +37,23 @@ QR/onboarding: the stage shows a QR for its own origin, so open the stage at `ht
 7. Resize to phone and wide projector — controls and stage stay usable.
 8. Keep voting/tapping — in **auto** mode theme/intensity follow energy (`calm_waves` → `electric_blue` → `sunset` → `neon_pulse`). On `/host/demo`, **Apply to stage** pins a theme/intensity; **Back to auto** releases it.
 
+## TigerData persistence (Doc 03)
+
+Put your TigerData connection string in a repo-root `.env` (see `.env.example`):
+
+```
+DATABASE_URL=postgres://tsdbadmin:…@….tsdb.cloud.timescale.com:…/tsdb?sslmode=require
+```
+
+On startup the server creates the schema if it's missing: the `crowd_events` hypertable, an `event_ids` dedup table, and the `crowd_metrics_5s` continuous aggregate (refreshed every 10s). Then it **replays the session's events**, so a restart keeps votes, moods, the queue and host settings.
+
+- **Persist, then apply.** An event changes state and is broadcast only after TigerData confirms the write. If the write fails, the client gets a retryable rejection, the UI says so, and the same `eventId` is resent. No vote is ever reported as saved when it wasn't.
+- **Dedup in the database.** `event_ids` makes a retried event a no-op, even across restarts.
+- **Host dashboard** (`/host/demo` → *Live analytics*): events in the last 10s, total persisted, latest persisted event time, how far the aggregate lags behind, events per 5s (aggregate buckets are solid, buckets still computed from raw rows are hatched), the engagement trend, votes by track from SQL, and a data table.
+- **Judge evidence:** `apps/server/sql/demo-queries.sql` has the latest-events, votes-by-track, aggregate and freshness queries. Run them in the TigerData SQL editor next to the dashboard.
+- **Tests:** `npm test` runs the TigerData integration suite (TD-01 to 06, TD-08, restart replay) against `DATABASE_URL` using throwaway sessions. It is skipped when no database is configured.
+- Without `DATABASE_URL` the server runs in memory, `/api/health` reports `"database":"off"`, and the dashboard shows **Persistence off**.
+
 ## Architecture (current)
 
 ```

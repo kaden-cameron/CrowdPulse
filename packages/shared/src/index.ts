@@ -109,6 +109,8 @@ export interface EventResultMessage {
   eventId: string;
   status: "accepted" | "rejected" | "duplicate";
   reason?: string;
+  /** True when the server couldn't save the event; resend with the same eventId. */
+  retryable?: boolean;
 }
 
 export interface ErrorMessage {
@@ -138,6 +140,28 @@ export const THEME_ALLOWLIST: VisualTheme[] = [
 export const MOODS: Mood[] = ["chill", "hyped", "focused", "wild"];
 
 export const MAX_TAPS_PER_BATCH = 30;
+
+/** Response of GET /api/sessions/:id/metrics. */
+export type SessionMetrics =
+  | { persistence: "memory" }
+  | {
+      persistence: "tigerdata";
+      generatedAt: string;
+      queryMs: number;
+      latestEventAt: string | null;
+      eventsLast10s: number;
+      totalEvents: number;
+      votesByTrack: { trackId: string; votes: number }[];
+      buckets: {
+        bucket: string;
+        eventCount: number;
+        votes: number;
+        taps: number;
+        avgEnergy: number | null;
+        source: "aggregate" | "raw";
+      }[];
+      aggregate: { latestBucket: string | null; lagSeconds: number | null };
+    };
 
 export const DEMO_SESSION_ID = "demo";
 export const DEMO_SESSION_NAME = "SwampHacks Main Stage";

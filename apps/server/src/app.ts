@@ -12,6 +12,7 @@ import {
 } from "@crowdpulse/shared";
 import { log } from "./log.js";
 import { RateLimiter } from "./rateLimit.js";
+import type { Database } from "./db.js";
 import type { EventOutcome, SessionStore } from "./session.js";
 
 const sessionId = z.string().min(1).max(64);
@@ -61,6 +62,8 @@ export interface AppOptions {
   sessions: Sessions;
   /** Temporary shared secret for host actions until Auth0 lands (Doc 06). */
   hostKey: string;
+  /** TigerData connection; omitted means in-memory only (no metrics). */
+  db?: Database;
   corsOrigins?: string[];
   now?: () => number;
 }
@@ -70,11 +73,11 @@ export function createEventHandler({ sessions, now = Date.now }: AppOptions) {
   const ipLimiter = new RateLimiter(600, 60_000, now);
 
   /** Validates and applies one client event from either HTTP or WebSocket. */
-  return function handleEvent(
+  return async function handleEvent(
     raw: unknown,
     ip: string,
     transport: "http" | "ws",
-  ): { result: EventResultMessage; httpStatus: number; outcome?: EventOutcome } {
+  ): Promise<{ result: EventResultMessage; httpStatus: number; outcome?: EventOutcome }> {
     const t0 = performance.now();
     const rawEventId =
       typeof (raw as { eventId?: unknown })?.eventId === "string"
@@ -92,7 +95,13 @@ export function createEventHandler({ sessions, now = Date.now }: AppOptions) {
         httpStatus,
         latencyMs: +(performance.now() - t0).toFixed(1),
       });
-      return { result: { type: "event.result" as const, eventId: rawEventId, status, reason }, httpStatus, outcome };
+      // 503 = the database didn't confirm the write; the client should resend the same eventId.
+      const retryable = httpStatus === 503 || undefined;
+      return {
+        result: { type: "event.result" as const, eventId: rawEventId, status, reason, retryable },
+        httpStatus,
+        outcome,
+      };
     };
 
     const parsed = EventSchema.safeParse(raw);
@@ -102,12 +111,11 @@ export function createEventHandler({ sessions, now = Date.now }: AppOptions) {
     if (!session) return done("rejected", 404, "Unknown session");
     if (!ipLimiter.allow(ip)) return done("rejected", 429, "Rate limit exceeded");
 
-    const outcome =
-      event.type === "vote.submit"
-        ? session.submitVote(event)
-        : event.type === "session.join"
-          ? session.recordMood(event)
-          : session.recordTaps(event);
+    const outcome = await (event.type === "vote.submit"
+      ? session.submitVote(event)
+      : event.type === "session.join"
+        ? session.recordMood(event)
+        : session.recordTaps(event));
 
     if (outcome.status === "rejected") {
       return done("rejected", outcome.httpStatus, outcome.reason, outcome);
@@ -117,7 +125,7 @@ export function createEventHandler({ sessions, now = Date.now }: AppOptions) {
 }
 
 export function createApp(options: AppOptions) {
-  const { sessions, hostKey, corsOrigins } = options;
+  const { sessions, hostKey, corsOrigins, db } = options;
   const handleEvent = createEventHandler(options);
 
   const app = express();
@@ -126,8 +134,27 @@ export function createApp(options: AppOptions) {
   app.use(cors(corsOrigins?.length ? { origin: corsOrigins } : undefined));
   app.use(express.json({ limit: "4kb" }));
 
-  app.get("/api/health", (_req, res) => {
-    res.json({ ok: true, service: "crowdpulse-server", time: new Date().toISOString() });
+  app.get("/api/health", async (_req, res) => {
+    // Status only — never connection strings or other configuration.
+    const database = db ? ((await db.ping()) ? "up" : "down") : "off";
+    res.json({ ok: true, service: "crowdpulse-server", database, time: new Date().toISOString() });
+  });
+
+  app.get("/api/sessions/:id/metrics", async (req, res) => {
+    if (!sessions.has(req.params.id)) {
+      res.status(404).json({ error: "Unknown session" });
+      return;
+    }
+    if (!db) {
+      res.json({ persistence: "memory" });
+      return;
+    }
+    try {
+      res.json(await db.metrics(req.params.id));
+    } catch (err) {
+      log({ kind: "db.metrics_failed", sessionId: req.params.id, message: (err as Error).message });
+      res.status(503).json({ error: "Metrics unavailable — database query failed" });
+    }
   });
 
   app.get("/api/sessions/:id/state", (req, res) => {
@@ -142,13 +169,13 @@ export function createApp(options: AppOptions) {
   // HTTP mirrors of the WebSocket events (same validation path).
   const eventRoute =
     (type: string): RequestHandler<{ id: string }> =>
-    (req, res) => {
+    async (req, res) => {
       const body = { ...(req.body ?? {}), type };
       if (body.sessionId !== req.params.id) {
         res.status(400).json({ status: "rejected", reason: "Session mismatch" });
         return;
       }
-      const { result, httpStatus, outcome } = handleEvent(body, req.ip ?? "unknown", "http");
+      const { result, httpStatus, outcome } = await handleEvent(body, req.ip ?? "unknown", "http");
       res.status(httpStatus).json(
         outcome && outcome.status !== "rejected"
           ? { status: outcome.status, state: outcome.state }
@@ -179,19 +206,23 @@ export function createApp(options: AppOptions) {
     next();
   };
 
-  app.post("/api/host/sessions/:id/visual", requireHost, hostSession, (req, res) => {
+  app.post("/api/host/sessions/:id/visual", requireHost, hostSession, async (req, res) => {
     const parsed = VisualSchema.safeParse(req.body?.visual);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid visual state" });
       return;
     }
-    const state = sessions.get(req.params.id)!.setVisual(parsed.data);
+    const outcome = await sessions.get(req.params.id)!.setVisual(parsed.data);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
     log({ kind: "host.visual", sessionId: req.params.id, outcome: "accepted", visual: parsed.data });
-    res.json({ status: "accepted", state });
+    res.json(outcome);
   });
 
-  app.post("/api/host/sessions/:id/advance", requireHost, hostSession, (req, res) => {
-    const outcome = sessions.get(req.params.id)!.advance();
+  app.post("/api/host/sessions/:id/advance", requireHost, hostSession, async (req, res) => {
+    const outcome = await sessions.get(req.params.id)!.advance();
     if (outcome.status === "rejected") {
       res.status(outcome.httpStatus).json({ error: outcome.reason });
       return;

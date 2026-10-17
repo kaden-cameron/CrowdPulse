@@ -7,10 +7,11 @@ import {
   type QueueItem,
   type SessionState,
   type Track,
-  type VisualMode,
   type VisualState,
   type VisualTheme,
 } from "@crowdpulse/shared";
+import type { EventRecord, PersistResult } from "./db.js";
+import { log } from "./log.js";
 
 const RATE_WINDOW_MS = 10_000;
 const RATE_LIMIT = 30;
@@ -51,6 +52,22 @@ export type EventOutcome =
   | { status: "rejected"; reason: string; httpStatus: number };
 
 type CatalogTrack = Omit<Track, "votes" | "status">;
+type Rejection = Extract<EventOutcome, { status: "rejected" }>;
+type Plan = {
+  record: Pick<EventRecord, "eventType" | "value" | "metadata">;
+  reservation?: string;
+  commit: () => { weight: number; event: Omit<LatestEvent, "at"> };
+};
+
+/** Writes one event durably. The default (no database) accepts everything in memory. */
+export type Persist = (rec: EventRecord) => Promise<PersistResult>;
+const memoryOnly: Persist = async () => "stored";
+
+export interface SessionOptions {
+  catalog?: CatalogTrack[];
+  now?: () => number;
+  persist?: Persist;
+}
 
 export class SessionStore {
   readonly sessionId: string;
@@ -62,6 +79,8 @@ export class SessionStore {
   private moods = new Map<string, Mood>(); // participantId -> latest mood
   private participants = new Set<string>();
   private seenEventIds = new Set<string>();
+  private inflight = new Set<string>();
+  private reservations = new Set<string>();
   private clientHits = new Map<string, number[]>();
   private activity: { at: number; weight: number }[] = [];
   private questLevel = 1;
@@ -73,16 +92,14 @@ export class SessionStore {
   private latestEvent: LatestEvent | null;
   private listeners = new Set<() => void>();
   private now: () => number;
+  private persist: Persist;
 
-  constructor(
-    sessionId: string,
-    sessionName: string,
-    catalog: CatalogTrack[] = DEMO_TRACKS,
-    now: () => number = Date.now,
-  ) {
+  constructor(sessionId: string, sessionName: string, options: SessionOptions = {}) {
+    const now = options.now ?? Date.now;
     this.sessionId = sessionId;
     this.sessionName = sessionName;
-    this.catalog = catalog;
+    this.catalog = options.catalog ?? DEMO_TRACKS;
+    this.persist = options.persist ?? memoryOnly;
     this.now = now;
     this.updatedAt = now();
     this.latestEvent = {
@@ -142,22 +159,27 @@ export class SessionStore {
     trackId: string;
     eventId: string;
     participantId: string;
-  }): EventOutcome {
+  }): Promise<EventOutcome> {
     return this.handleEvent(input, () => {
       const track = this.catalog.find((t) => t.id === input.trackId);
       if (!track) return this.reject("Unknown track ID", 400);
       if (this.nowPlaying?.id === track.id) {
         return this.reject("Track is already playing", 409);
       }
-      const voters = this.votes.get(track.id) ?? new Set<string>();
-      if (voters.has(input.participantId)) {
+      if (this.votes.get(track.id)?.has(input.participantId)) {
         return this.reject("Already voted for this track", 409);
       }
-      voters.add(input.participantId);
-      this.votes.set(track.id, voters);
       return {
-        weight: ACTIVITY_WEIGHT.vote,
-        event: { type: "vote.accepted", message: `Vote locked for ${track.title}` },
+        // Held while the write is in flight so a concurrent double-vote can't slip through.
+        reservation: `vote:${input.participantId}:${track.id}`,
+        record: { eventType: "vote", value: 1, metadata: { trackId: track.id } },
+        commit: () => {
+          this.applyVote(track.id, input.participantId);
+          return {
+            weight: ACTIVITY_WEIGHT.vote,
+            event: { type: "vote.accepted", message: `Vote locked for ${track.title}` },
+          };
+        },
       };
     });
   }
@@ -166,62 +188,63 @@ export class SessionStore {
     mood: Mood;
     eventId: string;
     participantId: string;
-  }): EventOutcome {
-    return this.handleEvent(input, () => {
-      this.moods.set(input.participantId, input.mood);
-      return {
-        weight: ACTIVITY_WEIGHT.mood,
-        event: { type: "mood.selected", message: `Someone is feeling ${input.mood}` },
-      };
-    });
+  }): Promise<EventOutcome> {
+    return this.handleEvent(input, () => ({
+      record: { eventType: "mood", value: null, metadata: { mood: input.mood } },
+      commit: () => {
+        this.moods.set(input.participantId, input.mood);
+        return {
+          weight: ACTIVITY_WEIGHT.mood,
+          event: { type: "mood.selected", message: `Someone is feeling ${input.mood}` },
+        };
+      },
+    }));
   }
 
   recordTaps(input: {
     count: number;
     eventId: string;
     participantId: string;
-  }): EventOutcome {
-    return this.handleEvent(input, () => {
-      this.questProgress += input.count;
-      const goal = this.questGoal();
-      let event = { type: "tap.batch", message: `+${input.count} hype` };
-      if (this.questProgress >= goal) {
-        event = {
-          type: "quest.complete",
-          message: `Quest ${this.questLevel} complete! ${goal} hype taps`,
+  }): Promise<EventOutcome> {
+    return this.handleEvent(input, () => ({
+      record: { eventType: "tap", value: input.count, metadata: {} },
+      commit: () => {
+        const completed = this.applyTaps(input.count);
+        return {
+          weight: ACTIVITY_WEIGHT.tap * input.count,
+          event: completed
+            ? { type: "quest.complete", message: `Quest ${completed.level} complete! ${completed.goal} hype taps` }
+            : { type: "tap.batch", message: `+${input.count} hype` },
         };
-        this.questLevel += 1;
-        this.questProgress = 0;
-      }
-      return { weight: ACTIVITY_WEIGHT.tap * input.count, event };
-    });
+      },
+    }));
   }
 
   /** Host action. `null` returns the stage to auto (energy-driven) mode. */
-  setVisual(visual: VisualState | null): SessionState {
-    this.hostVisual = visual
+  async setVisual(visual: VisualState | null): Promise<EventOutcome> {
+    const next = visual
       ? { theme: visual.theme, intensity: clamp(visual.intensity, 0, 1) }
       : null;
-    const mode: VisualMode = this.hostVisual ? "host" : "auto";
+    const saved = await this.persistHostAction("host_visual", { visual: next });
+    if (saved) return saved;
+    this.hostVisual = next;
     this.change({
       type: "visual.set",
-      message:
-        mode === "host"
-          ? `Host set ${this.hostVisual!.theme.replaceAll("_", " ")} @ ${Math.round(this.hostVisual!.intensity * 100)}%`
-          : "Stage visuals follow the crowd again",
+      message: next
+        ? `Host set ${next.theme.replaceAll("_", " ")} @ ${Math.round(next.intensity * 100)}%`
+        : "Stage visuals follow the crowd again",
     });
-    return this.getState();
+    return { status: "accepted", state: this.getState() };
   }
 
   /** Host action: play the top-voted track next. */
-  advance(): EventOutcome {
+  async advance(): Promise<EventOutcome> {
     const [next] = this.buildQueue();
     if (!next) return this.reject("Queue is empty — no votes yet", 409);
-    const track = this.catalog.find((t) => t.id === next.trackId)!;
-    if (this.nowPlaying) this.lastPlayedAt.set(this.nowPlaying.id, this.now());
-    this.nowPlaying = track;
-    this.votes.delete(track.id);
-    this.change({ type: "track.playing", message: `Now playing ${track.title}` });
+    const saved = await this.persistHostAction("track_advance", { trackId: next.trackId });
+    if (saved) return saved;
+    const title = this.applyAdvance(next.trackId, this.now());
+    this.change({ type: "track.playing", message: `Now playing ${title}` });
     return { status: "accepted", state: this.getState() };
   }
 
@@ -234,37 +257,169 @@ export class SessionStore {
     return true;
   }
 
-  private handleEvent(
+  /** Writes the current energy score as a metrics-only sample (not replayed). */
+  async sampleEnergy(): Promise<void> {
+    await this.persist({
+      eventId: randomUUID(),
+      sessionId: this.sessionId,
+      participantId: null,
+      eventType: "energy_sample",
+      value: this.energyScore,
+      metadata: {},
+    });
+  }
+
+  /** Rebuilds state from persisted events (oldest first) after a restart. */
+  replay(records: Required<EventRecord>[]): number {
+    let applied = 0;
+    for (const r of records) {
+      const at = r.time.getTime();
+      const meta = r.metadata as Record<string, unknown>;
+      this.markSeen(r.eventId);
+      if (r.participantId) this.participants.add(r.participantId);
+      switch (r.eventType) {
+        case "vote":
+          if (typeof meta.trackId === "string" && r.participantId) {
+            this.applyVote(meta.trackId, r.participantId);
+            this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
+          }
+          break;
+        case "mood":
+          if (r.participantId && MOODS.includes(meta.mood as Mood)) {
+            this.moods.set(r.participantId, meta.mood as Mood);
+            this.activity.push({ at, weight: ACTIVITY_WEIGHT.mood });
+          }
+          break;
+        case "tap":
+          this.applyTaps(Number(r.value) || 0);
+          this.activity.push({ at, weight: ACTIVITY_WEIGHT.tap * (Number(r.value) || 0) });
+          break;
+        case "host_visual":
+          this.hostVisual = (meta.visual as VisualState | null) ?? null;
+          break;
+        case "track_advance":
+          if (typeof meta.trackId === "string") this.applyAdvance(meta.trackId, at);
+          break;
+        default:
+          continue;
+      }
+      applied += 1;
+    }
+    if (applied) {
+      this.change({
+        type: "session.restored",
+        message: `Restored ${applied} events from TigerData`,
+      });
+    }
+    return applied;
+  }
+
+  /**
+   * Validate → dedupe → rate-limit → plan → persist → apply → broadcast.
+   * State only changes after the database confirms the write.
+   */
+  private async handleEvent(
     input: { eventId: string; participantId: string },
-    apply: () =>
-      | { weight: number; event: Omit<LatestEvent, "at"> }
-      | Extract<EventOutcome, { status: "rejected" }>,
-  ): EventOutcome {
+    plan: () => Plan | Rejection,
+  ): Promise<EventOutcome> {
     // Idempotency: a retried event ID returns current state without being counted again.
-    if (this.seenEventIds.has(input.eventId)) {
+    if (this.seenEventIds.has(input.eventId) || this.inflight.has(input.eventId)) {
       return { status: "duplicate", state: this.getState() };
     }
     if (!this.allowRequest(input.participantId)) {
       return this.reject("Rate limit exceeded", 429);
     }
-    const result = apply();
-    if ("status" in result) return result;
+    const p = plan();
+    if ("status" in p) return p;
+    if (p.reservation && this.reservations.has(p.reservation)) {
+      return this.reject("Already voted for this track", 409);
+    }
 
-    this.seenEventIds.add(input.eventId);
+    this.inflight.add(input.eventId);
+    if (p.reservation) this.reservations.add(p.reservation);
+    let result: PersistResult;
+    try {
+      result = await this.persist({
+        eventId: input.eventId,
+        sessionId: this.sessionId,
+        participantId: input.participantId,
+        ...p.record,
+      });
+    } catch (err) {
+      log({ kind: "db.persist_failed", sessionId: this.sessionId, eventId: input.eventId, message: (err as Error).message });
+      return this.reject("Could not save event — please retry", 503);
+    } finally {
+      this.inflight.delete(input.eventId);
+      if (p.reservation) this.reservations.delete(p.reservation);
+    }
+
+    this.markSeen(input.eventId);
+    if (result === "duplicate") return { status: "duplicate", state: this.getState() };
+
+    const { weight, event } = p.commit();
+    this.participants.add(input.participantId);
+    this.activity.push({ at: this.now(), weight });
+    this.change(event);
+    return { status: "accepted", state: this.getState() };
+  }
+
+  /** Returns a rejection if the host action could not be saved; otherwise null. */
+  private async persistHostAction(
+    eventType: "host_visual" | "track_advance",
+    metadata: Record<string, unknown>,
+  ): Promise<Rejection | null> {
+    try {
+      await this.persist({
+        eventId: randomUUID(),
+        sessionId: this.sessionId,
+        participantId: null,
+        eventType,
+        value: null,
+        metadata,
+      });
+      return null;
+    } catch (err) {
+      log({ kind: "db.persist_failed", sessionId: this.sessionId, eventType, message: (err as Error).message });
+      return this.reject("Could not save host action — please retry", 503);
+    }
+  }
+
+  private applyVote(trackId: string, participantId: string) {
+    const voters = this.votes.get(trackId) ?? new Set<string>();
+    voters.add(participantId);
+    this.votes.set(trackId, voters);
+  }
+
+  /** Returns the completed quest, if these taps finished one. */
+  private applyTaps(count: number): { level: number; goal: number } | null {
+    this.questProgress += count;
+    const goal = this.questGoal();
+    if (this.questProgress < goal) return null;
+    const level = this.questLevel;
+    this.questLevel += 1;
+    this.questProgress = 0;
+    return { level, goal };
+  }
+
+  /** Returns the new track's title. */
+  private applyAdvance(trackId: string, at: number): string {
+    const track = this.catalog.find((t) => t.id === trackId);
+    if (!track) return trackId;
+    if (this.nowPlaying) this.lastPlayedAt.set(this.nowPlaying.id, at);
+    this.nowPlaying = track;
+    this.votes.delete(track.id);
+    return track.title;
+  }
+
+  private markSeen(eventId: string) {
+    this.seenEventIds.add(eventId);
     if (this.seenEventIds.size > MAX_SEEN_EVENTS) {
       // Sets iterate in insertion order, so this evicts the oldest event ID.
       this.seenEventIds.delete(this.seenEventIds.values().next().value!);
     }
-    this.participants.add(input.participantId);
-    this.activity.push({ at: this.now(), weight: result.weight });
-    this.change(result.event);
-    return { status: "accepted", state: this.getState() };
   }
 
-  private reject(
-    reason: string,
-    httpStatus: number,
-  ): Extract<EventOutcome, { status: "rejected" }> {
+  private reject(reason: string, httpStatus: number): Rejection {
     return { status: "rejected", reason, httpStatus };
   }
 

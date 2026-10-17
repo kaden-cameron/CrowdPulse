@@ -1,0 +1,311 @@
+import pg from "pg";
+import type { SessionMetrics } from "@crowdpulse/shared";
+import { log } from "./log.js";
+
+// TigerData (TimescaleDB) persistence. The database is part of the event flow:
+// an event is only applied and broadcast after its row is written here.
+
+export interface EventRecord {
+  eventId: string;
+  sessionId: string;
+  participantId: string | null;
+  eventType: PersistedEventType;
+  value: number | null;
+  metadata: Record<string, unknown>;
+  time?: Date;
+}
+
+export type PersistedEventType =
+  | "vote"
+  | "mood"
+  | "tap"
+  | "host_visual"
+  | "track_advance"
+  | "energy_sample";
+
+export type PersistResult = "stored" | "duplicate";
+
+type TigerMetrics = Extract<SessionMetrics, { persistence: "tigerdata" }>;
+type MetricsBucket = TigerMetrics["buckets"][number];
+
+const MIGRATIONS: { name: string; sql: string; optional?: boolean }[] = [
+  {
+    name: "extension",
+    sql: "CREATE EXTENSION IF NOT EXISTS timescaledb",
+    optional: true,
+  },
+  {
+    // Matches Doc 03 §3, except session_id is TEXT because session codes are short slugs ("demo").
+    name: "crowd_events",
+    sql: `CREATE TABLE IF NOT EXISTS crowd_events (
+      time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      event_id UUID NOT NULL,
+      session_id TEXT NOT NULL,
+      participant_id TEXT,
+      event_type TEXT NOT NULL,
+      value DOUBLE PRECISION,
+      metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+      PRIMARY KEY (time, event_id)
+    )`,
+  },
+  {
+    // Hypertable unique keys must include the time column, so (time, event_id) cannot stop a
+    // retry that arrives at a different time. This small table is the real dedup key.
+    name: "event_ids",
+    sql: `CREATE TABLE IF NOT EXISTS event_ids (
+      event_id UUID PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      received_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+  },
+  {
+    name: "hypertable",
+    sql: `SELECT create_hypertable('crowd_events', by_range('time', INTERVAL '1 day'), if_not_exists => TRUE)`,
+  },
+  {
+    name: "session_time_index",
+    sql: "CREATE INDEX IF NOT EXISTS crowd_events_session_time_idx ON crowd_events (session_id, time DESC)",
+  },
+  {
+    name: "crowd_metrics_5s",
+    sql: `CREATE MATERIALIZED VIEW IF NOT EXISTS crowd_metrics_5s
+      WITH (timescaledb.continuous, timescaledb.materialized_only = true) AS
+      SELECT
+        session_id,
+        time_bucket(INTERVAL '5 seconds', time) AS bucket,
+        COUNT(*) FILTER (WHERE event_type <> 'energy_sample') AS event_count,
+        COUNT(*) FILTER (WHERE event_type = 'vote') AS votes,
+        COALESCE(SUM(value) FILTER (WHERE event_type = 'tap'), 0) AS taps,
+        AVG(value) FILTER (WHERE event_type = 'energy_sample') AS avg_energy
+      FROM crowd_events
+      GROUP BY session_id, bucket
+      WITH NO DATA`,
+  },
+  {
+    name: "crowd_metrics_5s_policy",
+    sql: `SELECT add_continuous_aggregate_policy('crowd_metrics_5s',
+      start_offset => INTERVAL '1 hour',
+      end_offset => INTERVAL '5 seconds',
+      schedule_interval => INTERVAL '10 seconds',
+      if_not_exists => TRUE)`,
+  },
+];
+
+export class Database {
+  private pool: pg.Pool;
+  private healthy = false;
+
+  constructor(connectionString: string) {
+    this.pool = new pg.Pool({
+      connectionString,
+      max: 10,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 30_000,
+      statement_timeout: 5_000,
+      query_timeout: 6_000,
+      application_name: "crowdpulse-server",
+    });
+    this.pool.on("error", (err) => {
+      this.healthy = false;
+      log({ kind: "db.pool_error", message: err.message });
+    });
+  }
+
+  get isHealthy(): boolean {
+    return this.healthy;
+  }
+
+  async migrate(): Promise<void> {
+    for (const m of MIGRATIONS) {
+      try {
+        await this.pool.query(m.sql);
+      } catch (err) {
+        const message = (err as Error).message;
+        if (m.optional) {
+          log({ kind: "db.migrate", step: m.name, outcome: "skipped", message });
+          continue;
+        }
+        log({ kind: "db.migrate", step: m.name, outcome: "failed", message });
+        throw err;
+      }
+    }
+    this.healthy = true;
+    log({ kind: "db.migrate", outcome: "ok" });
+  }
+
+  /**
+   * Writes one event. Dedup and insert run in one transaction, so a retried
+   * event ID is reported as "duplicate" and never produces a second row.
+   */
+  async persist(rec: EventRecord): Promise<PersistResult> {
+    const client = await this.connect();
+    try {
+      await client.query("BEGIN");
+      const fresh = await client.query(
+        "INSERT INTO event_ids (event_id, session_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        [rec.eventId, rec.sessionId],
+      );
+      if (fresh.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return "duplicate";
+      }
+      await client.query(
+        `INSERT INTO crowd_events (time, event_id, session_id, participant_id, event_type, value, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          rec.time ?? new Date(),
+          rec.eventId,
+          rec.sessionId,
+          rec.participantId,
+          rec.eventType,
+          rec.value,
+          rec.metadata,
+        ],
+      );
+      await client.query("COMMIT");
+      this.healthy = true;
+      return "stored";
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      this.healthy = false;
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  /** All replayable events for a session, oldest first (energy samples are metrics only). */
+  async loadEvents(sessionId: string): Promise<Required<EventRecord>[]> {
+    const { rows } = await this.pool.query(
+      `SELECT time, event_id, session_id, participant_id, event_type, value, metadata
+       FROM crowd_events
+       WHERE session_id = $1 AND event_type <> 'energy_sample'
+       ORDER BY time, event_id`,
+      [sessionId],
+    );
+    return rows.map((r) => ({
+      time: r.time,
+      eventId: r.event_id,
+      sessionId: r.session_id,
+      participantId: r.participant_id,
+      eventType: r.event_type,
+      value: r.value,
+      metadata: r.metadata,
+    }));
+  }
+
+  async metrics(sessionId: string, windowMinutes = 5): Promise<TigerMetrics> {
+    const t0 = performance.now();
+    const window = `${Math.max(1, Math.min(60, windowMinutes))} minutes`;
+
+    const [summary, byTrack, agg] = await Promise.all([
+      this.pool.query(
+        `SELECT
+           MAX(time) AS latest,
+           COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '10 seconds') AS last10s,
+           COUNT(*) AS total
+         FROM crowd_events
+         WHERE session_id = $1 AND event_type <> 'energy_sample'`,
+        [sessionId],
+      ),
+      this.pool.query(
+        `SELECT metadata->>'trackId' AS track_id, COUNT(*)::int AS votes
+         FROM crowd_events
+         WHERE session_id = $1 AND event_type = 'vote'
+         GROUP BY 1 ORDER BY votes DESC, track_id`,
+        [sessionId],
+      ),
+      this.pool.query(
+        `SELECT bucket, event_count, votes, taps, avg_energy
+         FROM crowd_metrics_5s
+         WHERE session_id = $1 AND bucket > NOW() - $2::interval
+         ORDER BY bucket`,
+        [sessionId, window],
+      ),
+    ]);
+
+    const latestMaterialized: Date | null = await this.pool
+      .query(`SELECT MAX(bucket) AS b FROM crowd_metrics_5s WHERE session_id = $1`, [sessionId])
+      .then((r) => r.rows[0]?.b ?? null);
+
+    // Buckets newer than the aggregate's last materialized bucket come from raw rows.
+    const raw = await this.pool.query(
+      `SELECT
+         time_bucket(INTERVAL '5 seconds', time) AS bucket,
+         COUNT(*) FILTER (WHERE event_type <> 'energy_sample') AS event_count,
+         COUNT(*) FILTER (WHERE event_type = 'vote') AS votes,
+         COALESCE(SUM(value) FILTER (WHERE event_type = 'tap'), 0) AS taps,
+         AVG(value) FILTER (WHERE event_type = 'energy_sample') AS avg_energy
+       FROM crowd_events
+       WHERE session_id = $1
+         AND time > NOW() - $2::interval
+         AND ($3::timestamptz IS NULL OR time >= $3::timestamptz + INTERVAL '5 seconds')
+       GROUP BY 1 ORDER BY 1`,
+      [sessionId, window, latestMaterialized],
+    );
+
+    const toBucket = (source: MetricsBucket["source"]) => (r: Record<string, unknown>): MetricsBucket => ({
+      bucket: (r.bucket as Date).toISOString(),
+      eventCount: Number(r.event_count),
+      votes: Number(r.votes),
+      taps: Number(r.taps),
+      avgEnergy: r.avg_energy == null ? null : Math.round(Number(r.avg_energy)),
+      source,
+    });
+
+    const latest: Date | null = summary.rows[0]?.latest ?? null;
+    const lagSeconds =
+      latest && latestMaterialized
+        ? Math.max(0, Math.round((latest.getTime() - (latestMaterialized.getTime() + 5_000)) / 1000))
+        : null;
+
+    return {
+      persistence: "tigerdata",
+      generatedAt: new Date().toISOString(),
+      queryMs: +(performance.now() - t0).toFixed(1),
+      latestEventAt: latest?.toISOString() ?? null,
+      eventsLast10s: Number(summary.rows[0]?.last10s ?? 0),
+      totalEvents: Number(summary.rows[0]?.total ?? 0),
+      votesByTrack: byTrack.rows.map((r) => ({ trackId: r.track_id, votes: r.votes })),
+      buckets: [...agg.rows.map(toBucket("aggregate")), ...raw.rows.map(toBucket("raw"))],
+      aggregate: {
+        latestBucket: latestMaterialized?.toISOString() ?? null,
+        lagSeconds,
+      },
+    };
+  }
+
+  /** Test helper: force-refresh the aggregate for a window (CALL cannot run in a transaction). */
+  async refreshAggregate(from: Date, to: Date): Promise<void> {
+    await this.pool.query("CALL refresh_continuous_aggregate('crowd_metrics_5s', $1, $2)", [from, to]);
+  }
+
+  async ping(): Promise<boolean> {
+    try {
+      await this.pool.query("SELECT 1");
+      this.healthy = true;
+    } catch {
+      this.healthy = false;
+    }
+    return this.healthy;
+  }
+
+  /** Test helper: remove a session's rows. */
+  async deleteSession(sessionId: string): Promise<void> {
+    await this.pool.query("DELETE FROM crowd_events WHERE session_id = $1", [sessionId]);
+    await this.pool.query("DELETE FROM event_ids WHERE session_id = $1", [sessionId]);
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+
+  private async connect() {
+    try {
+      return await this.pool.connect();
+    } catch (err) {
+      this.healthy = false;
+      throw err;
+    }
+  }
+}

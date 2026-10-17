@@ -20,6 +20,8 @@ export type SessionSocketHandlers = {
 
 type EventMessage = Exclude<ClientToServerMessage, { type: "client.hello" }>;
 
+const RESEND_DELAY_MS = 3000;
+
 export class SessionSocket {
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
@@ -76,7 +78,12 @@ export class SessionSocket {
         return;
       }
       if (msg.type === "event.result") {
-        this.outbox.delete(msg.eventId);
+        if (msg.retryable) {
+          // Server couldn't save it: keep it queued and resend the same eventId shortly.
+          this.scheduleResend(msg.eventId);
+        } else {
+          this.outbox.delete(msg.eventId);
+        }
         this.handlers.onEventResult?.(msg);
         return;
       }
@@ -123,6 +130,13 @@ export class SessionSocket {
     }
     this.ws?.close();
     this.ws = null;
+  }
+
+  private scheduleResend(eventId: string) {
+    window.setTimeout(() => {
+      const msg = this.outbox.get(eventId);
+      if (msg) this.raw(msg);
+    }, RESEND_DELAY_MS);
   }
 
   private raw(message: ClientToServerMessage) {

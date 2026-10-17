@@ -57,6 +57,11 @@ export function useSessionSocket(
       },
       onEventResult: (result) => {
         if (cancelled) return;
+        if (result.retryable) {
+          // Not saved yet; the socket resends it. Keep the vote button pending.
+          setError("Couldn't save to the database — retrying…");
+          return;
+        }
         const trackId = pendingVotes.current.get(result.eventId);
         if (!trackId) {
           if (result.status === "rejected" && result.reason !== "Rate limit exceeded") {

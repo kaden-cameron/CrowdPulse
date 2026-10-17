@@ -6,7 +6,9 @@ import {
   type SessionState,
   type VisualTheme,
 } from "@crowdpulse/shared";
+import { AnalyticsPanel } from "../components/AnalyticsPanel";
 import { ConnectionBadge } from "../components/ConnectionBadge";
+import { useMetrics } from "../hooks/useMetrics";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 import { hostAdvance, hostSetVisual } from "../lib/host";
 
@@ -18,6 +20,7 @@ export function HostPage() {
     sessionCode,
     "host",
   );
+  const { metrics, error: metricsError } = useMetrics(sessionCode);
   const [hostKey, setHostKey] = useState(
     () => sessionStorage.getItem(KEY_STORAGE) ?? "",
   );
@@ -97,6 +100,12 @@ export function HostPage() {
             </strong>
           </div>
         </div>
+
+        <AnalyticsPanel
+          metrics={metrics}
+          error={metricsError}
+          tracks={state?.tracks ?? []}
+        />
 
         <div className="host-block">
           <h2>Stage controls</h2>
