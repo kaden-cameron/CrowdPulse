@@ -745,11 +745,27 @@ code {
   margin-top: 0.85rem;
 }
 
-.join-qr img {
-  width: clamp(84px, 10vw, 140px);
-  height: auto;
-  border-radius: 10px;
+/* The rounded white frame sits outside the code's own quiet zone, so nothing clips the finder squares. */
+.join-qr-code {
+  flex: none;
+  padding: 6px;
+  border-radius: 14px;
   background: #fff;
+  line-height: 0;
+}
+
+.join-qr-code img {
+  display: block;
+  width: clamp(150px, 15vw, 280px);
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.join-qr-warning {
+  display: block;
+  margin-top: 0.3rem;
+  color: var(--warn);
+  font-weight: 600;
 }
 
 .join-qr .join-qr-hint {

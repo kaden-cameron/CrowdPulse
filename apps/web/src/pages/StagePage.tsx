@@ -11,15 +11,19 @@ export function StagePage() {
     sessionCode,
     "stage",
   );
-  const joinUrl = `${window.location.origin}/join/${encodeURIComponent(sessionCode)}`;
+  const joinBase = useJoinBase();
+  const joinUrl = `${joinBase.origin}/join/${encodeURIComponent(sessionCode)}`;
   const [qr, setQr] = useState<string | null>(null);
   const live = status === "connected";
 
   useEffect(() => {
+    // Scannable from the back of a room: the standard 4-module quiet zone, pure black on white,
+    // generated large so it stays crisp when the projector scales it.
     QRCode.toDataURL(joinUrl, {
-      margin: 1,
-      width: 280,
-      color: { dark: "#06141f", light: "#ffffff" },
+      margin: 4,
+      width: 640,
+      errorCorrectionLevel: "M",
+      color: { dark: "#000000", light: "#ffffff" },
     })
       .then(setQr)
       .catch(() => setQr(null));
@@ -118,11 +122,14 @@ export function StagePage() {
             </div>
             <div className="join-qr">
               {qr && (
-                <img src={qr} alt={`QR code to join at ${joinUrl}`} />
+                <div className="join-qr-code">
+                  <img src={qr} alt={`QR code to join at ${joinUrl}`} />
+                </div>
               )}
               <p className="join-qr-hint">
                 {joinUrl.replace(/^https?:\/\//, "")}
                 <span>{state?.participants ?? 0} in the crowd</span>
+                {joinBase.warning && <span className="join-qr-warning">{joinBase.warning}</span>}
               </p>
             </div>
             {!!state?.simulatedParticipants && (
@@ -160,4 +167,32 @@ function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionSt
       <div style={{ width: `${pct}%` }} />
     </div>
   );
+}
+
+const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+/**
+ * The origin the QR code should send phones to. A stage opened at localhost would encode a URL
+ * that only works on this laptop, so prefer the server's PUBLIC_URL, then (in development) this
+ * machine's LAN IP on the same port, and only then the address the stage was opened at.
+ */
+function useJoinBase(): { origin: string; warning: string | null } {
+  const here = window.location;
+  const isLocal = LOCAL_HOSTS.has(here.hostname);
+  const [base, setBase] = useState<{ origin: string; warning: string | null }>({
+    origin: here.origin,
+    warning: isLocal ? "Opened at localhost — phones can't use this link." : null,
+  });
+  useEffect(() => {
+    fetch("/api/public-config")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((cfg: { publicUrl: string | null; lanIp: string | null } | null) => {
+        if (cfg?.publicUrl) setBase({ origin: cfg.publicUrl, warning: null });
+        else if (isLocal && cfg?.lanIp) {
+          setBase({ origin: `${here.protocol}//${cfg.lanIp}${here.port ? `:${here.port}` : ""}`, warning: null });
+        }
+      })
+      .catch(() => {});
+  }, [isLocal, here.origin, here.protocol, here.port]);
+  return base;
 }

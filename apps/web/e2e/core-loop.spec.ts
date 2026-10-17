@@ -170,3 +170,26 @@ test("Music: the player plays the host's pick, auto mode moves on by itself, DJ 
   expect((await state()).nowPlaying?.trackId).toBe(current);
   await expect(laptop.getByText("Song finished")).toBeVisible();
 });
+
+test("The stage QR code decodes to the join link, even when small in a phone's camera", async ({ browser }) => {
+  const jsQR = (await import("jsqr")).default;
+  const { PNG } = await import("pngjs");
+  const stage = await openStage(browser);
+  await stage.setViewportSize({ width: 1920, height: 1080 });
+  await stage.waitForTimeout(500);
+  const shot = PNG.sync.read(await stage.screenshot());
+  // Simulate a phone a few metres back: the projected code covers ~1/3 as many camera pixels.
+  const f = 0.35;
+  const w = Math.round(shot.width * f);
+  const h = Math.round(shot.height * f);
+  const small = new Uint8ClampedArray(w * h * 4);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const si = (Math.floor(y / f) * shot.width + Math.floor(x / f)) * 4;
+      small.set(shot.data.subarray(si, si + 4), (y * w + x) * 4);
+    }
+  const code = jsQR(small, w, h);
+  expect(code?.data).toMatch(/\/join\/demo$/);
+  // Opened at localhost, the code must not send phones to localhost.
+  expect(code?.data).not.toMatch(/localhost|127\.0\.0\.1/);
+});

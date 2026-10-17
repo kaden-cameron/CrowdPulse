@@ -1,5 +1,6 @@
 import cors from "cors";
 import express, { type RequestHandler } from "express";
+import { networkInterfaces } from "node:os";
 import { z } from "zod";
 import {
   HOST_TARGETS,
@@ -79,6 +80,10 @@ export interface AppOptions {
   boosts?: BoostVerifier;
   /** Browser origins allowed to call the API (and open WebSockets). Empty = any (development). */
   corsOrigins?: string[];
+  /** The address attendees should open (production). Used for the stage QR code. */
+  publicUrl?: string;
+  /** Development only: share this machine's LAN IP so a stage opened at localhost gets a scannable QR. */
+  exposeLanIp?: boolean;
   /** Per-IP backstop per minute. High on purpose: a whole venue can share one Wi-Fi IP. */
   ipLimitPerMinute?: number;
   now?: () => number;
@@ -156,6 +161,22 @@ export function createApp(options: AppOptions) {
   app.use("/api", origins.middleware);
   app.use(cors(origins.list.length ? { origin: origins.list } : undefined));
   app.use(express.json({ limit: "4kb" }));
+
+  // Where the stage QR code should send phones. In production that's PUBLIC_URL. In development,
+  // a stage opened at localhost would encode a URL phones can't open, so offer the LAN IP instead.
+  app.get("/api/public-config", (_req, res) => {
+    let lanIp: string | null = null;
+    if (options.exposeLanIp) {
+      for (const list of Object.values(networkInterfaces())) {
+        const v4 = list?.find((a) => a.family === "IPv4" && !a.internal);
+        if (v4) {
+          lanIp = v4.address;
+          break;
+        }
+      }
+    }
+    res.json({ publicUrl: options.publicUrl ?? null, lanIp });
+  });
 
   app.get("/api/health", async (_req, res) => {
     // Status only — never connection strings or other configuration.

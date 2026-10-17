@@ -124,6 +124,8 @@ const { app, handleEvent, isOriginAllowed } = createApp({
   recommenders,
   boosts,
   ipLimitPerMinute: Number(process.env.RATE_LIMIT_IP_PER_MIN || 6000),
+  publicUrl: publicUrl ? new URL(publicUrl).origin : undefined,
+  exposeLanIp: !isProd,
 });
 
 // In production, serve the built web app and fall back to index.html for SPA routes.
