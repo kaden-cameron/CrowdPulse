@@ -27,7 +27,9 @@ export type PersistedEventType =
   | "boost"
   | "session_reset"
   | "playback_mode"
-  | "appearance";
+  | "appearance"
+  | "catalog_add"
+  | "catalog_remove";
 
 export type PersistResult = "stored" | "duplicate";
 

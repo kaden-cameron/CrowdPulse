@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   BOOST_VOTE_WEIGHT,
+  MAX_CATALOG_TRACKS,
   DEMO_TRACKS,
   MAX_BOOSTS_PER_TRACK,
   MOODS,
@@ -327,6 +328,61 @@ export class SessionStore {
     return { status: "accepted", state: this.getState() };
   }
 
+  /**
+   * Host action: add songs to the library (e.g. from a Spotify playlist import or search).
+   * Songs already in the library (same id or Spotify URI) are skipped; the library is capped.
+   * Saved with their estimated genre/BPM/energy, so a restart doesn't need Gemini again.
+   */
+  addTracks(tracks: CatalogTrack[]): Promise<EventOutcome & { added?: string[]; skipped?: number }> {
+    return this.exclusive(async () => {
+      const ids = new Set(this.catalog.map((t) => t.id));
+      const uris = new Set(this.catalog.map((t) => t.spotifyUri).filter(Boolean));
+      const fresh: CatalogTrack[] = [];
+      for (const t of tracks) {
+        if (ids.has(t.id) || (t.spotifyUri && uris.has(t.spotifyUri))) continue;
+        if (this.catalog.length + fresh.length >= MAX_CATALOG_TRACKS) break;
+        ids.add(t.id);
+        if (t.spotifyUri) uris.add(t.spotifyUri);
+        fresh.push(t);
+      }
+      const skipped = tracks.length - fresh.length;
+      if (!fresh.length) {
+        return {
+          ...this.reject(
+            this.catalog.length >= MAX_CATALOG_TRACKS
+              ? `The library is full (${MAX_CATALOG_TRACKS} songs) — remove some first`
+              : "Those songs are already in the library",
+            409,
+          ),
+          skipped,
+        };
+      }
+      const saved = await this.persistHostAction("catalog_add", { tracks: fresh });
+      if (saved) return saved;
+      this.catalog = [...this.catalog, ...fresh];
+      this.change({
+        type: "library.added",
+        message: fresh.length === 1 ? `Added “${fresh[0].title}” to the library` : `Added ${fresh.length} songs to the library`,
+      });
+      return { status: "accepted", state: this.getState(), added: fresh.map((t) => t.id), skipped };
+    });
+  }
+
+  /** Host action: remove a song from the library (not the one playing). Saved and replayed. */
+  removeTrack(trackId: string): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const track = this.catalog.find((t) => t.id === trackId);
+      if (!track) return this.reject("Unknown track ID", 404);
+      if (this.nowPlaying?.id === trackId) return this.reject("Can't remove the song that's playing", 409);
+      if (this.catalog.length <= 2) return this.reject("The library needs at least 2 songs", 409);
+      const saved = await this.persistHostAction("catalog_remove", { trackId });
+      if (saved) return saved;
+      this.applyRemove(trackId);
+      this.change({ type: "library.removed", message: `Removed “${track.title}” from the library` });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
   /** Host action: the session's look. Stage and attendee screens follow it. Saved and replayed. */
   setAppearance(appearance: Appearance): Promise<EventOutcome> {
     return this.exclusive(async () => {
@@ -560,6 +616,20 @@ export class SessionStore {
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
           }
           break;
+        case "catalog_add":
+          if (Array.isArray(meta.tracks)) {
+            const ids = new Set(this.catalog.map((t) => t.id));
+            for (const t of meta.tracks as CatalogTrack[]) {
+              if (t && typeof t.id === "string" && !ids.has(t.id) && this.catalog.length < MAX_CATALOG_TRACKS) {
+                this.catalog = [...this.catalog, t];
+                ids.add(t.id);
+              }
+            }
+          }
+          break;
+        case "catalog_remove":
+          if (typeof meta.trackId === "string" && this.nowPlaying?.id !== meta.trackId) this.applyRemove(meta.trackId);
+          break;
         case "appearance":
           if (
             APPEARANCE_PRESETS.includes(meta.preset as Appearance["preset"]) &&
@@ -700,7 +770,7 @@ export class SessionStore {
 
   /** Returns a rejection if the host action could not be saved; otherwise null. */
   private async persistHostAction(
-    eventType: "host_visual" | "track_advance" | "session_reset" | "playback_mode" | "appearance",
+    eventType: "host_visual" | "track_advance" | "session_reset" | "playback_mode" | "appearance" | "catalog_add" | "catalog_remove",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {
@@ -723,6 +793,14 @@ export class SessionStore {
     const voters = this.votes.get(trackId) ?? new Set<string>();
     voters.add(participantId);
     this.votes.set(trackId, voters);
+  }
+
+  private applyRemove(trackId: string) {
+    this.catalog = this.catalog.filter((t) => t.id !== trackId);
+    this.votes.delete(trackId);
+    this.boosts.delete(trackId);
+    this.plays.delete(trackId);
+    this.lastPlayedAt.delete(trackId);
   }
 
   /** Returns true if the track was already at the boost cap. */

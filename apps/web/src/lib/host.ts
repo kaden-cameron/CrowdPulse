@@ -2,6 +2,8 @@ import type {
   AiStatus,
   Appearance,
   HostTarget,
+  LibraryAddResult,
+  LibraryTrackInput,
   PlaybackMode,
   PlaybackReportEvent,
   Recommendation,
@@ -99,3 +101,27 @@ export async function reportPlayback(sessionId: string, auth: HostHeaders, repor
 
 export const hostSetAppearance = (sessionId: string, auth: HostHeaders, appearance: Appearance) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/appearance`, auth, appearance);
+
+export async function hostAddToLibrary(sessionId: string, auth: HostHeaders, tracks: LibraryTrackInput[]) {
+  const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/library`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...auth },
+    body: JSON.stringify({ tracks }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Couldn't add songs (${res.status})`);
+  return data as LibraryAddResult;
+}
+
+export async function hostRemoveFromLibrary(sessionId: string, auth: HostHeaders, trackId: string) {
+  const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/library/${encodeURIComponent(trackId)}`, {
+    method: "DELETE",
+    headers: auth,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Couldn't remove the song (${res.status})`);
+}
+
+/** Play a specific song next (e.g. one just found in search). */
+export const hostPlayTrack = (sessionId: string, auth: HostHeaders, trackId: string) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/advance`, auth, { trackId });

@@ -66,6 +66,20 @@ The player page can play through **Spotify** instead of the laptop's own audio. 
    - IDs must be unique, with 2–100 songs. The server refuses to start on a bad file and names the problem.
    - Restart the server after changing it. Votes in the current run refer to the old IDs, so start a new run.
 
+### Building the song list from the host page
+
+The **Music library** window on `/host/demo` builds the session's song list straight from Spotify, so no catalog file is needed:
+
+1. **Connect Spotify** in that window. It's the same login as the player, plus permission to read your playlists. If you connected before this feature existed, the window shows **Reconnect Spotify** once.
+2. **Import a playlist:** paste its link (Share → Copy link to playlist) → **Preview** → **Add to library**. Up to 100 songs per import, and 150 in the library. Local files, podcasts and unavailable songs are skipped, and songs already in the library aren't added twice.
+   - **Spotify only lets apps read playlists you own or collaborate on.** For someone else's playlist (even a public one), open it in Spotify, select the songs and add them to a playlist of your own, then import that.
+3. **Search:** type a song or artist → **Add** puts it in the library for attendees to vote on. **Play next** adds it if needed and starts it on the player straight away.
+4. **Gemini estimates genre, BPM and energy** for new songs, in batches, using its general knowledge of each song. These are estimates, and the library list marks them "≈ Gemini estimate". Every value is checked before it's stored: plain-text genre, BPM 40–220, energy 0–1.
+   - **If Gemini isn't configured or can't answer,** the song is still added with neutral values (110 BPM, energy 0.5), marked "default values".
+5. Remove songs with ✕ (not the one playing). The library is saved in TigerData and survives restarts and new runs, and Gemini isn't called again for songs already stored.
+
+A catalog file (below) is still supported for a fixed starting list. Songs added from the host page go on top of it.
+
 ### At the venue
 
 1. On the speaker laptop, use Chrome, Edge or Firefox to open `https://<your-host>/player/demo` (or `http://127.0.0.1:5173/player/demo` locally) and sign in as host.

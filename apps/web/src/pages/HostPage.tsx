@@ -15,6 +15,7 @@ import { useMetrics } from "../hooks/useMetrics";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useSessionAppearance } from "../lib/theme";
 import { AppearanceCard } from "../components/AppearanceCard";
+import { LibraryCard } from "../components/LibraryCard";
 import { hostAdvance, hostPlaybackMode, hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
 
 
@@ -121,6 +122,14 @@ export function HostPage() {
           onPlayNext={() =>
             run("Playing the top-voted track", async () => hostAdvance(sessionCode, await access.getHeaders()))
           }
+        />
+
+        <LibraryCard
+          sessionCode={sessionCode}
+          state={state}
+          ready={access.ready}
+          getHeaders={access.getHeaders}
+          onState={applyState}
         />
 
         <AppearanceCard

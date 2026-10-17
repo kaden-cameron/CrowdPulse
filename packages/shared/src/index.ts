@@ -30,6 +30,8 @@ export interface Track {
   energy: number;
   /** Optional Spotify track URI (spotify:track:…). Without it, the Spotify player searches by title + artist. */
   spotifyUri?: string;
+  /** Where genre/BPM/energy came from: the catalog file, a Gemini estimate, or neutral defaults. */
+  metaSource?: "catalog" | "gemini" | "default";
   votes: number;
   /** Verified Solana devnet boosts currently counting for this track (capped). */
   boosts: number;
@@ -280,6 +282,30 @@ export interface BoostConfig {
   cluster: "devnet";
   lamports: number;
   recipient: string | null;
+}
+
+// --- Music library (host imports from Spotify; Gemini estimates genre/BPM/energy) ---
+
+/** Most songs a session's library can hold (the full list goes to every screen on each update). */
+export const MAX_CATALOG_TRACKS = 150;
+/** Most songs per add request (one playlist import page). */
+export const MAX_TRACKS_PER_ADD = 100;
+
+/** A song picked in the host's Spotify search or playlist import. */
+export interface LibraryTrackInput {
+  title: string;
+  artist: string;
+  spotifyUri: string;
+}
+
+export interface LibraryAddResult {
+  added: number;
+  skipped: number;
+  /** "gemini" if Gemini estimated the new songs' genre/BPM/energy, "default" if neutral values were used. */
+  estimatedBy: "gemini" | "default" | "mixed" | null;
+  note: string | null;
+  /** Ids of the songs as stored (for "Play next" right after adding). */
+  trackIds: string[];
 }
 
 /** Response of GET /api/sessions/:id/metrics. */

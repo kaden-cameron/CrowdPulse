@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { DEMO_TRACKS, type Track } from "@crowdpulse/shared";
+import { DEMO_TRACKS, MAX_CATALOG_TRACKS, type Track } from "@crowdpulse/shared";
 
 // The song list attendees vote on. Defaults to the built-in demo tracks; set CATALOG_FILE to a JSON
 // array of real songs (see apps/server/catalog.example.json). Spotify can't supply BPM/energy for
@@ -26,6 +26,11 @@ const TrackSchema = z
   })
   .strict();
 
+/** spotify:track:<id> → <id>, used to make stable library track ids (sp_<id>). */
+export function spotifyTrackId(uri: string): string | null {
+  return uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1] ?? null;
+}
+
 export function toSpotifyUri(value: string): string | null {
   const v = value.trim();
   const uri = v.match(/^spotify:track:([A-Za-z0-9]{22})$/);
@@ -37,7 +42,7 @@ export function toSpotifyUri(value: string): string | null {
 const CatalogSchema = z
   .array(TrackSchema)
   .min(2)
-  .max(100)
+  .max(MAX_CATALOG_TRACKS)
   .refine((tracks) => new Set(tracks.map((t) => t.id)).size === tracks.length, "track ids must be unique");
 
 /** Parses and validates a catalog. Throws with a readable message on bad input. */

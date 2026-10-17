@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   APPEARANCE_PRESETS,
   HOST_TARGETS,
+  MAX_TRACKS_PER_ADD,
   PLAYBACK_MODES,
   MAX_TAPS_PER_BATCH,
   MOODS,
@@ -11,6 +12,7 @@ import {
   type EventResultMessage,
   type AppearancePreset,
   type HostTarget,
+  type LibraryAddResult,
   type PlaybackMode,
   type VisualTheme,
   type Mood,
@@ -20,7 +22,10 @@ import { RateLimiter } from "./rateLimit.js";
 import { authErrorHandler, createDevKeyHostAuth, type HostAuth } from "./auth.js";
 import { clientIp, originPolicy, pickLanIp, securityHeaders } from "./http.js";
 import type { Database } from "./db.js";
+import { spotifyTrackId, toSpotifyUri, type CatalogTrack } from "./catalog.js";
+import type { RecommendationModel } from "./gemini.js";
 import type { RecommendationService } from "./recommendation.js";
+import { estimateSongs } from "./trackEstimator.js";
 import { httpStatusFor, type BoostVerifier } from "./solana.js";
 import type { EventOutcome, SessionStore } from "./session.js";
 
@@ -77,6 +82,8 @@ export interface AppOptions {
   db?: Database;
   /** Gemini recommendation service per session. */
   recommenders?: Map<string, RecommendationService>;
+  /** Gemini model used to estimate genre/BPM/energy for imported songs; omitted → neutral defaults. */
+  trackEstimator?: RecommendationModel;
   /** Solana devnet boost verifier; omitted means boosts are disabled. */
   boosts?: BoostVerifier;
   /** Browser origins allowed to call the API (and open WebSockets). Empty = any (development). */
@@ -153,7 +160,7 @@ export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute 
 }
 
 export function createApp(options: AppOptions) {
-  const { sessions, corsOrigins, db, recommenders = new Map(), boosts } = options;
+  const { sessions, corsOrigins, db, recommenders = new Map(), boosts, trackEstimator } = options;
   const hostAuth = options.hostAuth ?? createDevKeyHostAuth(options.hostKey ?? "");
   if (!options.hostAuth && !options.hostKey) throw new Error("createApp needs hostAuth or hostKey");
   const intentLimiter = new RateLimiter(10, 60_000, options.now);
@@ -166,7 +173,15 @@ export function createApp(options: AppOptions) {
   app.use(securityHeaders);
   app.use("/api", origins.middleware);
   app.use(cors(origins.list.length ? { origin: origins.list } : undefined));
-  app.use(express.json({ limit: "4kb" }));
+  // Small bodies everywhere (attendee events are tiny); the host's library import gets more room
+  // because a 100-song playlist page is ~10 KB.
+  const smallJson = express.json({ limit: "4kb" });
+  const libraryJson = express.json({ limit: "64kb" });
+  app.use((req, res, next) =>
+    req.method === "POST" && /^\/api\/host\/sessions\/[^/]+\/library$/.test(req.path)
+      ? libraryJson(req, res, next)
+      : smallJson(req, res, next),
+  );
 
   // Where the stage QR code should send phones. Prefer PUBLIC_URL / JOIN_PUBLIC_URL; in
   // development fall back to a real Wi‑Fi LAN IP (never the first VPN adapter).
@@ -287,6 +302,86 @@ export function createApp(options: AppOptions) {
     })
     .strict();
 
+  // --- Music library: songs the host imports from Spotify (playlist or search) ---
+  const LibraryAddSchema = z
+    .object({
+      tracks: z
+        .array(
+          z
+            .object({
+              title: z.string().trim().min(1).max(120),
+              artist: z.string().trim().min(1).max(120),
+              spotifyUri: z.string().max(120),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(MAX_TRACKS_PER_ADD),
+    })
+    .strict();
+
+  app.post("/api/host/sessions/:id/library", ...requireHost, hostSession, async (req, res) => {
+    const parsed = LibraryAddSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid songs" });
+      return;
+    }
+    const session = sessions.get(req.params.id)!;
+    const known = new Set(session.catalogTracks().map((t) => t.spotifyUri).filter(Boolean));
+    // Normalize, drop bad URIs and anything already in the library before spending Gemini calls.
+    const seen = new Set<string>();
+    const songs = parsed.data.tracks.flatMap((t) => {
+      const uri = toSpotifyUri(t.spotifyUri);
+      const id = uri && spotifyTrackId(uri);
+      if (!uri || !id || known.has(uri) || seen.has(uri)) return [];
+      seen.add(uri);
+      return [{ ...t, spotifyUri: uri, id: `sp_${id}` }];
+    });
+    const alreadyThere = parsed.data.tracks.length - songs.length;
+    if (!songs.length) {
+      const body: LibraryAddResult = { added: 0, skipped: alreadyThere, estimatedBy: null, note: "Those songs are already in the library", trackIds: [] };
+      res.json(body);
+      return;
+    }
+
+    const { meta, note } = await estimateSongs(trackEstimator, songs);
+    const tracks: CatalogTrack[] = songs.map((s, i) => ({
+      id: s.id,
+      title: s.title,
+      artist: s.artist,
+      spotifyUri: s.spotifyUri,
+      genre: meta[i].genre,
+      bpm: meta[i].bpm,
+      energy: meta[i].energy,
+      metaSource: meta[i].metaSource,
+    }));
+    const outcome = await session.addTracks(tracks);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    const sources = new Set(tracks.filter((t) => outcome.added?.includes(t.id)).map((t) => t.metaSource));
+    const body: LibraryAddResult = {
+      added: outcome.added?.length ?? 0,
+      skipped: alreadyThere + (outcome.skipped ?? 0),
+      estimatedBy: sources.size === 2 ? "mixed" : sources.has("gemini") ? "gemini" : "default",
+      note,
+      trackIds: outcome.added ?? [],
+    };
+    log({ kind: "host.library_add", sessionId: req.params.id, added: body.added, skipped: body.skipped, estimatedBy: body.estimatedBy });
+    res.json(body);
+  });
+
+  app.delete("/api/host/sessions/:id/library/:trackId", ...requireHost, hostSession, async (req: express.Request<{ id: string; trackId: string }>, res: express.Response) => {
+    const outcome = await sessions.get(req.params.id)!.removeTrack(req.params.trackId);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    log({ kind: "host.library_remove", sessionId: req.params.id, trackId: req.params.trackId });
+    res.json({ status: "accepted" });
+  });
+
   const AppearanceSchema = z
     .object({
       preset: z.enum(APPEARANCE_PRESETS as unknown as [AppearancePreset, ...AppearancePreset[]]),
@@ -341,8 +436,17 @@ export function createApp(options: AppOptions) {
     res.json({ status: outcome.status, playback: outcome.state.playback, nowPlaying: outcome.state.nowPlaying });
   });
 
+  // Optional { trackId } plays that song next (e.g. "Play next" from the host's search);
+  // without it, the top-voted song plays.
+  const AdvanceSchema = z.object({ trackId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional() }).strict();
+
   app.post("/api/host/sessions/:id/advance", ...requireHost, hostSession, async (req, res) => {
-    const outcome = await sessions.get(req.params.id)!.advance();
+    const parsed = AdvanceSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid track" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.advance(parsed.data.trackId);
     if (outcome.status === "rejected") {
       res.status(outcome.httpStatus).json({ error: outcome.reason });
       return;

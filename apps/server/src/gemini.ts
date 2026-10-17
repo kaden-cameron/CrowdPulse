@@ -36,8 +36,10 @@ export class GeminiClient implements RecommendationModel {
   readonly model: string;
   private apiKey: string;
   private timeoutMs: number;
+  private maxOutputTokens: number;
 
-  constructor(apiKey: string, model = DEFAULT_GEMINI_MODEL, timeoutMs = 8_000) {
+  constructor(apiKey: string, model = DEFAULT_GEMINI_MODEL, timeoutMs = 8_000, maxOutputTokens = 400) {
+    this.maxOutputTokens = maxOutputTokens;
     this.apiKey = apiKey;
     this.model = model;
     this.timeoutMs = timeoutMs;
@@ -58,7 +60,7 @@ export class GeminiClient implements RecommendationModel {
             responseMimeType: "application/json",
             responseSchema: schema,
             temperature: 0.4,
-            maxOutputTokens: 400,
+            maxOutputTokens: this.maxOutputTokens,
           },
         }),
         signal: AbortSignal.timeout(this.timeoutMs),

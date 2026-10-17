@@ -11,7 +11,22 @@ export const SPOTIFY_SCOPES = [
   "user-read-private",
   "user-read-playback-state",
   "user-modify-playback-state",
+  // Host page: import songs from the host's own / collaborative playlists.
+  "playlist-read-private",
+  "playlist-read-collaborative",
 ].join(" ");
+
+/** True when the stored login predates a permission we now need (the host must reconnect once). */
+export function spotifyMissingScopes(): boolean {
+  try {
+    const t = JSON.parse(sessionStorage.getItem("crowdpulse.spotify.tokens") ?? "null") as { scope?: string } | null;
+    if (!t) return false;
+    const have = new Set((t.scope ?? "").split(" "));
+    return SPOTIFY_SCOPES.split(" ").some((s) => !have.has(s));
+  } catch {
+    return false;
+  }
+}
 
 const TOKENS_KEY = "crowdpulse.spotify.tokens";
 const PENDING_KEY = "crowdpulse.spotify.pending";
@@ -21,6 +36,8 @@ interface Tokens {
   refreshToken: string | null;
   expiresAt: number;
   clientId: string;
+  /** Space-separated permissions Spotify granted. */
+  scope?: string;
 }
 
 const b64url = (bytes: Uint8Array) =>
@@ -108,7 +125,7 @@ export async function spotifyAccessToken(): Promise<string> {
   if (Date.now() < t.expiresAt - 60_000) return t.accessToken;
   if (!t.refreshToken) throw new Error("Spotify session expired — connect again");
   const fresh = await tokenRequest({ grant_type: "refresh_token", refresh_token: t.refreshToken, client_id: t.clientId });
-  saveTokens({ ...fresh, refreshToken: fresh.refreshToken ?? t.refreshToken, clientId: t.clientId });
+  saveTokens({ ...fresh, refreshToken: fresh.refreshToken ?? t.refreshToken, clientId: t.clientId, scope: fresh.scope ?? t.scope });
   return fresh.accessToken;
 }
 
@@ -124,6 +141,7 @@ async function tokenRequest(body: Record<string, string>): Promise<Omit<Tokens, 
     accessToken: data.access_token,
     refreshToken: data.refresh_token ?? null,
     expiresAt: Date.now() + Number(data.expires_in ?? 3600) * 1000,
+    ...(data.scope ? { scope: String(data.scope) } : {}),
   };
 }
 

@@ -128,6 +128,10 @@ const socketsBySession = new Map<string, Set<WebSocket>>();
 const gemini = process.env.GEMINI_API_KEY
   ? new GeminiClient(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL)
   : undefined;
+// A second client for song estimates: batches need more time and output than recommendations.
+const trackEstimator = process.env.GEMINI_API_KEY
+  ? new GeminiClient(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL, 25_000, 2_048)
+  : undefined;
 const recommenders = new Map([...sessions].map(([id, s]) => [id, new RecommendationService(s, gemini)]));
 
 const { app, handleEvent, isOriginAllowed } = createApp({
@@ -137,6 +141,7 @@ const { app, handleEvent, isOriginAllowed } = createApp({
   db,
   recommenders,
   boosts,
+  trackEstimator,
   ipLimitPerMinute: Number(process.env.RATE_LIMIT_IP_PER_MIN || 6000),
   publicUrl: joinPublicUrl ? new URL(joinPublicUrl).origin : undefined,
   spotifyClientId: process.env.SPOTIFY_CLIENT_ID?.trim() || undefined,

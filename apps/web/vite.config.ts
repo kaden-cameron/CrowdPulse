@@ -27,6 +27,8 @@ export default defineConfig(({ mode }) => {
   },
   test: {
     environment: "jsdom",
+    // Spotify login rejects "localhost"; run like a real local host session.
+    environmentOptions: { jsdom: { url: "http://127.0.0.1:5173/" } },
     exclude: ["e2e/**", "node_modules/**", "dist/**"],
     setupFiles: ["./src/test-setup.ts"],
   },
