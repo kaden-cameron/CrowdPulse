@@ -2,7 +2,7 @@
 
 Live crowd energy for the stage — SwampHacks build following the CrowdPulse playbook.
 
-**Stage 00–04 status:** attendee/stage/host UI, hardened realtime loop (Docs 01–02), TigerData persistence (Doc 03), and Gemini AI DJ with host-approved recommendations (Doc 04). See `docs/02_BACKEND_ACCEPTANCE.md` for the PDF 02 BE map.
+**Stage 00–06 status:** attendee/stage/host UI, hardened realtime loop (Docs 01–02), TigerData persistence (Doc 03), Gemini AI DJ with host-approved recommendations (Doc 04), verified Solana devnet boosts (Doc 05), and Auth0-protected host controls (Doc 06). See `docs/02_BACKEND_ACCEPTANCE.md` for the PDF 02 BE map.
 
 ## Quick start
 
@@ -13,7 +13,7 @@ npm test           # server + web tests
 ```
 
 - App: http://localhost:5173  
-- API / WS: http://localhost:8787  
+- API / WS: http://localhost:8787 (or `PORT` from `.env`; the Vite proxy follows it)  
 - Demo session: `demo`
 
 ### Demo paths
@@ -71,6 +71,49 @@ How it works: **Gemini proposes, the server validates, the host decides.**
 
 **Evaluation:** `npm run eval --workspace=@crowdpulse/server -- 3` runs 6 fixed scenarios × 3 through both the baseline and Gemini. It writes `evidence/gemini/baseline-results.csv` and `evaluation-summary.txt`: preference fit (a proxy), action validity, availability, and median latency (p95 once n ≥ 20). It doesn't measure the change in engagement, which needs a live crowd.
 
+## Solana devnet boosts (Doc 05)
+
+Boosts are optional. To turn them on, set `BOOST_RECIPIENT` to a **devnet** address you control. It's a public address, not a secret. The server refuses to start if `SOLANA_CLUSTER` is anything other than `devnet`, and before verifying anything it checks the RPC's genesis hash is devnet's.
+
+Flow:
+1. An attendee taps ⚡ on a track. The server issues a single-use **boost intent**: recipient, amount (default 0.001 SOL) and a memo `crowdpulse:<session>:<track>:<intentId>`.
+2. Their wallet (Phantom set to devnet) sends a transfer that includes that memo. Without a wallet, the panel shows the details for sending manually, plus a box to paste the signature.
+3. `POST /api/solana/boost/verify` fetches the transaction from devnet. The UI shows *pending* until it's `confirmed`. It's **verified** only if:
+   - it succeeded on-chain
+   - it pays the recipient at least the boost amount
+   - it carries this intent's exact memo
+   - the signature has never been used before, in any session (`boost_signatures` table, plus a memory check)
+4. Only then is the boost recorded (a `boost` event, which is replayed on restart) and broadcast.
+   - Each boost counts as 2 votes in queue order, with at most 3 per track.
+   - Boosts reset when the track plays and never override the host.
+   - Voting stays free.
+- If the RPC is down, the result is `unknown` (503) and the boost stays unverified. It is never reported as a success.
+- **Send a real boost from the terminal:** fund a throwaway devnet keypair at https://faucet.solana.com, then run `npm run boost:devnet --workspace=@crowdpulse/server -- <keypair.json> track_02`. It prints the explorer link, the verification result and a replay attempt (which must be rejected).
+
+## Auth0 host login (Doc 06)
+
+Attendees stay anonymous. Every **host** endpoint (stage controls, play next, AI recommend/approve/reject) needs an Auth0 access token, checked on the server by Auth0's `express-oauth2-jwt-bearer`. It checks the RS256 signature against your tenant's JWKS, the issuer, the audience and the expiry. The token must also carry a permission for that session.
+
+| Situation | Response |
+|---|---|
+| No token, a malformed/expired/forged token, or the wrong issuer/audience | **401** |
+| Valid token, but no `host:<session>` / `host:*` permission | **403**, and nothing changes |
+| Valid host token | 200, and the action is logged |
+
+**Tenant setup** (Auth0 dashboard):
+1. **APIs → Create API.** Pick an identifier such as `https://api.crowdpulse.dev` (this is `AUTH0_AUDIENCE`). Under RBAC, turn on **Enable RBAC** and **Add Permissions in the Access Token**. Add the permissions `host:demo` and `host:*`.
+2. **User Management → Roles → Create role "Host"** with `host:demo`. Assign it to the host accounts only.
+3. **Applications → Create Application → Single Page Application.** Copy its Client ID into `AUTH0_CLIENT_ID`. Set:
+   - Allowed Callback URLs: `http://localhost:5173/auth/callback, https://<your-domain>/auth/callback`
+   - Allowed Logout URLs and Allowed Web Origins: `http://localhost:5173, https://<your-domain>`
+4. In `.env`, set `AUTH0_DOMAIN` (e.g. `crowdpulse.us.auth0.com`), `AUTH0_AUDIENCE` and `AUTH0_CLIENT_ID`. No client secret is needed and none should ever be added to the frontend.
+
+The host page reads these public values from `GET /api/auth/config`. It signs in with Auth0's React SDK (tokens are kept in memory) and sends `Authorization: Bearer …`. Without Auth0 configured, local development falls back to the `x-host-key` dev key. **Production refuses to start without Auth0.**
+
+**Security demo (AU-03):** open `/host/demo` signed in as a host. In a private window, try `curl -X POST <url>/api/host/sessions/demo/visual -H 'content-type: application/json' -d '{"visual":{"theme":"sunset","intensity":1}}'` → 401. Signed in as a user without the Host role → 403. In both cases the stage doesn't change. Then do it from the host dashboard and it works.
+
+**Secret scan (AU-07 / VU-05):** `npm run build && npm run scan:secrets` scans the built bundle and every non-ignored repo file for API keys, database URLs with passwords, private keys, keypair arrays, JWTs and real `.env` values.
+
 ## Architecture (current)
 
 ```
@@ -81,7 +124,7 @@ packages/shared  Event contract + demo catalog
 
 All client events (`vote.submit`, `session.join`, `tap.batch`) go through one strict schema check (unknown fields rejected, UUID `eventId`, anonymous `participantId`) whether they arrive over WebSocket or HTTP. The server deduplicates by `eventId`, allows one vote per participant per track, rate-limits per participant and IP, only serves known sessions, and broadcasts `session.state` (with `epoch`/`version` so clients ignore stale snapshots). Clients keep unacknowledged events in an outbox and resend them on reconnect; dedupe makes that safe.
 
-Host routes (`POST /api/host/sessions/:id/visual`, `/advance`, recommendation approve/reject) require an `x-host-key` header until Auth0 replaces it (Doc 06). Events persist to TigerData before apply when `DATABASE_URL` is set. The stage freezes and dims when disconnected. Auth0, Solana, and Vultr remain later docs.
+Host routes (`POST /api/host/sessions/:id/visual`, `/advance`, recommendation approve/reject) require an Auth0 access token with a `host:<session>` permission. Locally, without Auth0, they accept the `x-host-key` dev key instead. Events persist to TigerData before they're applied when `DATABASE_URL` is set. Solana boosts apply only after on-chain verification. The stage freezes and dims when disconnected. Vultr deployment is the remaining doc.
 
 ## Scripts
 

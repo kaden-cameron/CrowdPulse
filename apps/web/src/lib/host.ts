@@ -6,12 +6,12 @@ import type {
   VisualState,
 } from "@crowdpulse/shared";
 
-// Temporary host gate until Auth0 (Doc 06). The key is typed by the host and kept
-// in sessionStorage only; it is never part of the bundle.
-async function hostPost(path: string, hostKey: string, body: object = {}) {
+// Host API calls. `auth` comes from HostAccess: an Auth0 bearer token, or the local dev key.
+type HostHeaders = Record<string, string>;
+async function hostPost(path: string, auth: HostHeaders, body: object = {}) {
   const res = await fetch(path, {
     method: "POST",
-    headers: { "content-type": "application/json", "x-host-key": hostKey },
+    headers: { "content-type": "application/json", ...auth },
     body: JSON.stringify(body),
   });
   const data = await res.json().catch(() => ({}));
@@ -19,16 +19,16 @@ async function hostPost(path: string, hostKey: string, body: object = {}) {
   return data as { status: "accepted"; state: SessionState };
 }
 
-export const hostSetVisual = (sessionId: string, hostKey: string, visual: VisualState | null) =>
-  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/visual`, hostKey, { visual });
+export const hostSetVisual = (sessionId: string, auth: HostHeaders, visual: VisualState | null) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/visual`, auth, { visual });
 
-export const hostAdvance = (sessionId: string, hostKey: string) =>
-  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/advance`, hostKey);
+export const hostAdvance = (sessionId: string, auth: HostHeaders) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/advance`, auth);
 
 export type AiSnapshot = { ai: AiStatus; recommendations: Recommendation[] };
 
-async function hostGet<T>(path: string, hostKey: string): Promise<T> {
-  const res = await fetch(path, { headers: { "x-host-key": hostKey } });
+async function hostGet<T>(path: string, auth: HostHeaders): Promise<T> {
+  const res = await fetch(path, { headers: auth });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
   return data as T;
@@ -36,13 +36,13 @@ async function hostGet<T>(path: string, hostKey: string): Promise<T> {
 
 const recPath = (sessionId: string) => `/api/host/sessions/${encodeURIComponent(sessionId)}/recommendations`;
 
-export const fetchRecommendations = (sessionId: string, hostKey: string) =>
-  hostGet<AiSnapshot>(recPath(sessionId), hostKey);
+export const fetchRecommendations = (sessionId: string, auth: HostHeaders) =>
+  hostGet<AiSnapshot>(recPath(sessionId), auth);
 
-export async function requestRecommendation(sessionId: string, hostKey: string, hostTarget: HostTarget) {
+export async function requestRecommendation(sessionId: string, auth: HostHeaders, hostTarget: HostTarget) {
   const res = await fetch(recPath(sessionId), {
     method: "POST",
-    headers: { "content-type": "application/json", "x-host-key": hostKey },
+    headers: { "content-type": "application/json", ...auth },
     body: JSON.stringify({ hostTarget }),
   });
   const data = await res.json().catch(() => ({}));
@@ -52,13 +52,13 @@ export async function requestRecommendation(sessionId: string, hostKey: string, 
 
 export async function decideRecommendation(
   sessionId: string,
-  hostKey: string,
+  auth: HostHeaders,
   id: string,
   decision: "approve" | "reject",
 ) {
   const res = await fetch(`${recPath(sessionId)}/${encodeURIComponent(id)}/${decision}`, {
     method: "POST",
-    headers: { "x-host-key": hostKey },
+    headers: auth,
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);

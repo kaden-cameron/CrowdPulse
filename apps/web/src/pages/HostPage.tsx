@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   MOODS,
@@ -9,11 +9,11 @@ import {
 import { AiPanel } from "../components/AiPanel";
 import { AnalyticsPanel } from "../components/AnalyticsPanel";
 import { ConnectionBadge } from "../components/ConnectionBadge";
+import { useHostAccess } from "../components/HostAccess";
 import { useMetrics } from "../hooks/useMetrics";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 import { hostAdvance, hostSetVisual } from "../lib/host";
 
-const KEY_STORAGE = "crowdpulse.hostKey";
 
 export function HostPage() {
   const { sessionCode = "demo" } = useParams();
@@ -22,9 +22,7 @@ export function HostPage() {
     "host",
   );
   const { metrics, error: metricsError } = useMetrics(sessionCode);
-  const [hostKey, setHostKey] = useState(
-    () => sessionStorage.getItem(KEY_STORAGE) ?? "",
-  );
+  const access = useHostAccess();
   const [theme, setTheme] = useState<VisualTheme>("calm_waves");
   const [intensity, setIntensity] = useState(0.5);
   const [busy, setBusy] = useState(false);
@@ -33,9 +31,6 @@ export function HostPage() {
     text: string;
   } | null>(null);
 
-  useEffect(() => {
-    sessionStorage.setItem(KEY_STORAGE, hostKey);
-  }, [hostKey]);
 
   async function run(label: string, action: () => Promise<{ state: SessionState }>) {
     setBusy(true);
@@ -69,9 +64,10 @@ export function HostPage() {
         <div className="host-block">
           <h1>Host · {state?.sessionName ?? sessionCode}</h1>
           <p className="host-sub">
-            Live metrics are server-owned. Stage controls need the host key
-            until Auth0 login lands.
+            Live metrics are server-owned. Stage controls and AI decisions
+            require a signed-in host — the server checks every request.
           </p>
+          <HostSignIn />
         </div>
 
         <div className="metric-strip" role="group" aria-label="Session metrics">
@@ -110,16 +106,9 @@ export function HostPage() {
 
         <div className="host-block">
           <h2>Stage controls</h2>
-          <label className="host-field">
-            <span className="metric-label">Host key</span>
-            <input
-              type="password"
-              autoComplete="off"
-              value={hostKey}
-              onChange={(e) => setHostKey(e.target.value)}
-              placeholder="Temporary until Auth0"
-            />
-          </label>
+          {!access.ready && (
+            <p className="host-sub">Sign in as host (above) to use stage controls.</p>
+          )}
 
           <fieldset className="mood-field">
             <legend>Theme</legend>
@@ -156,10 +145,10 @@ export function HostPage() {
             <button
               type="button"
               className="btn primary"
-              disabled={busy || !hostKey}
+              disabled={busy || !access.ready}
               onClick={() =>
-                run("Stage updated", () =>
-                  hostSetVisual(sessionCode, hostKey, { theme, intensity }),
+                run("Stage updated", async () =>
+                  hostSetVisual(sessionCode, await access.getHeaders(), { theme, intensity }),
                 )
               }
             >
@@ -168,10 +157,10 @@ export function HostPage() {
             <button
               type="button"
               className="btn ghost"
-              disabled={busy || !hostKey || state?.visualMode === "auto"}
+              disabled={busy || !access.ready || state?.visualMode === "auto"}
               onClick={() =>
-                run("Stage follows the crowd", () =>
-                  hostSetVisual(sessionCode, hostKey, null),
+                run("Stage follows the crowd", async () =>
+                  hostSetVisual(sessionCode, await access.getHeaders(), null),
                 )
               }
             >
@@ -180,10 +169,10 @@ export function HostPage() {
             <button
               type="button"
               className="btn ghost"
-              disabled={busy || !hostKey}
+              disabled={busy || !access.ready}
               onClick={() =>
-                run("Playing the top-voted track", () =>
-                  hostAdvance(sessionCode, hostKey),
+                run("Playing the top-voted track", async () =>
+                  hostAdvance(sessionCode, await access.getHeaders()),
                 )
               }
             >
@@ -201,7 +190,8 @@ export function HostPage() {
 
         <AiPanel
           sessionId={sessionCode}
-          hostKey={hostKey}
+          getHeaders={access.getHeaders}
+          ready={access.ready}
           tracks={state?.tracks ?? []}
           onState={applyState}
         />
@@ -236,7 +226,8 @@ export function HostPage() {
           <ol className="host-queue">
             {(state?.queue ?? []).map((item) => (
               <li key={item.trackId}>
-                {item.title} — {item.artist} ({item.votes})
+                {item.title} — {item.artist} ({item.votes}
+                {item.boosts > 0 && ` · ⚡${item.boosts} devnet`})
               </li>
             ))}
             {!state?.queue.length && <li>No votes yet</li>}
@@ -252,5 +243,51 @@ export function HostPage() {
         </div>
       </section>
     </main>
+  );
+}
+
+function HostSignIn() {
+  const access = useHostAccess();
+
+  if (access.mode === "loading") return <p className="host-sub">Loading sign-in…</p>;
+  if (access.mode === "error") {
+    return <p className="feedback feedback-rejected">{access.error}</p>;
+  }
+
+  if (access.mode === "dev-key") {
+    return (
+      <div className="host-auth">
+        <label className="host-field">
+          <span className="metric-label">Dev host key (Auth0 not configured on this server)</span>
+          <input
+            type="password"
+            autoComplete="off"
+            value={access.devKey}
+            onChange={(e) => access.setDevKey(e.target.value)}
+            placeholder="local-dev-host-key"
+          />
+        </label>
+      </div>
+    );
+  }
+
+  return (
+    <div className="host-auth">
+      {access.ready ? (
+        <>
+          <span className="host-user">
+            Signed in as <strong>{access.userLabel}</strong>
+          </span>
+          <button type="button" className="btn ghost compact" onClick={access.logout}>
+            Sign out
+          </button>
+        </>
+      ) : (
+        <button type="button" className="btn primary" onClick={access.login}>
+          Sign in as host
+        </button>
+      )}
+      {access.error && <p className="feedback feedback-rejected">{access.error}</p>}
+    </div>
   );
 }

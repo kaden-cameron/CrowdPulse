@@ -12,7 +12,9 @@ Derived from the master roadmap. Core loop to protect:
 - [x] Backend event validation + realtime broadcast (PDF 02 / Doc 01)
 - [x] TigerData / PostgreSQL persistence (Doc 03)
 - [x] Real Gemini API recommendation (Doc 04)
-- [ ] Solana boost / Auth0 / Vultr (as time allows)
+- [x] Solana devnet boost, verified server-side (Doc 05) — live paid boost still to run
+- [x] Auth0-protected host controls (Doc 06) — real tenant login still to run
+- [ ] Vultr deployment (Doc 07)
 
 ## Exit criterion — build order step 1
 

@@ -10,7 +10,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@auth0/auth0-react": "^2.28.2",
     "@crowdpulse/shared": "*",
+    "@solana/web3.js": "^1.99.0",
+    "buffer": "^6.0.3",
     "qrcode": "^1.5.4",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",

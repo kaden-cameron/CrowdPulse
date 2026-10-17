@@ -10,8 +10,8 @@ PDF 02 (validation, persistence, WS, idempotency, AI isolation, host/Solana boun
 | WS `session.state` + heartbeat / reconnect snapshot | `apps/server/src/index.ts` |
 | Structured logs with eventId / latency | `log.ts` call sites in vote path |
 | AI must not block voting | Gemini runs via `recommendation.ts` off the vote path (Doc 04) |
-| Host-gated privileged actions | `x-host-key` on host routes |
-| Solana verify boundary | Deferred to Doc 05 |
+| Host-gated privileged actions | Auth0 JWT + `host:<session>` permission (`auth.ts`, Doc 06); `x-host-key` only when Auth0 is not configured |
+| Solana verify boundary | `solana.ts`: devnet-only, confirmed tx, recipient/amount/memo, global signature replay check (Doc 05) |
 
 ## BE checklist
 

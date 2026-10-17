@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { Mood } from "@crowdpulse/shared";
+import type { BoostConfig, Mood } from "@crowdpulse/shared";
+import { BoostPanel } from "../components/BoostPanel";
+import { fetchBoostConfig } from "../lib/solana";
 import { ConnectionBadge } from "../components/ConnectionBadge";
 import { VoteButton } from "../components/VoteButton";
 import { useSessionSocket } from "../hooks/useSessionSocket";
@@ -20,6 +22,7 @@ export function JoinPage() {
     error,
     lastMessageAt,
     votes,
+    applyState,
     setMood,
     submitVote,
     tap,
@@ -28,6 +31,14 @@ export function JoinPage() {
   const [step, setStep] = useState<"join" | "vote">("join");
   const [mood, setMoodLocal] = useState<Mood | null>(null);
   const [myTaps, setMyTaps] = useState(0);
+  const [boostConfig, setBoostConfig] = useState<BoostConfig | null>(null);
+  const [boostTrack, setBoostTrack] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchBoostConfig()
+      .then(setBoostConfig)
+      .catch(() => setBoostConfig(null)); // boosts are optional; voting never depends on them
+  }, []);
 
   function continueToVote() {
     if (!mood) return;
@@ -144,9 +155,20 @@ export function JoinPage() {
                 <div>
                   <p className="track-title">{track.title}</p>
                   <p className="track-meta">
-                    {track.artist} · {track.votes} votes · {track.status}
+                    {track.artist} · {track.votes} votes
+                    {track.boosts > 0 && ` · ⚡${track.boosts}`} · {track.status}
                   </p>
                 </div>
+                {boostConfig?.enabled && track.status !== "playing" && (
+                  <button
+                    type="button"
+                    className="btn ghost compact boost-btn"
+                    aria-label={`Boost ${track.title} with Solana devnet (optional)`}
+                    onClick={() => setBoostTrack(track.id)}
+                  >
+                    ⚡
+                  </button>
+                )}
                 <VoteButton
                   feedback={votes[track.id]?.feedback ?? "idle"}
                   trackTitle={track.title}
@@ -156,6 +178,18 @@ export function JoinPage() {
               </li>
             ))}
           </ul>
+
+          {boostTrack && boostConfig && (
+            <BoostPanel
+              key={boostTrack}
+              sessionId={sessionCode}
+              trackId={boostTrack}
+              trackTitle={state?.tracks.find((t) => t.id === boostTrack)?.title ?? boostTrack}
+              config={boostConfig}
+              onState={applyState}
+              onClose={() => setBoostTrack(null)}
+            />
+          )}
 
           <section className="hype-panel" aria-labelledby="hype-title">
             <h2 id="hype-title">

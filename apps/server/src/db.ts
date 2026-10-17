@@ -23,7 +23,8 @@ export type PersistedEventType =
   | "track_advance"
   | "energy_sample"
   | "ai_recommendation"
-  | "ai_decision";
+  | "ai_decision"
+  | "boost";
 
 export type PersistResult = "stored" | "duplicate";
 
@@ -61,6 +62,20 @@ const MIGRATIONS: { name: string; sql: string; optional?: boolean }[] = [
     )`,
   },
   {
+    // Global (cross-session) replay protection for Solana boost signatures.
+    name: "boost_signatures",
+    sql: `CREATE TABLE IF NOT EXISTS boost_signatures (
+      signature TEXT PRIMARY KEY,
+      session_id TEXT NOT NULL,
+      track_id TEXT NOT NULL,
+      intent_id TEXT NOT NULL,
+      payer TEXT,
+      lamports BIGINT NOT NULL,
+      slot BIGINT,
+      verified_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )`,
+  },
+  {
     name: "hypertable",
     sql: `SELECT create_hypertable('crowd_events', by_range('time', INTERVAL '1 day'), if_not_exists => TRUE)`,
   },
@@ -75,7 +90,7 @@ const MIGRATIONS: { name: string; sql: string; optional?: boolean }[] = [
       SELECT
         session_id,
         time_bucket(INTERVAL '5 seconds', time) AS bucket,
-        COUNT(*) FILTER (WHERE event_type IN ('vote', 'mood', 'tap')) AS event_count,
+        COUNT(*) FILTER (WHERE event_type IN ('vote', 'mood', 'tap', 'boost')) AS event_count,
         COUNT(*) FILTER (WHERE event_type = 'vote') AS votes,
         COALESCE(SUM(value) FILTER (WHERE event_type = 'tap'), 0) AS taps,
         AVG(value) FILTER (WHERE event_type = 'energy_sample') AS avg_energy
@@ -176,6 +191,37 @@ export class Database {
     }
   }
 
+  /**
+   * Claims a verified boost signature. Returns the existing claim if the signature
+   * was already used (by any session), so replays never create a second boost.
+   */
+  async claimBoostSignature(claim: {
+    signature: string;
+    sessionId: string;
+    trackId: string;
+    intentId: string;
+    payer: string | null;
+    lamports: number;
+    slot: number | null;
+  }): Promise<{ claimed: true } | { claimed: false; sessionId: string; intentId: string }> {
+    const ins = await this.pool.query(
+      `INSERT INTO boost_signatures (signature, session_id, track_id, intent_id, payer, lamports, slot)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (signature) DO NOTHING`,
+      [claim.signature, claim.sessionId, claim.trackId, claim.intentId, claim.payer, claim.lamports, claim.slot],
+    );
+    if (ins.rowCount === 1) return { claimed: true };
+    const { rows } = await this.pool.query(
+      "SELECT session_id, intent_id FROM boost_signatures WHERE signature = $1",
+      [claim.signature],
+    );
+    return { claimed: false, sessionId: rows[0]?.session_id ?? "", intentId: rows[0]?.intent_id ?? "" };
+  }
+
+  /** Releases a claim if applying the boost failed afterwards. */
+  async releaseBoostSignature(signature: string): Promise<void> {
+    await this.pool.query("DELETE FROM boost_signatures WHERE signature = $1", [signature]);
+  }
+
   /** All replayable events for a session, oldest first (energy samples are metrics only). */
   async loadEvents(sessionId: string): Promise<Required<EventRecord>[]> {
     const { rows } = await this.pool.query(
@@ -207,7 +253,7 @@ export class Database {
            COUNT(*) FILTER (WHERE time > NOW() - INTERVAL '10 seconds') AS last10s,
            COUNT(*) AS total
          FROM crowd_events
-         WHERE session_id = $1 AND event_type IN ('vote', 'mood', 'tap')`,
+         WHERE session_id = $1 AND event_type IN ('vote', 'mood', 'tap', 'boost')`,
         [sessionId],
       ),
       this.pool.query(
@@ -234,7 +280,7 @@ export class Database {
     const raw = await this.pool.query(
       `SELECT
          time_bucket(INTERVAL '5 seconds', time) AS bucket,
-         COUNT(*) FILTER (WHERE event_type IN ('vote', 'mood', 'tap')) AS event_count,
+         COUNT(*) FILTER (WHERE event_type IN ('vote', 'mood', 'tap', 'boost')) AS event_count,
          COUNT(*) FILTER (WHERE event_type = 'vote') AS votes,
          COALESCE(SUM(value) FILTER (WHERE event_type = 'tap'), 0) AS taps,
          AVG(value) FILTER (WHERE event_type = 'energy_sample') AS avg_energy

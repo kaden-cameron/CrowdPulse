@@ -29,6 +29,8 @@ export interface Track {
   /** Catalog energy, 0–1. */
   energy: number;
   votes: number;
+  /** Verified Solana devnet boosts currently counting for this track (capped). */
+  boosts: number;
   status: "open" | "queued" | "playing";
 }
 
@@ -37,6 +39,7 @@ export interface QueueItem {
   title: string;
   artist: string;
   votes: number;
+  boosts: number;
 }
 
 export interface VisualState {
@@ -189,6 +192,49 @@ export interface AiStatus {
   lastSuccessAt: string | null;
 }
 
+/** Response of GET /api/auth/config. Only public values (the SPA client ID is not a secret). */
+export type AuthConfig =
+  | { mode: "dev-key" }
+  | { mode: "auth0"; domain: string; clientId: string; audience: string };
+
+// --- Solana devnet boosts (Doc 05) ---
+
+/** Each verified boost counts as this many votes in queue order; a track holds at most MAX_BOOSTS_PER_TRACK. */
+export const BOOST_VOTE_WEIGHT = 2;
+export const MAX_BOOSTS_PER_TRACK = 3;
+
+/** Server-issued, single-use instructions for one boost transaction. */
+export interface BoostIntent {
+  intentId: string;
+  sessionId: string;
+  trackId: string;
+  cluster: "devnet";
+  rpcUrl: string;
+  recipient: string;
+  lamports: number;
+  /** Must be included verbatim as an SPL Memo instruction. Binds the tx to this session and track. */
+  memo: string;
+  expiresAt: string;
+}
+
+export type BoostStatus = "pending" | "verified" | "rejected" | "unknown";
+
+export interface BoostVerifyResult {
+  status: BoostStatus;
+  signature: string;
+  /** Why it is pending/rejected/unknown. */
+  reason?: string;
+  explorerUrl: string;
+  state?: SessionState;
+}
+
+export interface BoostConfig {
+  enabled: boolean;
+  cluster: "devnet";
+  lamports: number;
+  recipient: string | null;
+}
+
 /** Response of GET /api/sessions/:id/metrics. */
 export type SessionMetrics =
   | { persistence: "memory" }
@@ -214,7 +260,7 @@ export type SessionMetrics =
 export const DEMO_SESSION_ID = "demo";
 export const DEMO_SESSION_NAME = "SwampHacks Main Stage";
 
-export const DEMO_TRACKS: Omit<Track, "votes" | "status">[] = [
+export const DEMO_TRACKS: Omit<Track, "votes" | "status" | "boosts">[] = [
   { id: "track_01", title: "Gator Glow", artist: "Orange & Blue", genre: "house", bpm: 122, energy: 0.6 },
   { id: "track_02", title: "Midnight Cypress", artist: "Lake Beat", genre: "lofi", bpm: 84, energy: 0.2 },
   { id: "track_03", title: "Hackathon Heat", artist: "Pulse Lab", genre: "techno", bpm: 130, energy: 0.85 },

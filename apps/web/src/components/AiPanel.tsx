@@ -31,12 +31,15 @@ const POLL_MS = 5000;
 
 export function AiPanel({
   sessionId,
-  hostKey,
+  getHeaders,
+  ready,
   tracks,
   onState,
 }: {
   sessionId: string;
-  hostKey: string;
+  getHeaders: () => Promise<Record<string, string>>;
+  /** Host is signed in (or has a dev key). */
+  ready: boolean;
   tracks: Track[];
   onState: (state: SessionState) => void;
 }) {
@@ -46,14 +49,14 @@ export function AiPanel({
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    if (!hostKey) return;
+    if (!ready) return;
     try {
-      setSnapshot(await fetchRecommendations(sessionId, hostKey));
+      setSnapshot(await fetchRecommendations(sessionId, await getHeaders()));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load recommendations");
     }
-  }, [sessionId, hostKey]);
+  }, [sessionId, ready, getHeaders]);
 
   useEffect(() => {
     refresh();
@@ -65,7 +68,7 @@ export function AiPanel({
     setBusy("ask");
     setError(null);
     try {
-      const res = await requestRecommendation(sessionId, hostKey, target);
+      const res = await requestRecommendation(sessionId, await getHeaders(), target);
       setSnapshot((s) => ({
         ai: res.ai,
         recommendations: [res.recommendation, ...(s?.recommendations ?? []).filter((r) => r.id !== res.recommendation.id)],
@@ -82,7 +85,7 @@ export function AiPanel({
     setBusy("decide");
     setError(null);
     try {
-      const res = await decideRecommendation(sessionId, hostKey, id, decision);
+      const res = await decideRecommendation(sessionId, await getHeaders(), id, decision);
       if (res.state) onState(res.state);
       await refresh();
     } catch (err) {
@@ -101,8 +104,8 @@ export function AiPanel({
       <div className="analytics-head">
         <h2>Gemini AI DJ</h2>
         <span className="analytics-meta">
-          {!hostKey
-            ? "Enter the host key to use AI"
+          {!ready
+            ? "Sign in as host to use AI"
             : !ai
               ? "Loading…"
               : ai.configured
@@ -141,7 +144,7 @@ export function AiPanel({
       <button
         type="button"
         className="btn primary"
-        disabled={!hostKey || !ai?.configured || busy !== null}
+        disabled={!ready || !ai?.configured || busy !== null}
         onClick={ask}
       >
         {busy === "ask" ? "Asking Gemini…" : "Get recommendation"}

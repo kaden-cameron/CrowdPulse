@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
+  BOOST_VOTE_WEIGHT,
   DEMO_TRACKS,
+  MAX_BOOSTS_PER_TRACK,
   MOODS,
   type LatestEvent,
   type Mood,
@@ -51,7 +53,7 @@ export type EventOutcome =
   | { status: "accepted" | "duplicate"; state: SessionState }
   | { status: "rejected"; reason: string; httpStatus: number };
 
-type CatalogTrack = Omit<Track, "votes" | "status">;
+type CatalogTrack = Omit<Track, "votes" | "status" | "boosts">;
 type Rejection = Extract<EventOutcome, { status: "rejected" }>;
 type Plan = {
   record: Pick<EventRecord, "eventType" | "value" | "metadata">;
@@ -74,6 +76,7 @@ export class SessionStore {
   readonly sessionName: string;
   private catalog: CatalogTrack[];
   private votes = new Map<string, Set<string>>(); // trackId -> participantIds
+  private boosts = new Map<string, number>(); // trackId -> verified boosts since it last played
   private lastPlayedAt = new Map<string, number>();
   private nowPlaying: CatalogTrack | null = null;
   private moods = new Map<string, Mood>(); // participantId -> latest mood
@@ -133,6 +136,7 @@ export class SessionStore {
       tracks: this.catalog.map((t) => ({
         ...t,
         votes: this.voteCount(t.id),
+        boosts: this.boostCount(t.id),
         status:
           this.nowPlaying?.id === t.id
             ? "playing"
@@ -219,6 +223,43 @@ export class SessionStore {
         };
       },
     }));
+  }
+
+  /**
+   * Applies a boost whose Solana devnet transaction the server already verified.
+   * Callers must verify first; this never trusts a client-supplied amount or result.
+   * Boosts beyond the per-track cap are recorded but add no further priority.
+   */
+  recordBoost(input: {
+    trackId: string;
+    eventId: string;
+    participantId: string;
+    signature: string;
+    lamports: number;
+  }): Promise<EventOutcome> {
+    return this.handleEvent(input, () => {
+      const track = this.catalog.find((t) => t.id === input.trackId);
+      if (!track) return this.reject("Unknown track ID", 400);
+      return {
+        record: {
+          eventType: "boost",
+          value: input.lamports,
+          metadata: { trackId: track.id, signature: input.signature },
+        },
+        commit: () => {
+          const capped = this.applyBoost(track.id);
+          return {
+            weight: ACTIVITY_WEIGHT.vote,
+            event: {
+              type: "boost.verified",
+              message: capped
+                ? `Boost verified for ${track.title} (cap reached)`
+                : `⚡ Verified devnet boost for ${track.title}`,
+            },
+          };
+        },
+      };
+    });
   }
 
   /** Host action. `null` returns the stage to auto (energy-driven) mode. */
@@ -329,6 +370,12 @@ export class SessionStore {
           this.applyTaps(Number(r.value) || 0);
           this.activity.push({ at, weight: ACTIVITY_WEIGHT.tap * (Number(r.value) || 0) });
           break;
+        case "boost":
+          if (typeof meta.trackId === "string") {
+            this.applyBoost(meta.trackId);
+            this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
+          }
+          break;
         case "host_visual":
           this.hostVisual = (meta.visual as VisualState | null) ?? null;
           break;
@@ -425,6 +472,13 @@ export class SessionStore {
     this.votes.set(trackId, voters);
   }
 
+  /** Returns true if the track was already at the boost cap. */
+  private applyBoost(trackId: string): boolean {
+    const n = this.boosts.get(trackId) ?? 0;
+    this.boosts.set(trackId, n + 1);
+    return n >= MAX_BOOSTS_PER_TRACK;
+  }
+
   /** Returns the completed quest, if these taps finished one. */
   private applyTaps(count: number): { level: number; goal: number } | null {
     this.questProgress += count;
@@ -443,6 +497,7 @@ export class SessionStore {
     if (this.nowPlaying) this.lastPlayedAt.set(this.nowPlaying.id, at);
     this.nowPlaying = track;
     this.votes.delete(track.id);
+    this.boosts.delete(track.id);
     return track.title;
   }
 
@@ -497,14 +552,15 @@ export class SessionStore {
     return true;
   }
 
-  // Tracks with votes, ordered by votes desc, then least-recently-played, then catalog order.
+  // Tracks with votes or boosts, ordered by score (votes + capped boost bonus) desc,
+  // then least-recently-played, then catalog order.
   private buildQueue(): QueueItem[] {
     return this.catalog
-      .map((t, idx) => ({ t, idx, votes: this.voteCount(t.id) }))
-      .filter(({ t, votes }) => votes > 0 && t.id !== this.nowPlaying?.id)
+      .map((t, idx) => ({ t, idx, score: this.voteCount(t.id) + BOOST_VOTE_WEIGHT * this.boostCount(t.id) }))
+      .filter(({ t, score }) => score > 0 && t.id !== this.nowPlaying?.id)
       .sort(
         (a, b) =>
-          b.votes - a.votes ||
+          b.score - a.score ||
           (this.lastPlayedAt.get(a.t.id) ?? 0) - (this.lastPlayedAt.get(b.t.id) ?? 0) ||
           a.idx - b.idx,
       )
@@ -516,8 +572,19 @@ export class SessionStore {
     return this.votes.get(trackId)?.size ?? 0;
   }
 
+  /** Boosts that count toward priority (capped). */
+  private boostCount(trackId: string): number {
+    return Math.min(MAX_BOOSTS_PER_TRACK, this.boosts.get(trackId) ?? 0);
+  }
+
   private toQueueItem(t: CatalogTrack): QueueItem {
-    return { trackId: t.id, title: t.title, artist: t.artist, votes: this.voteCount(t.id) };
+    return {
+      trackId: t.id,
+      title: t.title,
+      artist: t.artist,
+      votes: this.voteCount(t.id),
+      boosts: this.boostCount(t.id),
+    };
   }
 
   private questGoal(): number {

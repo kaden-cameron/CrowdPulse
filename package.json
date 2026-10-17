@@ -12,7 +12,8 @@
     "build": "npm run build --workspace=@crowdpulse/shared && npm run build --workspace=@crowdpulse/web && npm run build --workspace=@crowdpulse/server",
     "start": "NODE_ENV=production npm start --workspace=@crowdpulse/server",
     "test": "npm test --workspace=@crowdpulse/server && npm test --workspace=@crowdpulse/web",
-    "load-test": "npm run load-test --workspace=@crowdpulse/server"
+    "load-test": "npm run load-test --workspace=@crowdpulse/server",
+    "scan:secrets": "node scripts/scan-secrets.mjs"
   },
   "devDependencies": {
     "concurrently": "^10.0.6"

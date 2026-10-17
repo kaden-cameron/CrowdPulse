@@ -1,6 +1,5 @@
 import cors from "cors";
 import express, { type RequestHandler } from "express";
-import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import {
   HOST_TARGETS,
@@ -14,8 +13,10 @@ import {
 } from "@crowdpulse/shared";
 import { log } from "./log.js";
 import { RateLimiter } from "./rateLimit.js";
+import { authErrorHandler, createDevKeyHostAuth, type HostAuth } from "./auth.js";
 import type { Database } from "./db.js";
 import type { RecommendationService } from "./recommendation.js";
+import { httpStatusFor, type BoostVerifier } from "./solana.js";
 import type { EventOutcome, SessionStore } from "./session.js";
 
 const sessionId = z.string().min(1).max(64);
@@ -63,12 +64,16 @@ export type Sessions = Map<string, SessionStore>;
 
 export interface AppOptions {
   sessions: Sessions;
-  /** Temporary shared secret for host actions until Auth0 lands (Doc 06). */
-  hostKey: string;
+  /** How host endpoints are protected (Auth0 in production). */
+  hostAuth?: HostAuth;
+  /** Shorthand for a dev-key HostAuth (local development and tests). */
+  hostKey?: string;
   /** TigerData connection; omitted means in-memory only (no metrics). */
   db?: Database;
   /** Gemini recommendation service per session. */
   recommenders?: Map<string, RecommendationService>;
+  /** Solana devnet boost verifier; omitted means boosts are disabled. */
+  boosts?: BoostVerifier;
   corsOrigins?: string[];
   now?: () => number;
 }
@@ -130,7 +135,10 @@ export function createEventHandler({ sessions, now = Date.now }: AppOptions) {
 }
 
 export function createApp(options: AppOptions) {
-  const { sessions, hostKey, corsOrigins, db, recommenders = new Map() } = options;
+  const { sessions, corsOrigins, db, recommenders = new Map(), boosts } = options;
+  const hostAuth = options.hostAuth ?? createDevKeyHostAuth(options.hostKey ?? "");
+  if (!options.hostAuth && !options.hostKey) throw new Error("createApp needs hostAuth or hostKey");
+  const intentLimiter = new RateLimiter(10, 60_000, options.now);
   const handleEvent = createEventHandler(options);
 
   const app = express();
@@ -193,17 +201,12 @@ export function createApp(options: AppOptions) {
   app.post("/api/sessions/:id/moods", eventRoute("session.join"));
   app.post("/api/sessions/:id/taps", eventRoute("tap.batch"));
 
-  // --- Host actions (temporary shared-key gate; replaced by Auth0 roles in Doc 06) ---
-  const requireHost: RequestHandler = (req, res, next) => {
-    const given = Buffer.from(req.get("x-host-key") ?? "");
-    const expected = Buffer.from(hostKey);
-    if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
-      log({ kind: "host", path: req.path, outcome: "unauthorized", httpStatus: 401 });
-      res.status(401).json({ error: "Host key required" });
-      return;
-    }
-    next();
-  };
+  // --- Host actions: Auth0 access token with a host permission (Doc 06), or the dev key locally ---
+  const requireHost = hostAuth.require;
+
+  app.get("/api/auth/config", (_req, res) => {
+    res.json(hostAuth.publicConfig());
+  });
 
   const hostSession: RequestHandler<{ id: string }> = (req, res, next) => {
     if (!sessions.has(req.params.id)) {
@@ -213,7 +216,7 @@ export function createApp(options: AppOptions) {
     next();
   };
 
-  app.post("/api/host/sessions/:id/visual", requireHost, hostSession, async (req, res) => {
+  app.post("/api/host/sessions/:id/visual", ...requireHost, hostSession, async (req, res) => {
     const parsed = VisualSchema.safeParse(req.body?.visual);
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid visual state" });
@@ -228,7 +231,7 @@ export function createApp(options: AppOptions) {
     res.json(outcome);
   });
 
-  app.post("/api/host/sessions/:id/advance", requireHost, hostSession, async (req, res) => {
+  app.post("/api/host/sessions/:id/advance", ...requireHost, hostSession, async (req, res) => {
     const outcome = await sessions.get(req.params.id)!.advance();
     if (outcome.status === "rejected") {
       res.status(outcome.httpStatus).json({ error: outcome.reason });
@@ -238,10 +241,56 @@ export function createApp(options: AppOptions) {
     res.json(outcome);
   });
 
+  // --- Solana devnet boosts (Doc 05): optional, verified server-side before any effect ---
+  const IntentSchema = z.object({ trackId: z.string().max(64), participantId }).strict();
+  const VerifySchema = z
+    .object({ sessionId, intentId: z.string().uuid(), signature: z.string().min(1).max(100) })
+    .strict();
+
+  app.get("/api/solana/config", (_req, res) => {
+    res.json(boosts?.config() ?? { enabled: false, cluster: "devnet", lamports: 0, recipient: null });
+  });
+
+  app.post("/api/sessions/:id/boosts/intents", (req, res) => {
+    const parsed = IntentSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid boost request" });
+      return;
+    }
+    if (!boosts) {
+      res.status(503).json({ error: "Boosts are disabled on this server" });
+      return;
+    }
+    if (!intentLimiter.allow(parsed.data.participantId)) {
+      res.status(429).json({ error: "Too many boost requests — try again shortly" });
+      return;
+    }
+    const intent = boosts.createIntent(req.params.id, parsed.data.trackId, parsed.data.participantId);
+    if ("error" in intent) {
+      res.status(intent.status).json({ error: intent.error });
+      return;
+    }
+    res.status(201).json(intent);
+  });
+
+  app.post("/api/solana/boost/verify", async (req, res) => {
+    const parsed = VerifySchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ status: "rejected", reason: "Invalid verification request" });
+      return;
+    }
+    if (!boosts) {
+      res.status(503).json({ status: "rejected", reason: "Boosts are disabled on this server" });
+      return;
+    }
+    const result = await boosts.verify(parsed.data);
+    res.status(httpStatusFor(result.status)).json(result);
+  });
+
   // --- AI DJ (Doc 04): Gemini proposes, server validates, host approves/rejects ---
   const TargetSchema = z.object({ hostTarget: z.enum(HOST_TARGETS as [HostTarget, ...HostTarget[]]) }).strict();
 
-  app.get("/api/host/sessions/:id/recommendations", requireHost, hostSession, (req, res) => {
+  app.get("/api/host/sessions/:id/recommendations", ...requireHost, hostSession, (req, res) => {
     const svc = recommenders.get(req.params.id);
     res.json({
       ai: svc?.status() ?? { configured: false, model: null, lastError: null, lastSuccessAt: null },
@@ -249,7 +298,7 @@ export function createApp(options: AppOptions) {
     });
   });
 
-  app.post("/api/host/sessions/:id/recommendations", requireHost, hostSession, async (req, res) => {
+  app.post("/api/host/sessions/:id/recommendations", ...requireHost, hostSession, async (req, res) => {
     const svc = recommenders.get(req.params.id);
     const parsed = TargetSchema.safeParse(req.body ?? {});
     if (!svc || !parsed.success) {
@@ -266,9 +315,9 @@ export function createApp(options: AppOptions) {
 
   app.post(
     "/api/host/sessions/:id/recommendations/:recId/:decision",
-    requireHost,
+    ...requireHost,
     hostSession,
-    async (req: express.Request<{ id: string; recId: string; decision: string }>, res) => {
+    async (req: express.Request<{ id: string; recId: string; decision: string }>, res: express.Response) => {
       const svc = recommenders.get(req.params.id);
       const { recId, decision } = req.params;
       if (!svc || (decision !== "approve" && decision !== "reject")) {
@@ -287,6 +336,7 @@ export function createApp(options: AppOptions) {
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
   });
+  app.use(authErrorHandler);
 
   return { app, handleEvent };
 }

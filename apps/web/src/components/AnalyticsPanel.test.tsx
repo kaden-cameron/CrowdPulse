@@ -35,7 +35,7 @@ describe("AnalyticsPanel", () => {
       <AnalyticsPanel
         metrics={tiger}
         error={null}
-        tracks={[{ id: "track_07", title: "Stage Lightning", artist: "DJ Hydra", genre: "dnb", bpm: 174, energy: 0.95, votes: 0, status: "open" }]}
+        tracks={[{ id: "track_07", title: "Stage Lightning", artist: "DJ Hydra", genre: "dnb", bpm: 174, energy: 0.95, votes: 0, boosts: 0, status: "open" }]}
       />,
     );
     expect(screen.getByText("57")).toBeInTheDocument();

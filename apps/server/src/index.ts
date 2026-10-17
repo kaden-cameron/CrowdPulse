@@ -10,9 +10,11 @@ import {
   type ServerToClientMessage,
 } from "@crowdpulse/shared";
 import { createApp, type Sessions } from "./app.js";
+import { createAuth0HostAuth, createDevKeyHostAuth } from "./auth.js";
 import { Database } from "./db.js";
 import { DEFAULT_GEMINI_MODEL, GeminiClient } from "./gemini.js";
 import { RecommendationService } from "./recommendation.js";
+import { BoostVerifier, DEFAULT_DEVNET_RPC } from "./solana.js";
 import { log } from "./log.js";
 import { SessionStore } from "./session.js";
 
@@ -23,11 +25,27 @@ try {
   /* no .env file — rely on the real environment */
 }
 
-const PORT = Number(process.env.PORT ?? 8787);
+const PORT = Number(process.env.PORT || 8787);
 const isProd = process.env.NODE_ENV === "production";
-const hostKey = process.env.HOST_DEV_KEY ?? (isProd ? "" : "local-dev-host-key");
-if (!hostKey) {
-  console.error("HOST_DEV_KEY must be set in production");
+// Host auth: Auth0 when configured (required in production); otherwise a local dev key.
+const auth0Domain =
+  process.env.AUTH0_DOMAIN ?? process.env.AUTH0_ISSUER_BASE_URL?.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+const hostAuth =
+  auth0Domain && process.env.AUTH0_AUDIENCE
+    ? createAuth0HostAuth({
+        domain: auth0Domain,
+        audience: process.env.AUTH0_AUDIENCE,
+        clientId: process.env.AUTH0_CLIENT_ID ?? "",
+      })
+    : isProd
+      ? undefined
+      : createDevKeyHostAuth(process.env.HOST_DEV_KEY ?? "local-dev-host-key");
+if (!hostAuth) {
+  console.error("Production requires Auth0: set AUTH0_DOMAIN, AUTH0_AUDIENCE and AUTH0_CLIENT_ID");
+  process.exit(1);
+}
+if (hostAuth.mode === "auth0" && !process.env.AUTH0_CLIENT_ID) {
+  console.error("AUTH0_CLIENT_ID (the SPA application's client ID) is required for host login");
   process.exit(1);
 }
 const corsOrigins = process.env.CORS_ORIGINS?.split(",").map((s) => s.trim()).filter(Boolean);
@@ -51,11 +69,30 @@ const sessions: Sessions = new Map([
   [DEMO_SESSION_ID, new SessionStore(DEMO_SESSION_ID, DEMO_SESSION_NAME, { persist })],
 ]);
 
+// Solana devnet boosts are optional: they need a public recipient address. Mainnet is refused.
+if ((process.env.SOLANA_CLUSTER ?? "devnet") !== "devnet") {
+  console.error("SOLANA_CLUSTER must be devnet — CrowdPulse never uses real funds");
+  process.exit(1);
+}
+const boosts = process.env.BOOST_RECIPIENT
+  ? new BoostVerifier({
+      rpcUrl: process.env.SOLANA_RPC_URL || DEFAULT_DEVNET_RPC,
+      recipient: process.env.BOOST_RECIPIENT,
+      lamports: Number(process.env.BOOST_LAMPORTS ?? 1_000_000),
+      sessions,
+      db,
+    })
+  : undefined;
+
 // Rebuild state from TigerData so a restart doesn't lose votes, moods, or the queue.
 if (db) {
   for (const [id, session] of sessions) {
     const t0 = performance.now();
     const records = await db.loadEvents(id);
+    for (const r of records) {
+      const sig = (r.metadata as { signature?: unknown }).signature;
+      if (r.eventType === "boost" && typeof sig === "string") boosts?.markUsed(sig);
+    }
     const applied = session.replay(records);
     log({ kind: "db.replay", sessionId: id, events: applied, ms: +(performance.now() - t0).toFixed(1) });
   }
@@ -68,7 +105,7 @@ const gemini = process.env.GEMINI_API_KEY
   : undefined;
 const recommenders = new Map([...sessions].map(([id, s]) => [id, new RecommendationService(s, gemini)]));
 
-const { app, handleEvent } = createApp({ sessions, hostKey, corsOrigins, db, recommenders });
+const { app, handleEvent } = createApp({ sessions, hostAuth, corsOrigins, db, recommenders, boosts });
 
 // In production, serve the built web app and fall back to index.html for SPA routes.
 const webDist = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web/dist");
@@ -174,6 +211,8 @@ server.listen(PORT, () => {
     sessions: [...sessions.keys()],
     persistence: db ? "tigerdata" : "memory",
     gemini: gemini ? gemini.model : "off",
+    boosts: boosts ? "devnet" : "off",
+    hostAuth: hostAuth.mode,
     servingWeb: existsSync(webDist),
   });
 });

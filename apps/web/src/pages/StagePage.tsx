@@ -89,6 +89,7 @@ export function StagePage() {
                     <strong>{item.title}</strong>
                     <em>
                       {item.artist} · {item.votes}
+                      {item.boosts > 0 && ` · ⚡${item.boosts}`}
                     </em>
                   </span>
                 </li>

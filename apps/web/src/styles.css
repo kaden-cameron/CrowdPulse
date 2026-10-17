@@ -1219,3 +1219,95 @@ code {
     grid-template-columns: 1fr;
   }
 }
+
+/* Solana devnet boosts */
+.track-row {
+  flex-wrap: nowrap;
+}
+
+.boost-btn {
+  min-width: 2.75rem;
+  padding-inline: 0.6rem;
+}
+
+.boost-panel {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border-radius: var(--radius);
+  background: rgba(12, 34, 51, 0.85);
+  border: 1px solid rgba(122, 215, 240, 0.3);
+}
+
+.boost-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.boost-head h2 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.boost-note {
+  font-size: 0.85rem;
+  color: #b7c9c6;
+}
+
+.boost-manual {
+  margin: 0.75rem 0;
+}
+
+.boost-manual summary {
+  cursor: pointer;
+  color: var(--cyan);
+  font-size: 0.9rem;
+}
+
+.boost-manual dl {
+  display: grid;
+  gap: 0.2rem;
+  margin: 0.6rem 0;
+  font-size: 0.85rem;
+}
+
+.boost-manual dt {
+  color: #8aa3a0;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.boost-manual dd {
+  margin: 0 0 0.4rem;
+  overflow-wrap: anywhere;
+}
+
+.boost-manual input[type="text"] {
+  font: inherit;
+  padding: 0.6rem 0.8rem;
+  border-radius: 10px;
+  border: 1px solid rgba(122, 215, 240, 0.25);
+  background: rgba(6, 20, 31, 0.8);
+  color: var(--ink);
+}
+
+/* Host sign-in */
+.host-auth {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.host-auth .host-field {
+  flex: 1 1 18rem;
+  margin: 0;
+}
+
+.host-user {
+  color: #b7c9c6;
+  overflow-wrap: anywhere;
+}
