@@ -38,7 +38,7 @@ test("FE-01/02/03 BE-05 E2E-01/02/03/11: a phone joins and votes; the stage upda
 
   const t0 = Date.now();
   await phone.getByRole("button", { name: "Vote: Stage Lightning" }).click();
-  await expect(phone.getByRole("button", { name: "Voted ✓: Stage Lightning" })).toBeVisible();
+  await expect(phone.getByRole("button", { name: "Take back your vote for Stage Lightning" })).toBeVisible();
   await expect(stage.locator(".stage-queue")).toContainText("Stage Lightning");
   const ms = Date.now() - t0;
   // BE-05: both clients converge on the same server-computed count.
@@ -70,7 +70,7 @@ test("FE-04 / E2E-12: a vote made offline is sent once on reconnect, and missed 
 
   await phone.context().setOffline(false);
   await expect(phone.getByRole("status").filter({ hasText: "Live" })).toBeVisible({ timeout: 15_000 });
-  await expect(phone.getByRole("button", { name: "Voted ✓: Spanish Moss" })).toBeVisible();
+  await expect(phone.getByRole("button", { name: "Take back your vote for Spanish Moss" })).toBeVisible();
   // Counted exactly once, and the vote made while offline elsewhere is visible without reload.
   await expect(phone.locator(".track-row", { hasText: "Spanish Moss" })).toContainText("1 vote ·");
   await expect(phone.locator(".track-row", { hasText: "Crowd Current" })).toContainText("1 vote ·");
@@ -111,7 +111,7 @@ test("Vote buttons come back after a track plays, and a new run starts fresh on 
   const phone = await openPhone(browser);
 
   await phone.getByRole("button", { name: "Vote: Stage Lightning" }).click();
-  await expect(phone.getByRole("button", { name: "Voted ✓: Stage Lightning" })).toBeDisabled();
+  await expect(phone.getByRole("button", { name: "Take back your vote for Stage Lightning" })).toBeEnabled();
 
   // Host plays Stage Lightning, then another track: Stage Lightning is votable again.
   expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
@@ -126,7 +126,7 @@ test("Vote buttons come back after a track plays, and a new run starts fresh on 
 
   // "Start new run" sends the phone back to pick a mood, with fresh buttons.
   await phone.getByRole("button", { name: "Vote: Spanish Moss" }).click();
-  await expect(phone.getByRole("button", { name: "Voted ✓: Spanish Moss" })).toBeVisible();
+  await expect(phone.getByRole("button", { name: "Take back your vote for Spanish Moss" })).toBeVisible();
   expect((await request.post("/api/host/sessions/demo/reset", { headers: host })).status()).toBe(200);
   await expect(phone.getByText(/new run just started/)).toBeVisible();
   await phone.getByRole("button", { name: "Continue to vote" }).click();
@@ -134,41 +134,56 @@ test("Vote buttons come back after a track plays, and a new run starts fresh on 
   await expect(phone.getByText(/Rejected:/)).toHaveCount(0);
 });
 
-test("Music: the player plays the host's pick, auto mode moves on by itself, DJ mode waits", async ({ browser, request }) => {
+test("Attendees have 3 votes at once, can take one back, and a reload remembers them", async ({ browser }) => {
+  const phone = await openPhone(browser);
+  for (const t of ["Gator Glow", "Midnight Cypress", "Spanish Moss"]) {
+    await phone.getByRole("button", { name: `Vote: ${t}` }).click();
+    await expect(phone.getByRole("button", { name: `Take back your vote for ${t}` })).toBeVisible();
+  }
+  await expect(phone.getByText(/All 3 votes used/)).toBeVisible();
+  await expect(phone.getByRole("button", { name: "Vote: Voltage Swamp" })).toBeDisabled();
+
+  await phone.getByRole("button", { name: "Take back your vote for Gator Glow" }).click();
+  await expect(phone.getByRole("button", { name: "Vote: Gator Glow" })).toBeVisible();
+  await expect(phone.getByText(/1 of 3 votes left/)).toBeVisible();
+  await expect(phone.getByRole("button", { name: "Vote: Voltage Swamp" })).toBeEnabled();
+
+  // One identity per device: a reload goes straight back to voting, with the same votes.
+  await phone.reload();
+  await expect(phone.getByRole("button", { name: "Take back your vote for Spanish Moss" })).toBeVisible();
+  await expect(phone.getByRole("button", { name: "Continue to vote" })).toHaveCount(0);
+
+  // A second tab on the same device takes over; the first one steps aside.
+  const second = await phone.context().newPage();
+  await second.goto("/join/demo");
+  await expect(second.getByRole("button", { name: "Take back your vote for Spanish Moss" })).toBeVisible();
+  await expect(phone.getByText("CrowdPulse is open in another tab")).toBeVisible();
+});
+
+test("Music: the player plays through Spotify only, and the host's queue + skip pick the song", async ({ browser, request }) => {
   const host = { "x-host-key": HOST_KEY };
   const state = async () => (await (await request.get("/api/sessions/demo/state")).json()) as {
     nowPlaying: { trackId: string } | null;
-    playback: { status: string; source: string | null; playerOnline: boolean; mode: string };
+    queue: { trackId: string; hostPick?: boolean }[];
   };
 
-  // The laptop plugged into the speakers: sign in, then press Start audio (browsers need a click).
+  // The speaker laptop: no "this laptop" option, and Start audio waits for Spotify.
   const laptop = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
-  await laptop.goto("/player/demo?demoSeconds=4");
+  await laptop.goto("/player/demo");
   await laptop.getByLabel(/Dev host key/).fill(HOST_KEY);
-  await laptop.getByRole("button", { name: /Start audio/ }).click();
-  await expect(laptop.getByText("Nothing playing")).toBeVisible();
+  await expect(laptop.getByRole("button", { name: /This laptop/ })).toHaveCount(0);
+  await expect(laptop.locator(".player-start")).toBeDisabled();
 
-  // Auto play, a crowd favourite, and the host starts the music.
-  expect((await request.post("/api/host/sessions/demo/playback/mode", { headers: host, data: { mode: "auto" } })).status()).toBe(200);
+  // The host's queue plays before votes; Skip works with or without a queue.
   await request.post("/api/sessions/demo/votes", {
     data: { sessionId: "demo", trackId: "track_05", eventId: randomUUID(), participantId: "participant_music1" },
   });
+  expect((await request.put("/api/host/sessions/demo/queue", { headers: host, data: { trackIds: ["track_02"] } })).status()).toBe(200);
   expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
-
-  await expect(laptop.locator(".player-title")).toHaveText("Voltage Swamp");
-  await expect.poll(async () => (await state()).playback).toMatchObject({ status: "playing", source: "generated", playerOnline: true });
-  await laptop.screenshot({ path: evidence("player-playing.png") });
-
-  // ~4s later the song ends and auto mode starts another one with no host action.
-  await expect.poll(async () => (await state()).nowPlaying?.trackId, { timeout: 12_000 }).not.toBe("track_05");
-  await expect.poll(async () => (await state()).playback.status, { timeout: 8_000 }).toBe("playing");
-
-  // DJ picks: when this song ends, nothing else starts.
-  expect((await request.post("/api/host/sessions/demo/playback/mode", { headers: host, data: { mode: "dj" } })).status()).toBe(200);
-  const current = (await state()).nowPlaying?.trackId;
-  await expect.poll(async () => (await state()).playback.status, { timeout: 12_000 }).toBe("ended");
-  expect((await state()).nowPlaying?.trackId).toBe(current);
-  await expect(laptop.getByText(/Finished — pick the next song/)).toBeVisible();
+  expect((await state()).nowPlaying?.trackId).toBe("track_02");
+  await expect(laptop.locator(".player-title")).toHaveText("Midnight Cypress");
+  expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
+  expect((await state()).nowPlaying?.trackId).toBe("track_05");
 });
 
 test("The stage QR code decodes to the join link, even when small in a phone's camera", async ({ browser }) => {
@@ -194,17 +209,13 @@ test("The stage QR code decodes to the join link, even when small in a phone's c
   expect(code?.data).not.toMatch(/localhost|127\.0\.0\.1/);
 });
 
-test("Spotify source explains what's missing instead of failing silently", async ({ browser }) => {
+test("Spotify explains what's missing instead of failing silently", async ({ browser }) => {
   const page = await (await browser.newContext()).newPage();
   await page.goto("/player/demo");
   await page.getByLabel(/Dev host key/).fill(HOST_KEY);
-  await page.getByRole("button", { name: /^Spotify/ }).click();
   // This test server has no SPOTIFY_CLIENT_ID.
   await expect(page.getByText(/Spotify isn't set up on this server/)).toBeVisible();
   await expect(page.locator(".player-start")).toBeDisabled();
-  // Switching back to the laptop's own audio works immediately.
-  await page.getByRole("button", { name: /^This laptop/ }).click();
-  await expect(page.locator(".player-start")).toBeEnabled();
 });
 
 test("The host picks the look; the big screen and attendee phones follow it live", async ({ browser, request }) => {

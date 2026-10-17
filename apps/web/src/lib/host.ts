@@ -8,6 +8,8 @@ import type {
   PlaybackReportEvent,
   Recommendation,
   SessionState,
+  SongRequest,
+  FoundSong,
   VisualState,
 } from "@crowdpulse/shared";
 
@@ -46,6 +48,22 @@ export const hostClearLibrary = (sessionId: string, auth: HostHeaders) =>
 export const hostSeek = (sessionId: string, auth: HostHeaders, positionMs: number) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/seek`, auth, { positionMs: Math.round(positionMs) });
 
+/** Lyrics / a description (or a surprise) → songs Gemini names, each looked up on Spotify. */
+export async function hostFindSongs(
+  sessionId: string,
+  auth: HostHeaders,
+  query: { text?: string; surprise?: boolean; genre: string | null; minStreams: number | null; maxStreams: number | null },
+) {
+  const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/find-songs`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...auth },
+    body: JSON.stringify(query),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
+  return data as { songs: FoundSong[]; note: string | null };
+}
+
 export type AiSnapshot = { ai: AiStatus; recommendations: Recommendation[] };
 
 async function hostGet<T>(path: string, auth: HostHeaders): Promise<T> {
@@ -60,11 +78,11 @@ const recPath = (sessionId: string) => `/api/host/sessions/${encodeURIComponent(
 export const fetchRecommendations = (sessionId: string, auth: HostHeaders) =>
   hostGet<AiSnapshot>(recPath(sessionId), auth);
 
-export async function requestRecommendation(sessionId: string, auth: HostHeaders, hostTarget: HostTarget) {
+export async function requestRecommendation(sessionId: string, auth: HostHeaders, hostTarget: HostTarget, request?: SongRequest) {
   const res = await fetch(recPath(sessionId), {
     method: "POST",
     headers: { "content-type": "application/json", ...auth },
-    body: JSON.stringify({ hostTarget }),
+    body: JSON.stringify(request ? { hostTarget, request } : { hostTarget }),
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);

@@ -81,7 +81,8 @@ describe.skipIf(!url)("TigerData integration (Doc 03)", () => {
     const aIds = new Set((await db.loadEvents(sessionA)).map((x) => x.eventId));
     const bIds = (await db.loadEvents(sessionB)).map((x) => x.eventId);
     expect(bIds.some((id) => aIds.has(id))).toBe(false);
-    expect(a.votesByTrack).toEqual([{ trackId: "track_01", votes: 2 }]);
+    // Both test votes come from the same participant; one person counts once (as in the live queue).
+    expect(a.votesByTrack).toEqual([{ trackId: "track_01", votes: 1 }]);
     expect(b.totalEvents).toBe(4); // 3 bucketed + 1 recent; energy samples excluded
   });
 

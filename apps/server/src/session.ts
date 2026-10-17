@@ -2,6 +2,9 @@ import { randomUUID } from "node:crypto";
 import {
   BOOST_VOTE_WEIGHT,
   MAX_CATALOG_TRACKS,
+  MAX_VOTES_PER_PERSON,
+  GENRE_PATTERN,
+  type ParticipantState,
   DEMO_TRACKS,
   MAX_BOOSTS_PER_TRACK,
   MOODS,
@@ -97,6 +100,7 @@ export class SessionStore {
   private lastPlayedAt = new Map<string, number>();
   private nowPlaying: CatalogTrack | null = null;
   private moods = new Map<string, Mood>(); // participantId -> latest mood
+  private genres = new Map<string, string>(); // participantId -> genre picked when joining
   private participants = new Set<string>();
   private seenEventIds = new Set<string>();
   /** Events being saved right now, so a retry can wait for the real result. */
@@ -192,6 +196,8 @@ export class SessionStore {
               : "open",
       })),
       moods: this.moodTally(),
+      genres: this.genreTally(),
+      maxVotesPerPerson: MAX_VOTES_PER_PERSON,
       visualState: this.hostVisual ?? {
         theme: themeForEnergy(this.energyScore, this.dominantMood()),
         intensity: intensityForEnergy(this.energyScore),
@@ -223,6 +229,9 @@ export class SessionStore {
       if (this.votes.get(track.id)?.has(input.participantId)) {
         return this.reject("Already voted for this track", 409);
       }
+      if (this.activeVotes(input.participantId) >= MAX_VOTES_PER_PERSON) {
+        return this.reject(`You've used all ${MAX_VOTES_PER_PERSON} votes — take one back to vote for another song`, 409);
+      }
       return {
         // Held while the write is in flight so a concurrent double-vote can't slip through.
         reservation: `vote:${input.participantId}:${track.id}`,
@@ -238,15 +247,46 @@ export class SessionStore {
     });
   }
 
+  /** Take back a vote, freeing one of the attendee's MAX_VOTES_PER_PERSON. */
+  retractVote(input: { trackId: string; eventId: string; participantId: string }): Promise<EventOutcome> {
+    return this.handleEvent(input, () => {
+      const track = this.catalog.find((t) => t.id === input.trackId);
+      if (!track) return this.reject("Unknown track ID", 400);
+      if (!this.votes.get(track.id)?.has(input.participantId)) return this.reject("No vote to take back", 409);
+      return {
+        reservation: `vote:${input.participantId}:${track.id}`,
+        record: { eventType: "unvote", value: -1, metadata: { trackId: track.id } },
+        commit: () => {
+          this.applyUnvote(track.id, input.participantId);
+          return { weight: 0, event: { type: "vote.retracted", message: `Someone took back a vote for ${track.title}` } };
+        },
+      };
+    });
+  }
+
+  /** One attendee's own view (their votes, mood, genre), for reloads and other tabs on the device. */
+  participantState(participantId: string): ParticipantState {
+    return {
+      run: this.run,
+      joined: this.moods.has(participantId),
+      mood: this.moods.get(participantId) ?? null,
+      genre: this.genres.get(participantId) ?? null,
+      votes: this.catalog.filter((t) => this.votes.get(t.id)?.has(participantId)).map((t) => t.id),
+    };
+  }
+
   recordMood(input: {
     mood: Mood;
+    genre?: string;
     eventId: string;
     participantId: string;
   }): Promise<EventOutcome> {
     return this.handleEvent(input, () => ({
-      record: { eventType: "mood", value: null, metadata: { mood: input.mood } },
+      record: { eventType: "mood", value: null, metadata: { mood: input.mood, ...(input.genre ? { genre: input.genre } : {}) } },
       commit: () => {
         this.moods.set(input.participantId, input.mood);
+        if (input.genre) this.genres.set(input.participantId, input.genre);
+        else this.genres.delete(input.participantId);
         return {
           weight: ACTIVITY_WEIGHT.mood,
           event: { type: "mood.selected", message: `Someone is feeling ${input.mood}` },
@@ -702,8 +742,13 @@ export class SessionStore {
         case "mood":
           if (r.participantId && MOODS.includes(meta.mood as Mood)) {
             this.moods.set(r.participantId, meta.mood as Mood);
+            if (typeof meta.genre === "string" && GENRE_PATTERN.test(meta.genre)) this.genres.set(r.participantId, meta.genre);
+            else this.genres.delete(r.participantId);
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.mood });
           }
+          break;
+        case "unvote":
+          if (typeof meta.trackId === "string" && r.participantId) this.applyUnvote(meta.trackId, r.participantId);
           break;
         case "tap":
           this.applyTaps(Number(r.value) || 0);
@@ -914,6 +959,27 @@ export class SessionStore {
     }
   }
 
+  private applyUnvote(trackId: string, participantId: string) {
+    const voters = this.votes.get(trackId);
+    voters?.delete(participantId);
+    if (voters && !voters.size) this.votes.delete(trackId);
+  }
+
+  /** Songs this person has a vote on now, plus votes still being saved (so a burst can't exceed the cap). */
+  private activeVotes(participantId: string): number {
+    let n = 0;
+    for (const voters of this.votes.values()) if (voters.has(participantId)) n++;
+    const prefix = `vote:${participantId}:`;
+    for (const r of this.reservations) if (r.startsWith(prefix)) n++;
+    return n;
+  }
+
+  private genreTally(): Record<string, number> {
+    const tally: Record<string, number> = {};
+    for (const g of this.genres.values()) tally[g] = (tally[g] ?? 0) + 1;
+    return tally;
+  }
+
   private applyVote(trackId: string, participantId: string) {
     const voters = this.votes.get(trackId) ?? new Set<string>();
     voters.add(participantId);
@@ -986,6 +1052,7 @@ export class SessionStore {
     this.lastPlayedAt.clear();
     this.nowPlaying = null;
     this.moods.clear();
+    this.genres.clear();
     this.participants.clear();
     this.activity = [];
     this.energyHistory = [];

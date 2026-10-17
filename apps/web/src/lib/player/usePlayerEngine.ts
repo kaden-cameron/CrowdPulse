@@ -3,7 +3,6 @@ import type { SessionState } from "@crowdpulse/shared";
 import { reportPlayback, type PlaybackReport } from "../host";
 import { spotifyAccessToken, spotifyConnected } from "../spotify/auth";
 import { decide, type Playing } from "./follow";
-import { LocalPlayer } from "./localPlayer";
 import { SpotifyPlayer } from "./spotifyPlayer";
 import type { PlayerAdapter, PlayerUnavailableError, StartedInfo } from "./types";
 
@@ -12,8 +11,6 @@ import type { PlayerAdapter, PlayerUnavailableError, StartedInfo } from "./types
 // Nothing plays until the host presses Start audio (browsers require a click before audio).
 
 const PROGRESS_EVERY_MS = 5000;
-const SOURCE_KEY = "crowdpulse.player.source";
-export type Source = "local" | "spotify";
 
 export type NowInfo = StartedInfo & { trackId: string; title: string; artist: string };
 
@@ -22,36 +19,14 @@ export function usePlayerEngine({
   state,
   ready,
   getHeaders,
-  generatedDurationS = 60,
 }: {
   sessionCode: string;
   state: SessionState | null;
   ready: boolean;
   getHeaders: () => Promise<Record<string, string>>;
-  generatedDurationS?: number;
 }) {
-  const [source, setSource] = useState<Source>(() => {
-    try {
-      return sessionStorage.getItem(SOURCE_KEY) === "spotify" ? "spotify" : "local";
-    } catch {
-      return "local";
-    }
-  });
-  // Has this tab's host picked a source yet? If not, the card defaults to Spotify when it's set up.
-  const [sourceChosen] = useState(() => {
-    try {
-      return sessionStorage.getItem(SOURCE_KEY) !== null;
-    } catch {
-      return false;
-    }
-  });
-  const player: PlayerAdapter = useMemo(
-    () =>
-      source === "spotify"
-        ? new SpotifyPlayer({ getToken: spotifyAccessToken })
-        : new LocalPlayer({ generatedDurationS }),
-    [source, generatedDurationS],
-  );
+  // Spotify is the only speaker output: this tab becomes a Spotify Connect device.
+  const player: PlayerAdapter = useMemo(() => new SpotifyPlayer({ getToken: spotifyAccessToken }), []);
 
   const [unlocked, setUnlocked] = useState(false);
   const [volume, setVolume] = useState(0.8);
@@ -168,7 +143,7 @@ export function usePlayerEngine({
   }, [unlocked, ready, info, player]);
 
   useEffect(() => {
-    // New player (source switched): it needs its own Start audio click, then picks up mid-song.
+    // Unmount: stop the music this tab was playing.
     setUnlocked(false);
     playing.current = null;
     setInfo(null);
@@ -176,16 +151,6 @@ export function usePlayerEngine({
   }, [player]);
 
   useEffect(() => player.setVolume(volume), [player, volume, unlocked]);
-
-  const chooseSource = (next: Source) => {
-    try {
-      sessionStorage.setItem(SOURCE_KEY, next);
-    } catch {
-      /* storage blocked */
-    }
-    setError(null);
-    setSource(next);
-  };
 
   const start = async () => {
     try {
@@ -207,10 +172,7 @@ export function usePlayerEngine({
   };
 
   return {
-    source,
-    sourceChosen,
-    chooseSource,
-    spotifyReady: source === "spotify" && spotifyConnected(),
+    spotifyReady: spotifyConnected(),
     unlocked,
     start,
     stopHere,

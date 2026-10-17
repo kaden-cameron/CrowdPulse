@@ -84,6 +84,10 @@ export interface SessionState {
   queue: QueueItem[];
   tracks: Track[];
   moods: Record<Mood, number>;
+  /** Genre each attendee picked when joining → how many people picked it (current run). */
+  genres: Record<string, number>;
+  /** How many songs one attendee can vote for at the same time. */
+  maxVotesPerPerson: number;
   visualState: VisualState;
   visualMode: VisualMode;
   playback: PlaybackState;
@@ -112,7 +116,34 @@ export interface JoinMessage {
   eventId: string;
   participantId: string;
   mood: Mood;
+  /** The genre this attendee wants to hear (lowercase), or omitted for "anything". */
+  genre?: string;
 }
+
+/** Take back a vote (frees one of the attendee's votes). */
+export interface VoteRetractMessage {
+  type: "vote.retract";
+  sessionId: string;
+  trackId: string;
+  eventId: string;
+  participantId: string;
+}
+
+/** One attendee's own state, so a reload or a second tab on the same device picks up where it was. */
+export interface ParticipantState {
+  run: number;
+  joined: boolean;
+  mood: Mood | null;
+  genre: string | null;
+  /** Songs this attendee currently has a vote on. */
+  votes: string[];
+}
+
+/** Votes one attendee can have at once. Taking one back frees it. */
+export const MAX_VOTES_PER_PERSON = 3;
+
+/** Genre names as stored and sent: plain lowercase words. */
+export const GENRE_PATTERN = /^[a-z0-9 &'/+-]{1,30}$/;
 
 export interface TapMessage {
   type: "tap.batch";
@@ -145,6 +176,7 @@ export interface ErrorMessage {
 
 export type ClientToServerMessage =
   | VoteSubmitMessage
+  | VoteRetractMessage
   | JoinMessage
   | TapMessage
   | ClientHelloMessage;
@@ -217,12 +249,62 @@ export interface RecommendationProposal {
   confidence: number;
 }
 
+/**
+ * What the host asks Gemini for: free text (a description or lyrics), an optional genre, and a
+ * popularity range in all-time Spotify streams (Gemini's estimate; null = no limit).
+ */
+export interface SongRequest {
+  /** e.g. "2000s pop-punk singalong" or a line of lyrics (plain text, max 200 characters). */
+  prompt: string;
+  genre: string | null;
+  minStreams: number | null;
+  maxStreams: number | null;
+}
+
+/** A song Gemini recognized from lyrics or a description, confirmed on Spotify when possible. */
+export interface FoundSong {
+  title: string;
+  artist: string;
+  /** Short reason, e.g. "Chorus lyric". */
+  why: string;
+  confidence: number;
+  /** Gemini's estimate of all-time Spotify streams (Spotify doesn't publish play counts to apps). */
+  streams: number | null;
+  /** The Spotify match (null if Spotify search isn't set up or found nothing). */
+  spotify: {
+    id: string;
+    title: string;
+    artist: string;
+    album: string;
+    spotifyUri: string;
+    durationMs: number;
+    popularity: number;
+    imageUrl: string | null;
+    coverUrl: string | null;
+  } | null;
+}
+
+export const SONG_REQUEST_LIMITS = { promptMax: 200, maxStreams: 100_000_000_000 } as const;
+
+/** Popularity slider stops, in all-time Spotify streams. The ends mean "no limit". */
+export const STREAM_STOPS = [
+  0, 100_000, 1_000_000, 10_000_000, 50_000_000, 100_000_000, 250_000_000, 500_000_000, 1_000_000_000, 2_000_000_000,
+] as const;
+
+/** Genres the host can filter by even before the library has them. */
+export const COMMON_GENRES = [
+  "pop", "hip hop", "rap", "r&b", "rock", "indie", "alternative", "edm", "house", "techno", "drum & bass",
+  "dubstep", "country", "latin", "reggaeton", "k-pop", "afrobeats", "jazz", "soul", "funk", "disco", "lofi", "metal", "punk",
+] as const;
+
 export interface Recommendation {
   id: string;
   sessionId: string;
   createdAt: string;
   status: "pending" | "approved" | "rejected" | "invalid" | "failed";
   hostTarget: HostTarget;
+  /** The host's own request (description + sliders), when given. */
+  request?: SongRequest | null;
   /** The compact summary actually sent to the model. */
   input: unknown;
   model: string;

@@ -39,3 +39,22 @@ describe("VoteButton", () => {
     expect(onVote).toHaveBeenCalledOnce();
   });
 });
+
+describe("VoteButton take-back", () => {
+  it("a voted song can be tapped again to take the vote back", async () => {
+    const onVote = vi.fn();
+    const onUnvote = vi.fn();
+    render(<VoteButton feedback="accepted" trackTitle="Gator Glow" onVote={onVote} onUnvote={onUnvote} />);
+    const btn = screen.getByRole("button", { name: "Take back your vote for Gator Glow" });
+    expect(btn).toBeEnabled();
+    expect(btn).toHaveTextContent("Voted ✓ · undo");
+    await userEvent.click(btn);
+    expect(onUnvote).toHaveBeenCalledOnce();
+    expect(onVote).not.toHaveBeenCalled();
+  });
+
+  it("stays disabled for new votes when all votes are used", () => {
+    render(<VoteButton feedback="idle" trackTitle="Gator Glow" disabled onVote={() => {}} onUnvote={() => {}} />);
+    expect(screen.getByRole("button")).toBeDisabled();
+  });
+});

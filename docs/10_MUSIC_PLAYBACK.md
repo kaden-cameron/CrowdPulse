@@ -13,24 +13,15 @@ votes · boosts · Gemini · host ──▶ server: nowPlaying + playback state 
 1. On the laptop plugged into the speakers, open the host page (**`/host/demo`**). Its **Now playing** window is the player: sign in, then press **▶ Start audio on this device** under *Speakers*. Browsers only allow sound after a click, so this step can't be skipped.
    - If the speakers are on a different laptop from the host, open **`/player/demo`** there instead. It shows the same Now playing window on its own. Only start audio on one device, or both will play.
    - **Now playing** shows the album cover, the song, and a progress bar. Covers are saved when a song is added from Spotify. For songs added before that, the server looks the cover up on Spotify, which needs `SPOTIFY_CLIENT_SECRET`.
-2. On the host page, use the **Music playback** card:
+2. On the host page, use the **Now playing** window:
    - **Auto play:** when a song ends, the top-voted track starts. If nothing has votes, it plays the least-recently-played track. Music never stops on its own.
    - **DJ picks:** when a song ends, nothing else starts until the host taps **Skip ⏭** or approves a Gemini recommendation.
    - The card shows whether the player is online (it reports every 5 s), what's playing, and any playback error.
 3. The stage shows a progress bar under **Now playing** while a song is actually playing.
 
-`?demoSeconds=20` on the player URL shortens the generated tracks for rehearsals (the default is 60 s).
-
 ## Where the audio comes from
 
-| Source | When |
-|---|---|
-| **Audio file** | The track ID is listed in [`apps/web/public/audio/manifest.json`](../apps/web/public/audio/README.md) (`{"track_01": "gator-glow.mp3"}`) and the file is in that folder. |
-| **Generated demo track** | Every other track. It's a groove built live in the browser from the track's BPM, energy and genre: four-on-the-floor and an arpeggio for high energy, half-time drums and pads for chill tracks. It always works, offline, with no licensing questions. |
-
-**Only add music you're allowed to play in public:** your own tracks, royalty-free music, or Creative Commons tracks that allow it, credited where the license requires. Files in that folder are publicly downloadable from the app. If a file fails to load, the player falls back to the generated version and tells the host.
-
-Songs crossfade over 1.5 s, and a limiter keeps the output from clipping the PA.
+**Spotify only.** The speaker tab becomes a Spotify Connect device ("CrowdPulse") and plays each song in full. It needs `SPOTIFY_CLIENT_ID` on the server and a Spotify Premium login on the speaker laptop. The old "This laptop" option (local audio files and generated demo tracks) has been removed.
 
 ## Rules the server enforces
 
@@ -86,6 +77,22 @@ The **Songs** window on `/host/demo` builds the session's song list straight fro
 - **Auto play never loops through broken songs.** If the player itself can't play (Spotify disconnected, not Premium), that device stops and asks the host to press Start audio again; nothing is skipped. If 3 songs in a row fail, auto play pauses and the host page shows the error.
 - **Gemini avoids repeats.** It's never offered the last 4 songs played or its own last 3 suggestions (unless the library is too small), and it sees how often it has suggested each song.
 
+### Attendees: votes, genre, one voter per device
+
+- **Joining:** attendees pick a mood and **what they want to hear** (a genre from the library, or "Anything"). The host page shows the genre tally under *Genres people want*, and Gemini sees it as `crowd_genres`.
+- **Votes:** each attendee can have **3 votes at once**. Tapping **Voted ✓ · undo** takes a vote back and frees it. A song that plays uses its votes up.
+- **One voter per device:** every tab on a device shares the same anonymous id, and the server remembers it, so a reload or a new tab goes straight back to voting with the same votes. Only one tab is active at a time; older tabs show *Use it here*. (A private window or another browser is a different device as far as the app can tell.)
+
+### Asking Gemini
+
+The Gemini window has a text box (a description or a line of lyrics, optional), an optional **genre** dropdown, and one **Popularity** slider: a minimum and maximum of all-time Spotify streams (0 to 2B+). Spotify doesn't give apps play counts, so stream numbers are **Gemini's estimates**, labelled as such.
+
+- **Get recommendation** picks from the library, limited to the genre and aimed at the popularity range. The host still approves every pick. If no library song is in that genre, it says so instead of asking Gemini.
+- **🔎 Find on Spotify** recognizes songs from lyrics, a description or part of a title, even if they're not in the library. Gemini names the songs (titles and artists only, never lyrics) with estimated streams; songs outside the range are dropped, and each one is checked on Spotify. The host can **Add** or **Play now**.
+- **🎲 Surprise me** finds one random song in the genre and popularity range that isn't already in the library. Gemini suggests a varied pool; the server picks one at random, weighted toward more-streamed songs (by the square root of streams, so hits come up more often without always winning), and confirms it on Spotify.
+
+Find and Surprise me need `GEMINI_API_KEY` and `SPOTIFY_CLIENT_SECRET`.
+
 A catalog file (below) is still supported for a fixed starting list. Songs added from the host page go on top of it.
 
 ### At the venue
@@ -104,10 +111,8 @@ When a track ends, the player pauses Spotify straight away, so Spotify's autopla
 | "Spotify isn't set up on this server" | Set `SPOTIFY_CLIENT_ID` and restart |
 | "Spotify doesn't allow localhost" | Open the page at `http://127.0.0.1:…` |
 | "Spotify Premium is required" / "Spotify refused playback (403)" | Log in with a Premium account that's on the app's User Management list |
-| "… wasn't found on Spotify" | Add that song's `spotifyUri` to the catalog. In auto mode the player skips to the next song. |
+| "… wasn't found on Spotify" | Add that song's `spotifyUri` to the catalog. In auto mode the player skips to the next song (and pauses after 3 failures in a row). |
 | "This browser can't run the Spotify player" | Use desktop Chrome, Edge or Firefox |
-
-**Backup:** switch **Play music from → This laptop** at any time. It plays local files or generated tracks and picks up the current song immediately.
 
 **Licensing:** Spotify's license covers personal listening, not public performance. That's fine for a hackathon demo; a real venue needs its own public-performance license.
 

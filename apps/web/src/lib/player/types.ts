@@ -1,6 +1,5 @@
-// The player contract. CrowdPulse decides what plays (votes, boosts, Gemini, host); a player
-// makes sound and reports back. LocalPlayer plays audio files or generated demo tracks on the
-// DJ laptop; a Spotify Connect player can implement the same interface later.
+// The player contract. CrowdPulse decides what plays (votes, boosts, Gemini, host); the player
+// makes sound through Spotify on the speaker laptop and reports back.
 
 export interface PlayableTrack {
   id: string;
@@ -15,12 +14,12 @@ export interface PlayableTrack {
   imageUrl?: string;
 }
 
-export type PlaybackSource = "file" | "generated" | "spotify";
+export type PlaybackSource = "spotify";
 
 export interface StartedInfo {
   durationMs: number;
   source: PlaybackSource;
-  /** Set when a file couldn't be played and the generated version was used instead. */
+  /** Shown to the host (e.g. a fallback was used). */
   note?: string;
   /** Album cover of what's actually playing (Spotify reports it). */
   imageUrl?: string;

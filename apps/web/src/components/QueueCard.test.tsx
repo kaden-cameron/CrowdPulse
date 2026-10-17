@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "@crowdpulse/shared";
 import { QueueCard } from "./QueueCard";
-import { groupByGenre } from "../pages/JoinPage";
+import { libraryGenres } from "../pages/JoinPage";
 
 const q = (id: string, hostPick: boolean, votes = 0) => ({ trackId: id, title: `Song ${id}`, artist: "A", votes, boosts: 0, hostPick });
 const state = { queue: [q("a", true), q("b", true), q("c", false, 3)] } as unknown as SessionState;
@@ -43,19 +43,15 @@ describe("QueueCard", () => {
   });
 });
 
-describe("groupByGenre (attendee song list)", () => {
-  it("groups by genre, alphabetical, with unknown genres under Other at the end", () => {
-    const groups = groupByGenre([
-      { id: "1", genre: "house" },
-      { id: "2", genre: "spotify" },
-      { id: "3", genre: "hip hop" },
-      { id: "4", genre: "House" },
-      { id: "5", genre: "unknown" },
+describe("libraryGenres (attendee join step)", () => {
+  it("offers the library's genres, most songs first, without unknown ones", () => {
+    const genres = libraryGenres([
+      { genre: "house" },
+      { genre: "spotify" },
+      { genre: "hip hop" },
+      { genre: "House" },
+      { genre: "unknown" },
     ]);
-    expect(groups.map((g) => [g.genre, g.tracks.map((t) => t.id)])).toEqual([
-      ["Hip Hop", ["3"]],
-      ["House", ["1", "4"]],
-      ["Other", ["2", "5"]],
-    ]);
+    expect(genres).toEqual(["house", "hip hop"]);
   });
 });

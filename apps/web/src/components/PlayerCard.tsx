@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { PlaybackMode, SessionState } from "@crowdpulse/shared";
 import { hostPlaybackMode, hostSeek, hostSkip } from "../lib/host";
 import { usePlayerEngine } from "../lib/player/usePlayerEngine";
@@ -21,7 +21,7 @@ const STATUS_TEXT: Record<string, string> = {
   ended: "Finished — pick the next song",
   error: "Couldn't play",
 };
-const SOURCE_TEXT = { file: "audio file", generated: "generated demo track", spotify: "Spotify" } as const;
+const SOURCE_TEXT: Record<string, string> = { spotify: "Spotify" };
 
 export function PlayerCard({
   sessionCode,
@@ -29,17 +29,15 @@ export function PlayerCard({
   ready,
   getHeaders,
   onState,
-  generatedDurationS,
 }: {
   sessionCode: string;
   state: SessionState | null;
   ready: boolean;
   getHeaders: () => Promise<Record<string, string>>;
   onState: (s: SessionState) => void;
-  generatedDurationS?: number;
 }) {
   const config = usePublicConfig();
-  const engine = usePlayerEngine({ sessionCode, state, ready, getHeaders, generatedDurationS });
+  const engine = usePlayerEngine({ sessionCode, state, ready, getHeaders });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "accepted" | "rejected"; text: string } | null>(null);
   const [drag, setDrag] = useState<number | null>(null); // slider position while the host drags it
@@ -49,16 +47,6 @@ export function PlayerCard({
   const np = state?.nowPlaying;
   const track = np ? state?.tracks.find((t) => t.id === np.trackId) : undefined;
   const here = engine.info && engine.info.trackId === np?.trackId ? engine.info : null;
-  // A real Spotify song playing as a generated stand-in: tell the host how to hear the real thing.
-  const standIn = here?.source === "generated" && !!track?.spotifyUri;
-
-  // Spotify set up on this server → play real songs by default (until the host picks a source).
-  const spotifyId = config?.spotifyClientId;
-  useEffect(() => {
-    if (spotifyId && !engine.sourceChosen && engine.source === "local" && !engine.unlocked) engine.chooseSource("spotify");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [spotifyId]);
-
   // Progress: from this tab's player when it's the one playing, else from the server's timing.
   let pos = 0;
   let dur = 0;
@@ -70,7 +58,7 @@ export function PlayerCard({
     pos = Math.min(Date.now() - Date.parse(pb.startedAt), dur);
   }
   const cover = useSpotifyCover(track?.spotifyUri, here?.imageUrl ?? track?.imageUrl);
-  const playedBy = here ? SOURCE_TEXT[here.source] : pb?.source && pb.status === "playing" ? SOURCE_TEXT[pb.source as keyof typeof SOURCE_TEXT] : null;
+  const playedBy = here ? SOURCE_TEXT[here.source] : pb?.source && pb.status === "playing" ? SOURCE_TEXT[pb.source] ?? pb.source : null;
 
   async function run(label: string, action: () => Promise<{ state: SessionState }>) {
     setBusy(true);
@@ -176,49 +164,29 @@ export function PlayerCard({
       </div>
 
       <fieldset className="mood-field compact-field speakers">
-        <legend>Speakers · play the music from this tab</legend>
-        <div className="target-row two">
-          {(["local", "spotify"] as const).map((s) => (
-            <button
-              key={s}
-              type="button"
-              className={`mood-chip ${engine.source === s ? "selected" : ""}`}
-              aria-pressed={engine.source === s}
-              onClick={() => engine.chooseSource(s)}
-            >
-              <span className="mood-label">{s === "local" ? "This laptop" : "Spotify"}</span>
-              <span className="mood-hint">
-                {s === "local" ? "Audio files or generated demo tracks" : "Real songs · needs Spotify Premium"}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {engine.source === "spotify" && (
-          <SpotifySetup
-            clientId={config?.spotifyClientId ?? null}
-            loading={!config}
-            connected={spotifyConnected}
-            returnTo={window.location.pathname + window.location.search}
-            onDisconnect={() => {
-              disconnectSpotify();
-              engine.chooseSource("spotify");
-              engine.stopHere();
-            }}
-          />
-        )}
+        <legend>Speakers · play the music from this tab through Spotify</legend>
+        <SpotifySetup
+          clientId={config?.spotifyClientId ?? null}
+          loading={!config}
+          connected={spotifyConnected}
+          returnTo={window.location.pathname + window.location.search}
+          onDisconnect={() => {
+            disconnectSpotify();
+            engine.stopHere();
+          }}
+        />
 
         {!engine.unlocked ? (
           <>
             <button
               type="button"
               className="btn primary wide player-start"
-              disabled={!ready || (engine.source === "spotify" && !engine.spotifyReady)}
+              disabled={!ready || !engine.spotifyReady}
               onClick={() => void engine.start()}
             >
               {!ready
                 ? "Sign in as host first"
-                : engine.source === "spotify" && !engine.spotifyReady
+                : !engine.spotifyReady
                   ? "Connect Spotify first"
                   : "▶ Start audio on this device"}
             </button>
@@ -243,12 +211,6 @@ export function PlayerCard({
               Stop audio here
             </button>
           </div>
-        )}
-        {standIn && (
-          <p className="feedback feedback-warn" role="status">
-            This is a generated 1-minute stand-in, not the real song. Choose <strong>Spotify</strong> above,
-            connect a Premium account and press Start audio to hear real songs.
-          </p>
         )}
         {engine.error && (
           <p className="feedback feedback-warn" role="status">

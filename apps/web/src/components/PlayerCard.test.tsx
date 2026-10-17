@@ -54,20 +54,11 @@ describe("PlayerCard (host page Now playing)", () => {
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
   });
 
-  it("defaults the speakers to Spotify when the server has it set up", async () => {
+  it("plays through Spotify only: Start audio waits for a Spotify login", async () => {
     mockNet();
     render(<PlayerCard {...props} state={stateWith({ spotifyUri: URI })} />);
-    await waitFor(() => expect(screen.getByRole("button", { name: /Spotify/, pressed: true })).toBeInTheDocument());
-    expect(screen.getByRole("button", { name: "Connect Spotify first" })).toBeDisabled();
-  });
-
-  it("keeps the laptop's own audio when Spotify isn't set up", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ publicUrl: null, lanIp: null, spotifyClientId: null })));
-    vi.resetModules(); // fresh copy of the cached server settings
-    const { PlayerCard: FreshCard } = await import("./PlayerCard");
-    render(<FreshCard {...props} state={stateWith({})} />);
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.getByRole("button", { name: /This laptop/, pressed: true })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "▶ Start audio on this device" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Connect Spotify first" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /This laptop/ })).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Connect Spotify \(Premium account\)/ })).toBeInTheDocument();
   });
 });

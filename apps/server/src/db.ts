@@ -32,7 +32,8 @@ export type PersistedEventType =
   | "catalog_add"
   | "catalog_remove"
   | "catalog_clear"
-  | "host_queue";
+  | "host_queue"
+  | "unvote";
 
 export type PersistResult = "stored" | "duplicate";
 
@@ -164,6 +165,15 @@ export class Database {
    */
   async persist(rec: EventRecord): Promise<PersistResult> {
     const client = await this.connect();
+    // A checked-out client isn't covered by the pool's "error" handler. Without this, a dropped
+    // network (Wi-Fi change, sleep) mid-write throws an unhandled error and kills the server.
+    let broken: Error | undefined;
+    const onError = (err: Error) => {
+      broken = err;
+      this.healthy = false;
+      log({ kind: "db.client_error", message: err.message });
+    };
+    client.on("error", onError);
     try {
       await client.query("BEGIN");
       const fresh = await client.query(
@@ -193,9 +203,12 @@ export class Database {
     } catch (err) {
       await client.query("ROLLBACK").catch(() => {});
       this.healthy = false;
+      broken ??= err as Error;
       throw err;
     } finally {
-      client.release();
+      client.off("error", onError);
+      // A connection that failed is discarded (release(err)) instead of going back to the pool.
+      client.release(broken);
     }
   }
 
@@ -281,12 +294,19 @@ export class Database {
            FROM crowd_events
            WHERE session_id = $1 AND event_type = 'track_advance' AND time > $2
            GROUP BY 1
+         ),
+         -- Each person's latest vote / unvote per track decides whether their vote still counts.
+         latest AS (
+           SELECT DISTINCT ON (v.participant_id, v.metadata->>'trackId')
+             v.metadata->>'trackId' AS track_id, v.event_type
+           FROM crowd_events v
+           LEFT JOIN plays p ON p.track_id = v.metadata->>'trackId'
+           WHERE v.session_id = $1 AND v.event_type IN ('vote', 'unvote') AND v.time > $2
+             AND (p.played_at IS NULL OR v.time > p.played_at)
+           ORDER BY v.participant_id, v.metadata->>'trackId', v.time DESC
          )
-         SELECT v.metadata->>'trackId' AS track_id, COUNT(*)::int AS votes
-         FROM crowd_events v
-         LEFT JOIN plays p ON p.track_id = v.metadata->>'trackId'
-         WHERE v.session_id = $1 AND v.event_type = 'vote' AND v.time > $2
-           AND (p.played_at IS NULL OR v.time > p.played_at)
+         SELECT track_id, COUNT(*)::int AS votes
+         FROM latest WHERE event_type = 'vote'
          GROUP BY 1 ORDER BY votes DESC, track_id`,
         [sessionId, since],
       ),

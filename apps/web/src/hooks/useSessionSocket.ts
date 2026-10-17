@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  MAX_TAPS_PER_BATCH,
   type ConnectionStatus,
   type Mood,
+  type ParticipantState,
   type SessionState,
   type VoteFeedback,
 } from "@crowdpulse/shared";
@@ -25,7 +25,12 @@ function voteKey(state: SessionState | null, trackId: string): string {
   return `${state?.run ?? 0}:${trackId}:${round}`;
 }
 
-const TAP_FLUSH_MS = 1000;
+/** This device's own choices in the session (votes, join), from the server. */
+async function fetchMe(sessionId: string): Promise<ParticipantState> {
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(getParticipantId())}`);
+  if (!res.ok) throw new Error("Failed to load your votes");
+  return res.json() as Promise<ParticipantState>;
+}
 
 export function useSessionSocket(
   sessionId: string,
@@ -39,7 +44,25 @@ export function useSessionSocket(
   const socketRef = useRef<SessionSocket | null>(null);
   // eventId -> vote key, so results map back to the right vote button.
   const pendingVotes = useRef(new Map<string, string>());
-  const pendingTaps = useRef(0);
+  // eventId -> vote / unvote in flight, so results update this device's own votes.
+  const pendingOps = useRef(new Map<string, { kind: "vote" | "unvote"; trackId: string; key: string }>());
+  const [me, setMe] = useState<ParticipantState | null>(null);
+  const run = state?.run;
+
+  // Who this device is in the session: joined already? which songs has it voted for? Loaded on
+  // open and on every new run, so a reload or another tab doesn't ask to join again.
+  useEffect(() => {
+    if (role !== "attendee" || run === undefined) return;
+    let cancelled = false;
+    fetchMe(sessionId)
+      .then((m) => !cancelled && setMe(m))
+      .catch(() => {
+        /* offline: the join step shows instead */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, role, run]);
 
   const applyState = useCallback((next: SessionState) => {
     setState((prev) => (isNewer(prev, next) ? next : prev));
@@ -70,6 +93,31 @@ export function useSessionSocket(
           // Not saved yet; the socket resends it. Keep the vote button pending.
           setError("Couldn't save to the database — retrying…");
           return;
+        }
+        const op = pendingOps.current.get(result.eventId);
+        if (op) {
+          pendingOps.current.delete(result.eventId);
+          // Keep this device's own vote list in step with the server.
+          const has =
+            op.kind === "vote"
+              ? result.status !== "rejected" || result.reason === "Already voted for this track"
+              : !(result.status !== "rejected" || result.reason === "No vote to take back");
+          setMe((prev) => {
+            const m = prev ?? { run: 0, joined: true, mood: null, genre: null, votes: [] };
+            return { ...m, votes: has ? [...new Set([...m.votes, op.trackId])] : m.votes.filter((id) => id !== op.trackId) };
+          });
+          if (op.kind === "unvote") {
+            // The button's look comes from the vote list again (no "Retry" for a take-back).
+            setVotes((v) => {
+              const next = { ...v };
+              delete next[op.key];
+              return next;
+            });
+            if (result.status === "rejected" && result.reason !== "No vote to take back") {
+              setError(result.reason ?? "Couldn't take the vote back");
+            }
+            return;
+          }
         }
         const key = pendingVotes.current.get(result.eventId);
         if (!key) {
@@ -120,39 +168,26 @@ export function useSessionSocket(
     window.addEventListener("offline", onOffline);
     document.addEventListener("visibilitychange", onVisibility);
 
-    // Hype taps are batched so a frantic tapper sends ~1 message per second.
-    const flush = window.setInterval(() => {
-      const count = Math.min(MAX_TAPS_PER_BATCH, pendingTaps.current);
-      if (!count) return;
-      pendingTaps.current -= count;
-      socket.sendEvent({
-        type: "tap.batch",
-        sessionId,
-        eventId: createEventId(),
-        participantId: getParticipantId(),
-        count,
-      });
-    }, TAP_FLUSH_MS);
-
     return () => {
       cancelled = true;
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
       document.removeEventListener("visibilitychange", onVisibility);
-      window.clearInterval(flush);
       socket.close();
       socketRef.current = null;
     };
   }, [sessionId, role, applyState]);
 
-  function setMood(mood: Mood) {
+  function setMood(mood: Mood, genre?: string | null) {
     socketRef.current?.sendEvent({
       type: "session.join",
       sessionId,
       eventId: createEventId(),
       participantId: getParticipantId(),
       mood,
+      ...(genre ? { genre } : {}),
     });
+    setMe((m) => ({ run: state?.run ?? m?.run ?? 0, joined: true, mood, genre: genre ?? null, votes: m?.votes ?? [] }));
   }
 
   function submitVote(trackId: string) {
@@ -160,6 +195,7 @@ export function useSessionSocket(
     const key = voteKey(state, trackId);
     pendingVotes.current.set(eventId, key);
     setVotes((v) => ({ ...v, [key]: { feedback: "pending", at: Date.now() } }));
+    pendingOps.current.set(eventId, { kind: "vote", trackId, key });
     socketRef.current?.sendEvent({
       type: "vote.submit",
       sessionId,
@@ -169,13 +205,38 @@ export function useSessionSocket(
     });
   }
 
-  function tap() {
-    pendingTaps.current += 1;
+  /** Take back this device's vote for a song. */
+  function retractVote(trackId: string) {
+    const eventId = createEventId();
+    const key = voteKey(state, trackId);
+    pendingOps.current.set(eventId, { kind: "unvote", trackId, key });
+    setVotes((v) => ({ ...v, [key]: { feedback: "pending", at: Date.now() } }));
+    socketRef.current?.sendEvent({
+      type: "vote.retract",
+      sessionId,
+      trackId,
+      eventId,
+      participantId: getParticipantId(),
+    });
   }
+
+  // A song that starts playing uses its votes up (the server clears them), and removed songs go:
+  // drop those from this device's list for good, so the song is votable again in its next round.
+  const spent = (me?.votes ?? []).filter((id) => !state?.tracks.some((t) => t.id === id && t.status !== "playing"));
+  const spentKey = state ? spent.join(",") : "";
+  useEffect(() => {
+    if (!spentKey) return;
+    const gone = new Set(spentKey.split(","));
+    setMe((m) => m && { ...m, votes: m.votes.filter((id) => !gone.has(id)) });
+  }, [spentKey]);
+  const myVotes = (me?.votes ?? []).filter((id) => !spent.includes(id));
 
   /** This phone's vote state for a track in the current run and round. */
   function voteFor(trackId: string): TrackVote | undefined {
-    return votes[voteKey(state, trackId)];
+    const local = votes[voteKey(state, trackId)];
+    if (local?.feedback === "pending" || local?.feedback === "rejected") return local;
+    // Otherwise the server's list decides (survives reloads and other tabs).
+    return myVotes.includes(trackId) ? { feedback: "accepted", at: local?.at ?? 0 } : local?.feedback === "accepted" ? undefined : local;
   }
 
   /** Most recent rejection that still applies (current run/round only). */
@@ -195,6 +256,8 @@ export function useSessionSocket(
     applyState,
     setMood,
     submitVote,
-    tap,
+    retractVote,
+    me,
+    myVotes,
   };
 }

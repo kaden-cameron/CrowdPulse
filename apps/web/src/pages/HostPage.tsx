@@ -270,6 +270,18 @@ export function HostPage() {
               );
             })}
           </ul>
+          <h3 className="metric-label">Genres people want</h3>
+          <ul className="genre-tally">
+            {Object.entries(state?.genres ?? {})
+              .sort((x, y) => y[1] - x[1])
+              .map(([g, n]) => (
+                <li key={g}>
+                  <span>{g}</span>
+                  <strong>{n}</strong>
+                </li>
+              ))}
+            {!Object.keys(state?.genres ?? {}).length && <li className="host-sub">No genre picks yet</li>}
+          </ul>
           <p className="host-sub">
             Latest: {state?.latestEvent?.message ?? "no events yet"}
           </p>

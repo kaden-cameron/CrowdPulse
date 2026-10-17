@@ -1,4 +1,4 @@
-import { useParams, useSearchParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { Dock } from "../components/Dock";
 import { MenuBar } from "../components/MenuBar";
 import { useHostAccess } from "../components/HostAccess";
@@ -12,9 +12,6 @@ import { HostSignIn } from "./HostPage";
 
 export function PlayerPage() {
   const { sessionCode = "demo" } = useParams();
-  const [params] = useSearchParams();
-  // ?demoSeconds=N shortens generated tracks (rehearsals and tests). Default 60s.
-  const generatedDurationS = Math.max(3, Math.min(600, Number(params.get("demoSeconds")) || 60));
   const access = useHostAccess();
   const { state, status, lastMessageAt, applyState } = useSessionSocket(sessionCode, "stage");
   useSessionAppearance(sessionCode, state?.appearance);
@@ -37,7 +34,6 @@ export function PlayerPage() {
           ready={access.ready}
           getHeaders={access.getHeaders}
           onState={applyState}
-          generatedDurationS={generatedDurationS}
         />
       </section>
       <Dock sessionCode={sessionCode} />

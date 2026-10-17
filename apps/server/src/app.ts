@@ -6,6 +6,8 @@ import {
   HOST_TARGETS,
   MAX_CATALOG_TRACKS,
   MAX_TRACKS_PER_ADD,
+  GENRE_PATTERN,
+  SONG_REQUEST_LIMITS,
   SPOTIFY_IMAGE_URL,
   PLAYBACK_MODES,
   MAX_TAPS_PER_BATCH,
@@ -28,6 +30,7 @@ import { parseLiveTrack, spotifyTrackId, toSpotifyUri, type CatalogTrack } from 
 import type { RecommendationModel } from "./gemini.js";
 import type { RecommendationService } from "./recommendation.js";
 import { estimateSongs } from "./trackEstimator.js";
+import { findSongs } from "./songFinder.js";
 import { httpStatusFor, type BoostVerifier } from "./solana.js";
 import type { EventOutcome, SessionStore } from "./session.js";
 import { catalogTrackFromSpotify, type SpotifySearchClient } from "./spotify.js";
@@ -53,6 +56,16 @@ const JoinSchema = z
     eventId,
     participantId,
     mood: z.enum(MOODS as [Mood, ...Mood[]]),
+    genre: z.string().regex(GENRE_PATTERN).optional(),
+  })
+  .strict();
+const RetractSchema = z
+  .object({
+    type: z.literal("vote.retract"),
+    sessionId,
+    trackId: z.string().max(64),
+    eventId,
+    participantId,
   })
   .strict();
 const TapSchema = z
@@ -64,7 +77,7 @@ const TapSchema = z
     count: z.number().int().min(1).max(MAX_TAPS_PER_BATCH),
   })
   .strict();
-const EventSchema = z.discriminatedUnion("type", [VoteSchema, JoinSchema, TapSchema]);
+const EventSchema = z.discriminatedUnion("type", [VoteSchema, RetractSchema, JoinSchema, TapSchema]);
 const VisualSchema = z
   .object({
     theme: z.enum(THEME_ALLOWLIST as [VisualTheme, ...VisualTheme[]]),
@@ -153,7 +166,9 @@ export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute 
 
     const outcome = await (event.type === "vote.submit"
       ? session.submitVote(event)
-      : event.type === "session.join"
+      : event.type === "vote.retract"
+        ? session.retractVote(event)
+        : event.type === "session.join"
         ? session.recordMood(event)
         : session.recordTaps(event));
 
@@ -370,6 +385,22 @@ export function createApp(options: AppOptions) {
     };
   app.post("/api/sessions/:id/votes", eventRoute("vote.submit"));
   app.post("/api/sessions/:id/moods", eventRoute("session.join"));
+  app.post("/api/sessions/:id/votes/retract", eventRoute("vote.retract"));
+
+  // An attendee's own state (their votes, mood, genre). The participant id is a random per-device
+  // id, so this only ever shows a device its own choices.
+  app.get("/api/sessions/:id/participants/:participantId", (req, res) => {
+    const session = sessions.get(req.params.id);
+    if (!session) {
+      res.status(404).json({ error: "Unknown session" });
+      return;
+    }
+    if (!participantId.safeParse(req.params.participantId).success) {
+      res.status(400).json({ error: "Invalid participant" });
+      return;
+    }
+    res.set("cache-control", "no-store").json(session.participantState(req.params.participantId));
+  });
   app.post("/api/sessions/:id/taps", eventRoute("tap.batch"));
 
   // --- Host actions: Auth0 access token with a host permission (Doc 06), or the dev key locally ---
@@ -671,7 +702,57 @@ export function createApp(options: AppOptions) {
   });
 
   // --- AI DJ (Doc 04): Gemini proposes, server validates, host approves/rejects ---
-  const TargetSchema = z.object({ hostTarget: z.enum(HOST_TARGETS as [HostTarget, ...HostTarget[]]) }).strict();
+  // Shared by recommendations and Find / Surprise me: genre + popularity (all-time Spotify streams).
+  const streams = z.number().int().min(0).max(SONG_REQUEST_LIMITS.maxStreams).nullable();
+  const filters = {
+    genre: z.string().trim().toLowerCase().regex(GENRE_PATTERN).nullable(),
+    minStreams: streams,
+    maxStreams: streams,
+  };
+  const plainText = (max: number) =>
+    z
+      .string()
+      .trim()
+      .max(max)
+      // Plain text only: no control characters, links or markup.
+      .refine((s) => !/[\u0000-\u0008\u000b-\u001f<>]|https?:\/\//i.test(s), "plain text only");
+  const rangeOk = (r: { minStreams: number | null; maxStreams: number | null }) =>
+    r.minStreams == null || r.maxStreams == null || r.minStreams <= r.maxStreams;
+  const RequestSchema = z
+    .object({ prompt: plainText(SONG_REQUEST_LIMITS.promptMax), ...filters })
+    .strict()
+    .refine(rangeOk, "minStreams must be ≤ maxStreams");
+  const TargetSchema = z
+    .object({ hostTarget: z.enum(HOST_TARGETS as [HostTarget, ...HostTarget[]]), request: RequestSchema.optional() })
+    .strict();
+
+  // Songs from outside the library: Find (lyrics / a description) or Surprise me (random in a
+  // genre + popularity range, favoring popular songs). Gemini names them; Spotify confirms them.
+  const FindSchema = z
+    .object({ text: plainText(300).optional(), surprise: z.boolean().optional(), ...filters })
+    .strict()
+    .refine(rangeOk, "minStreams must be ≤ maxStreams")
+    .refine((f) => f.surprise || (f.text ?? "").length >= 2, "Type at least 2 characters");
+  app.post("/api/host/sessions/:id/find-songs", ...requireHost, hostSession, async (req, res) => {
+    const parsed = FindSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Invalid request" });
+      return;
+    }
+    const library = sessions.get(req.params.id)!.catalogTracks();
+    try {
+      res.json(
+        await findSongs(trackEstimator, spotifySearch, {
+          ...parsed.data,
+          // A surprise should be something new: skip what's already in the library.
+          exclude: parsed.data.surprise ? library.map((t) => `${t.title} — ${t.artist}`) : [],
+        }),
+      );
+    } catch (err) {
+      log({ kind: "ai.find_songs", outcome: "failed", message: (err as Error).message });
+      res.status(502).json({ error: `Gemini couldn't answer: ${(err as Error).message}` });
+    }
+  });
 
   app.get("/api/host/sessions/:id/recommendations", ...requireHost, hostSession, (req, res) => {
     const svc = recommenders.get(req.params.id);
@@ -688,7 +769,7 @@ export function createApp(options: AppOptions) {
       res.status(400).json({ error: "Invalid recommendation request" });
       return;
     }
-    const result = await svc.recommend(parsed.data.hostTarget);
+    const result = await svc.recommend(parsed.data.hostTarget, parsed.data.request ?? null);
     if ("busy" in result) {
       res.status(409).json({ error: "A recommendation is already being generated" });
       return;
