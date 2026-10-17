@@ -11,7 +11,8 @@
     "dev:server": "npm run dev --workspace=@crowdpulse/server",
     "build": "npm run build --workspace=@crowdpulse/shared && npm run build --workspace=@crowdpulse/web && npm run build --workspace=@crowdpulse/server",
     "start": "NODE_ENV=production npm start --workspace=@crowdpulse/server",
-    "test": "npm test --workspace=@crowdpulse/server && npm test --workspace=@crowdpulse/web"
+    "test": "npm test --workspace=@crowdpulse/server && npm test --workspace=@crowdpulse/web",
+    "load-test": "npm run load-test --workspace=@crowdpulse/server"
   },
   "devDependencies": {
     "concurrently": "^10.0.6"

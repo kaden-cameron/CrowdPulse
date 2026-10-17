@@ -7,7 +7,8 @@
     "start": "tsx src/index.ts",
     "build": "tsc --noEmit",
     "test": "vitest run",
-    "eval": "tsx scripts/evaluate.ts"
+    "eval": "tsx scripts/evaluate.ts",
+    "load-test": "node scripts/load-test.mjs"
   },
   "dependencies": {
     "@crowdpulse/shared": "*",

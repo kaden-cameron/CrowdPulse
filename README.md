@@ -2,7 +2,7 @@
 
 Live crowd energy for the stage — SwampHacks build following the CrowdPulse playbook.
 
-**Stage 00–01 status:** attendee join/vote UI with hype taps, shared stage visualizer with QR join, host controls (theme/intensity override, play next), and a validated WebSocket event → `session.state` loop with tests.
+**Stage 00–04 status:** attendee/stage/host UI, hardened realtime loop (Docs 01–02), TigerData persistence (Doc 03), and Gemini AI DJ with host-approved recommendations (Doc 04). See `docs/02_BACKEND_ACCEPTANCE.md` for the PDF 02 BE map.
 
 ## Quick start
 
@@ -81,7 +81,7 @@ packages/shared  Event contract + demo catalog
 
 All client events (`vote.submit`, `session.join`, `tap.batch`) go through one strict schema check (unknown fields rejected, UUID `eventId`, anonymous `participantId`) whether they arrive over WebSocket or HTTP. The server deduplicates by `eventId`, allows one vote per participant per track, rate-limits per participant and IP, only serves known sessions, and broadcasts `session.state` (with `epoch`/`version` so clients ignore stale snapshots). Clients keep unacknowledged events in an outbox and resend them on reconnect; dedupe makes that safe.
 
-Host routes (`POST /api/host/sessions/:id/visual`, `/advance`) require an `x-host-key` header until Auth0 replaces it (Doc 06). The stage freezes and dims when disconnected rather than animating stale data. Gemini, Auth0, Solana, TigerData, and Vultr come in later playbook stages — voting still works without them.
+Host routes (`POST /api/host/sessions/:id/visual`, `/advance`, recommendation approve/reject) require an `x-host-key` header until Auth0 replaces it (Doc 06). Events persist to TigerData before apply when `DATABASE_URL` is set. The stage freezes and dims when disconnected. Auth0, Solana, and Vultr remain later docs.
 
 ## Scripts
 
@@ -89,6 +89,7 @@ Host routes (`POST /api/host/sessions/:id/visual`, `/advance`) require an `x-hos
 |---------|---------|
 | `npm run dev` | Server + frontend |
 | `npm test` | Server (supertest) + web (vitest/jsdom) tests |
+| `npm run load-test` | Concurrent votes → `docs/02_LOAD_TEST_RESULTS.json` |
 | `npm run dev:web` | Frontend only |
 | `npm run dev:server` | Realtime API only |
 | `npm run build` | Typecheck / build workspaces |

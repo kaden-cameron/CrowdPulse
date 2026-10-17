@@ -9,9 +9,9 @@ Derived from the master roadmap. Core loop to protect:
 - [x] Mobile-friendly attendee page with session join, mood, track voting
 - [x] Shared stage screen with queue, energy, visual-state changes
 - [x] Host dashboard shell (metrics live; AI approve later)
-- [x] Backend event validation + realtime broadcast (minimal for FE loop)
-- [ ] TigerData / PostgreSQL persistence
-- [ ] Real Gemini API recommendation
+- [x] Backend event validation + realtime broadcast (PDF 02 / Doc 01)
+- [x] TigerData / PostgreSQL persistence (Doc 03)
+- [x] Real Gemini API recommendation (Doc 04)
 - [ ] Solana boost / Auth0 / Vultr (as time allows)
 
 ## Exit criterion — build order step 1
