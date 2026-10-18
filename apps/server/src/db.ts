@@ -37,7 +37,8 @@ export type PersistedEventType =
   | "highlight"
   | "playlist_save"
   | "playlist_delete"
-  | "crowd_reset";
+  | "crowd_reset"
+  | "stage_view";
 
 export type PersistResult = "stored" | "duplicate";
 

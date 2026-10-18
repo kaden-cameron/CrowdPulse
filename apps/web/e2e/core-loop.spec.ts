@@ -331,3 +331,20 @@ test("The host can reset the crowd mood (votes stay)", async ({ browser, request
   // The phone stays on the vote screen.
   await expect(phone.getByRole("heading", { name: "Shape the queue" })).toBeVisible();
 });
+
+test("The host switches the projector to the vote count", async ({ browser, request }) => {
+  const host = { "x-host-key": HOST_KEY };
+  for (const [t, p] of [["track_05", "v1"], ["track_05", "v2"], ["track_02", "v3"]]) {
+    await request.post("/api/sessions/demo/votes", { data: { sessionId: "demo", trackId: t, eventId: randomUUID(), participantId: `participant_${p}xxxx` } });
+  }
+  const stage = await openStage(browser);
+  await expect(stage.locator(".stage-queue").getByRole("heading", { name: "Up next" })).toBeVisible();
+  await request.post("/api/host/sessions/demo/stage-view", { headers: host, data: { panel: "votes", auto: false } });
+  const votes = stage.locator(".stage-votes");
+  await expect(votes.getByRole("heading", { name: "Vote count" })).toBeVisible();
+  await expect(votes.locator(".vote-bars li").first()).toContainText("Voltage Swamp");
+  await expect(votes.locator(".vote-bars li").first()).toContainText("2");
+  await stage.screenshot({ path: evidence("stage-vote-count.png") });
+  await request.post("/api/host/sessions/demo/stage-view", { headers: host, data: { panel: "queue", auto: false } });
+  await expect(stage.locator(".stage-queue").getByRole("heading", { name: "Up next" })).toBeVisible();
+});

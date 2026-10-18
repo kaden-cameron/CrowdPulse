@@ -14,6 +14,7 @@ import type {
   HighlightPart,
   HighlightSettings,
   PlaylistSummary,
+  StageView,
   VisualState,
 } from "@crowdpulse/shared";
 
@@ -85,6 +86,10 @@ export const hostSaveHighlight = (sessionId: string, auth: HostHeaders, trackId:
 
 export const hostSetHighlights = (sessionId: string, auth: HostHeaders, settings: HighlightSettings) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/highlights`, auth, settings);
+
+/** What the projector shows where the queue is: the queue or the vote count, or both in turn (auto). */
+export const hostSetStageView = (sessionId: string, auth: HostHeaders, view: StageView) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/stage-view`, auth, view);
 
 export const hostSeek = (sessionId: string, auth: HostHeaders, positionMs: number) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/seek`, auth, { positionMs: Math.round(positionMs) });

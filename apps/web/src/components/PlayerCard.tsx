@@ -147,8 +147,11 @@ export function PlayerCard({
             {pb?.mode === "auto" ? "Auto play" : "Host picks"}
             {playedBy && ` · ${playedBy}`}
           </p>
-          <p className="player-title">{np ? np.title : "Nothing playing"}</p>
-          <p className="host-sub">
+          {/* Long titles stop at two lines (full title on hover) so the window doesn't balloon. */}
+          <p className={`player-title clamp-2${np && np.title.length > 40 ? " long" : ""}`} title={np?.title}>
+            {np ? np.title : "Nothing playing"}
+          </p>
+          <p className="host-sub clamp-2" title={np?.artist}>
             {np ? `${np.artist} · ${STATUS_TEXT[pb?.status ?? "idle"]}` : "Pick a song, or switch on auto play."}
           </p>
           {/* Always shown (empty when nothing's playing) so the window doesn't jump around. */}

@@ -39,14 +39,17 @@ describe("PlayerCard (host page Now playing)", () => {
     expect(screen.getByText("Song One")).toBeInTheDocument();
     expect(screen.getByText(/0:3\d \/ 3:00/)).toBeInTheDocument();
     expect(screen.getByText("● Player online")).toBeInTheDocument();
-    expect(net.mock.calls.some(([u]) => String(u).startsWith("/api/spotify/cover/"))).toBe(false);
+    // It still asks for the big version (the lookup here has none, so the saved cover stays).
+    await waitFor(() => expect(net.mock.calls.some(([u]) => String(u).startsWith("/api/spotify/cover/"))).toBe(true));
+    expect(screen.getByRole("img", { name: "Album cover for Song One" })).toHaveAttribute("src", COVER);
   });
 
   it("looks up the cover for older songs that don't have one saved", async () => {
+    const URI = "spotify:track:0nj9Bq5sHDiTxSHunhgkFb"; // (a song the earlier test hasn't looked up)
     const net = mockNet(COVER);
     render(<PlayerCard {...props} state={stateWith({ spotifyUri: URI })} />);
     await waitFor(() => expect(screen.getByRole("img", { name: "Album cover for Song One" })).toHaveAttribute("src", COVER));
-    expect(net).toHaveBeenCalledWith("/api/spotify/cover/4uLU6hMCjMI75M1A2tKUQC");
+    expect(net).toHaveBeenCalledWith("/api/spotify/cover/0nj9Bq5sHDiTxSHunhgkFb");
   });
 
   it("shows a placeholder when there's no cover", () => {
@@ -92,5 +95,12 @@ describe("PlayerCard (host page Now playing)", () => {
     render(<PlayerCard {...props} state={stateWith({}, on)} />);
     expect(screen.getByRole("combobox", { name: "Clip length" })).toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Which part of each song" })).not.toBeInTheDocument();
+  });
+
+  it("swaps a saved small cover for the big one, so it isn't blurry", async () => {
+    const BIG = "https://i.scdn.co/image/ab67616d0000b273e2a0a166493a2bde5480a420";
+    mockNet(BIG);
+    render(<PlayerCard {...props} state={stateWith({ spotifyUri: "spotify:track:2MymczAULhpJYbgyXwwiyw", imageUrl: COVER })} />);
+    await waitFor(() => expect(screen.getByRole("img", { name: "Album cover for Song One" })).toHaveAttribute("src", BIG));
   });
 });

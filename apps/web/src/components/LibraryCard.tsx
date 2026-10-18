@@ -236,6 +236,13 @@ export function LibraryCard({
       setMsg({ kind: "accepted", text: `Removed “${t.title}”.` });
     });
 
+  /** ▶ on a library song: play it now. */
+  const playLibrary = (t: Track) =>
+    withBusy(`playlib:${t.id}`, async () => {
+      onState((await hostPlayTrack(sessionCode, await getHeaders(), t.id)).state);
+      setMsg({ kind: "accepted", text: `Playing “${t.title}” now.` });
+    });
+
   const queueSong = (t: Track) =>
     withBusy(`queue:${t.id}`, () => setQueue([...hostQueue, t.id], `“${t.title}” is #${hostQueue.length + 1} in the queue.`));
 
@@ -414,6 +421,16 @@ export function LibraryCard({
               </span>
               {/* Already queued? Its first spot shows; "+ Queue" adds it again. */}
               {pos >= 0 && <span className="queued-at">#{pos + 1}</span>}
+              <button
+                type="button"
+                className="btn compact play-now"
+                disabled={!ready || busy !== null || t.id === playingId}
+                onClick={() => void playLibrary(t)}
+                aria-label={`Play ${t.title} now`}
+                title="Play now"
+              >
+                {busy === `playlib:${t.id}` ? "…" : "▶"}
+              </button>
               <button
                 type="button"
                 className="btn compact"

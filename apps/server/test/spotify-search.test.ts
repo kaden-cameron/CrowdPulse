@@ -55,12 +55,13 @@ describe("Spotify search helpers", () => {
 describe("album covers", () => {
   const COVER = "https://i.scdn.co/image/ab67616d00001e02e2a0a166493a2bde5480a420";
 
-  it("picks the ~300px image and only accepts Spotify's image CDN", async () => {
+  it("picks the sharp ~640px image (not a huge one) and only accepts Spotify's image CDN", async () => {
     const { pickCover } = await import("@crowdpulse/shared");
     expect(
       pickCover([
-        { url: "https://i.scdn.co/image/big", width: 640 },
-        { url: COVER, width: 300 },
+        { url: "https://i.scdn.co/image/huge", width: 1200 },
+        { url: COVER, width: 640 },
+        { url: "https://i.scdn.co/image/mid", width: 300 },
         { url: "https://i.scdn.co/image/small", width: 64 },
       ]),
     ).toBe(COVER);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import QRCode from "qrcode";
+import { DEFAULT_STAGE_VIEW, STAGE_ROTATE_MS, type SessionState, type StagePanel } from "@crowdpulse/shared";
 import { MenuBar } from "../components/MenuBar";
 import { StageCanvas } from "../components/StageCanvas";
 import { Window } from "../components/Window";
@@ -39,6 +40,16 @@ export function StagePage() {
   const cover = useSpotifyCover(playingTrack?.spotifyUri ?? state?.nowPlaying?.spotifyUri, playingTrack?.imageUrl ?? state?.nowPlaying?.imageUrl);
   // The host turned crowd energy off: show the calm layout without the visuals.
   const minimal = state?.appearance.showEnergy === false;
+  // Where the queue sits: the queue, the vote count, or both in turn (the host chooses).
+  const view = state?.stageView ?? DEFAULT_STAGE_VIEW;
+  const [clock, setClock] = useState(Date.now());
+  useEffect(() => {
+    if (!view.auto) return;
+    const t = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [view.auto]);
+  // Auto: every projector uses the clock, so several screens switch together.
+  const panel: StagePanel = view.auto ? (Math.floor(clock / STAGE_ROTATE_MS) % 2 === 0 ? "queue" : "votes") : view.panel;
 
   return (
     <main className="stage-page desktop" data-theme={visual.theme}>
@@ -61,8 +72,14 @@ export function StagePage() {
                       ●
                     </span>
                   </p>
-                  <h1 className="stage-song-title">{state?.nowPlaying?.title ?? "Waiting for the first pick"}</h1>
-                  {state?.nowPlaying && <p className="stage-song-artist">{state.nowPlaying.artist}</p>}
+                  <h1 className={`stage-song-title clamp-2${(state?.nowPlaying?.title.length ?? 0) > 40 ? " long" : ""}`} title={state?.nowPlaying?.title}>
+                    {state?.nowPlaying?.title ?? "Waiting for the first pick"}
+                  </h1>
+                  {state?.nowPlaying && (
+                    <p className="stage-song-artist clamp-2" title={state.nowPlaying.artist}>
+                      {state.nowPlaying.artist}
+                    </p>
+                  )}
                   <SongProgress state={state} />
                 </div>
               </section>
@@ -97,12 +114,19 @@ export function StagePage() {
               </p>
               <div className="stage-now">
                 {cover && <img className="stage-cover" src={cover} alt="" width={72} height={72} />}
-                <p className="now-playing-title">
-                  {state?.nowPlaying ? `${state.nowPlaying.artist} – ${state.nowPlaying.title}` : "Waiting for the first pick"}
-                </p>
+                <div className="now-playing-text">
+                  <p className={`now-playing-title clamp-2${(state?.nowPlaying?.title.length ?? 0) > 50 ? " long" : ""}`} title={state?.nowPlaying?.title}>
+                    {state?.nowPlaying ? state.nowPlaying.title : "Waiting for the first pick"}
+                  </p>
+                  {state?.nowPlaying && (
+                    <p className="now-playing-artist clamp-1" title={state.nowPlaying.artist}>
+                      {state.nowPlaying.artist}
+                    </p>
+                  )}
+                </div>
               </div>
               <SongProgress state={state} />
-              <p className="latest-event" aria-live="polite">
+              <p className="latest-event clamp-1" aria-live="polite">
                 {state?.latestEvent?.message ?? "Session warming up"}
               </p>
             </div>
@@ -138,38 +162,42 @@ export function StagePage() {
             )}
           </Window>
 
-          <Window title="Up next" className="stage-queue" bodyClassName="panel">
-            <ol>
-              {(state?.queue ?? []).slice(0, STAGE_QUEUE_SIZE).map((item, i) => (
-                <li key={`${item.trackId}-${i}`}>
-                  <span className="q-rank">{i + 1}</span>
-                  <span>
-                    <strong>{item.title}</strong>
-                    <em>
-                      {item.artist} · {item.votes}
-                      {item.boosts > 0 && ` · ⚡${item.boosts}`}
-                    </em>
-                  </span>
-                </li>
-              ))}
-              {/* Nothing queued: what auto play would pick next on its own. */}
-              {!state?.queue.length &&
-                (state?.autoNext ?? []).slice(0, STAGE_QUEUE_SIZE).map((item, i) => (
-                  <li key={item.trackId} className="queue-auto">
+          {panel === "votes" ? (
+            <VoteCount key="votes" state={state} />
+          ) : (
+            <Window key="queue" title="Up next" className="stage-queue stage-panel" bodyClassName="panel">
+              <ol>
+                {(state?.queue ?? []).slice(0, STAGE_QUEUE_SIZE).map((item, i) => (
+                  <li key={`${item.trackId}-${i}`}>
                     <span className="q-rank">{i + 1}</span>
                     <span>
                       <strong>{item.title}</strong>
-                      <em>{item.artist}</em>
+                      <em>
+                        {item.artist} · {item.votes}
+                        {item.boosts > 0 && ` · ⚡${item.boosts}`}
+                      </em>
                     </span>
-                    <span className="auto-tag">auto</span>
                   </li>
                 ))}
-              {!state?.queue.length && !state?.autoNext?.length && <li className="empty-queue">Votes will fill the queue</li>}
-            </ol>
-            {(state?.queue.length ?? 0) > STAGE_QUEUE_SIZE && (
-              <p className="queue-more">+{state!.queue.length - STAGE_QUEUE_SIZE} more in the queue</p>
-            )}
-          </Window>
+                {/* Nothing queued: what auto play would pick next on its own. */}
+                {!state?.queue.length &&
+                  (state?.autoNext ?? []).slice(0, STAGE_QUEUE_SIZE).map((item, i) => (
+                    <li key={item.trackId} className="queue-auto">
+                      <span className="q-rank">{i + 1}</span>
+                      <span>
+                        <strong>{item.title}</strong>
+                        <em>{item.artist}</em>
+                      </span>
+                      <span className="auto-tag">auto</span>
+                    </li>
+                  ))}
+                {!state?.queue.length && !state?.autoNext?.length && <li className="empty-queue">Votes will fill the queue</li>}
+              </ol>
+              {(state?.queue.length ?? 0) > STAGE_QUEUE_SIZE && (
+                <p className="queue-more">+{state!.queue.length - STAGE_QUEUE_SIZE} more in the queue</p>
+              )}
+            </Window>
+          )}
         </div>
       </div>
 
@@ -179,6 +207,50 @@ export function StagePage() {
         </div>
       )}
     </main>
+  );
+}
+
+/**
+ * The vote count: the songs with the most votes right now, as bars, under the song that plays next.
+ * Shown instead of the queue when the host picks it (or in turn with it).
+ */
+function VoteCount({ state }: { state: SessionState | null }) {
+  const ranked = (state?.tracks ?? [])
+    .filter((t) => t.status !== "playing" && t.votes + t.boosts > 0)
+    .sort((a, b) => b.votes - a.votes || b.boosts - a.boosts)
+    .slice(0, STAGE_QUEUE_SIZE + 1);
+  const max = Math.max(1, ...ranked.map((t) => t.votes));
+  const next = state?.queue[0] ?? state?.autoNext?.[0];
+  const total = (state?.tracks ?? []).reduce((n, t) => n + t.votes, 0);
+  return (
+    <Window title="Vote count" className="stage-queue stage-votes stage-panel" bodyClassName="panel">
+      {next && (
+        <p className="votes-next clamp-1">
+          <span>Next up</span> <strong>{next.title}</strong>
+        </p>
+      )}
+      <ol className="vote-bars">
+        {ranked.map((t, i) => (
+          <li key={t.id}>
+            <span className="q-rank">{i + 1}</span>
+            <span className="vote-bar-body">
+              <span className="vote-bar-label clamp-1">
+                <strong>{t.title}</strong> <em>{t.artist}</em>
+              </span>
+              <span className="vote-bar-track" aria-hidden>
+                <span className="vote-bar-fill" style={{ width: `${(t.votes / max) * 100}%` }} />
+              </span>
+            </span>
+            <span className="vote-bar-count" aria-label={`${t.votes} votes`}>
+              {t.votes}
+              {t.boosts > 0 && <small> ⚡{t.boosts}</small>}
+            </span>
+          </li>
+        ))}
+        {!ranked.length && <li className="empty-queue">No votes yet — scan the code and pick the next song!</li>}
+      </ol>
+      {total > 0 && <p className="queue-more">{total} vote{total === 1 ? "" : "s"} so far</p>}
+    </Window>
   );
 }
 

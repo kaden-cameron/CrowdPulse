@@ -20,6 +20,8 @@ import {
   MOODS,
   APPEARANCE_PRESETS,
   DEFAULT_APPEARANCE,
+  DEFAULT_STAGE_VIEW,
+  type StageView,
   type Appearance,
   type LatestEvent,
   type PlaybackMode,
@@ -161,6 +163,7 @@ export class SessionStore {
   /** The host's saved playlists (survive new runs and restarts). */
   private playlists = new Map<string, Playlist>();
   private appearance: Appearance = DEFAULT_APPEARANCE;
+  private stageView: StageView = { ...DEFAULT_STAGE_VIEW };
   private playback: Omit<PlaybackState, "mode" | "repeat" | "highlights" | "playerOnline"> = {
     status: "idle",
     trackId: null,
@@ -248,6 +251,7 @@ export class SessionStore {
       visualMode: this.hostVisual ? "host" : "auto",
       playback: { ...this.playback, mode: this.playbackMode, repeat: this.repeat, highlights: { ...this.highlightSettings }, playerOnline: this.playerOnline() },
       appearance: { ...this.appearance },
+      stageView: { ...this.stageView },
       crowdQuest: {
         label: `Quest ${this.questLevel}: send ${this.questGoal()} hype taps`,
         progress: this.questProgress,
@@ -601,6 +605,21 @@ export class SessionStore {
       if (saved) return saved;
       this.applyCrowdReset();
       this.change({ type: "crowd.reset", message: "Crowd mood reset — waiting for fresh vibes" });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /** Host action: what the projector shows where the queue is (and whether it switches by itself). */
+  setStageView(view: StageView): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const next: StageView = { panel: view.panel === "votes" ? "votes" : "queue", auto: view.auto === true };
+      const saved = await this.persistHostAction("stage_view", { ...next });
+      if (saved) return saved;
+      this.stageView = next;
+      this.change({
+        type: "stage.view",
+        message: next.auto ? "Projector switches between the queue and the vote count" : next.panel === "votes" ? "Projector shows the vote count" : "Projector shows the queue",
+      });
       return { status: "accepted", state: this.getState() };
     });
   }
@@ -1107,6 +1126,9 @@ export class SessionStore {
           if (pl && typeof pl.id === "string" && typeof pl.name === "string" && Array.isArray(pl.tracks)) this.playlists.set(pl.id, pl);
           break;
         }
+        case "stage_view":
+          if (meta.panel === "queue" || meta.panel === "votes") this.stageView = { panel: meta.panel, auto: meta.auto === true };
+          break;
         case "crowd_reset":
           this.applyCrowdReset();
           break;
@@ -1280,7 +1302,8 @@ export class SessionStore {
       | "highlight"
       | "playlist_save"
       | "playlist_delete"
-      | "crowd_reset",
+      | "crowd_reset"
+      | "stage_view",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {

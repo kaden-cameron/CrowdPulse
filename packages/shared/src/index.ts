@@ -99,6 +99,8 @@ export interface SessionState {
   visualState: VisualState;
   visualMode: VisualMode;
   playback: PlaybackState;
+  /** What the projector shows where the queue is: the queue, the vote count, or both in turn. */
+  stageView: StageView;
   /** Session look (color preset + light/dark), set by the host. */
   appearance: Appearance;
   crowdQuest: {
@@ -499,10 +501,12 @@ export interface LibraryTrackInput {
 /** Album covers are only accepted from Spotify's image CDN (no arbitrary URLs on the big screen). */
 export const SPOTIFY_IMAGE_URL = /^https:\/\/i\.scdn\.co\/image\/[A-Za-z0-9]{1,64}$/;
 
-/** From a Spotify album's images (largest first): the ~300px one, good for a cover display. */
+/** From a Spotify album's images (largest first): the big (~640 px) one, sharp at cover-display sizes. */
 export function pickCover(images: { url: string; width?: number | null }[] | undefined): string | null {
   if (!images?.length) return null;
-  const url = (images.find((i) => (i.width ?? 0) > 0 && (i.width ?? 0) <= 320) ?? images[0]).url;
+  // The largest Spotify offers (640 px): covers are shown big, and on sharp screens a 300 px one
+  // looks blurry. Spotify lists images largest first; prefer one ≤ 700 px wide.
+  const url = (images.find((i) => (i.width ?? 0) > 0 && (i.width ?? 0) <= 700) ?? images[0]).url;
   return SPOTIFY_IMAGE_URL.test(url) ? url : null;
 }
 
@@ -573,3 +577,14 @@ export interface PlaylistSummary {
   count: number;
   updatedAt: string;
 }
+
+// --- Projector panel: the queue, or a vote count of the songs coming up (or both in turn) ---
+export type StagePanel = "queue" | "votes";
+export interface StageView {
+  panel: StagePanel;
+  /** Switch between the queue and the vote count on its own (every STAGE_ROTATE_MS). */
+  auto: boolean;
+}
+export const DEFAULT_STAGE_VIEW: StageView = { panel: "queue", auto: false };
+/** How long each panel shows when auto-switching. Every projector uses the clock, so they stay in sync. */
+export const STAGE_ROTATE_MS = 12_000;

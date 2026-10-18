@@ -43,6 +43,30 @@ describe("QueueCard", () => {
   });
 });
 
+describe("QueueCard ▶", () => {
+  it("plays any queued (or auto) song now; not the one already playing", async () => {
+    const bodies = mockNet();
+    const playing = { ...state, nowPlaying: { trackId: "c" } } as unknown as SessionState;
+    render(<QueueCard sessionCode="demo" state={playing} ready getHeaders={async () => ({})} onState={() => {}} />);
+    expect(screen.getByRole("button", { name: "Play Song c now" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Play Song b now" }));
+    await waitFor(() => expect(bodies.at(-1)).toEqual({ trackId: "b" }));
+  });
+});
+
+describe("QueueCard projector view", () => {
+  it("switches the projector between the queue and the vote count, or to auto", async () => {
+    const bodies = mockNet();
+    const st = { ...state, stageView: { panel: "queue", auto: false } } as unknown as SessionState;
+    render(<QueueCard sessionCode="demo" state={st} ready getHeaders={async () => ({})} onState={() => {}} />);
+    expect(screen.getByRole("button", { name: "Queue" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Votes" }));
+    await waitFor(() => expect(bodies.at(-1)).toEqual({ panel: "votes", auto: false }));
+    await userEvent.click(screen.getByRole("button", { name: /Auto/ }));
+    await waitFor(() => expect(bodies.at(-1)).toEqual({ panel: "queue", auto: true }));
+  });
+});
+
 describe("QueueCard auto entries", () => {
   it("with nothing queued, shows what auto play would pick next, tagged 'auto'", () => {
     const empty = { queue: [], autoNext: [q("x", false), q("y", false)] } as unknown as SessionState;

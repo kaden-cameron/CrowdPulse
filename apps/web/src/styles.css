@@ -3279,3 +3279,154 @@ button.menubar-tab.menubar-action {
   margin: -0.35rem -0.35rem 0 0;
   padding: 0.1rem 0.45rem;
 }
+
+/* ▶ Play now on library and queue rows. */
+.btn.play-now {
+  flex: none;
+  min-width: 2.2rem;
+  font-family: var(--font-ui);
+}
+
+/* Long song names: at most two lines, then "…" (the full name shows on hover). Very long ones
+   also get slightly smaller type so more of the name fits. */
+.clamp-2 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.player-title.long {
+  font-size: clamp(1.25rem, 2.6vw, 1.75rem);
+  line-height: 1.15;
+}
+
+.stage-song-title.long {
+  font-size: clamp(1.5rem, 2.6vw, 3rem);
+}
+
+.now-playing-title.long {
+  font-size: clamp(1.1rem, 1.6vw, 1.6rem);
+}
+
+.clamp-1 {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.now-playing-text {
+  min-width: 0;
+}
+
+.now-playing-artist {
+  margin: 0.15rem 0 0;
+  font-size: clamp(14px, 1.15vw, 19px);
+  color: var(--ink-2);
+}
+
+/* ---------- Projector: Vote count (shown instead of / in turn with the queue) ---------- */
+.stage-panel {
+  animation: panel-in 450ms ease;
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stage-panel {
+    animation: none;
+  }
+}
+
+.votes-next {
+  margin: 0 0 0.5rem;
+  font-size: clamp(15px, 1.2vw, 20px);
+}
+
+.votes-next span {
+  margin-right: 0.35rem;
+  font-family: var(--font-caps);
+  font-size: 0.65em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.vote-bars {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vote-bars li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0.7rem;
+  align-items: center;
+  font-size: clamp(15px, 1.2vw, 19px);
+}
+
+.vote-bar-body {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.vote-bar-label em {
+  font-style: normal;
+  font-size: 0.82em;
+  color: var(--muted);
+}
+
+.vote-bar-track {
+  height: 12px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.vote-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--pool);
+  transition: width 600ms ease;
+}
+
+.vote-bar-count {
+  min-width: 2.2rem;
+  font-family: var(--font-num);
+  font-size: clamp(26px, 2.2vw, 40px);
+  line-height: 1;
+  text-align: right;
+}
+
+.vote-bar-count small {
+  font-size: 0.5em;
+  color: var(--ink-2);
+}
+
+/* Queue window: what the projector shows (Queue / Votes / Auto). */
+.stage-view-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  margin: 0.2rem 0 0.4rem;
+}
+
+.stage-view-row .metric-label {
+  margin-right: 0.2rem;
+}

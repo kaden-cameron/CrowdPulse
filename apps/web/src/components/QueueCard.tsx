@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { SessionState } from "@crowdpulse/shared";
-import { hostSetQueue } from "../lib/host";
+import { DEFAULT_STAGE_VIEW, type QueueItem, type SessionState, type StageView } from "@crowdpulse/shared";
+import { hostPlayTrack, hostSetQueue, hostSetStageView } from "../lib/host";
 
 // Host-page window: the queue. The host's picks play first, in the host's order (reorder, remove,
 // clear); after them come the crowd's top-voted songs. Add picks with "+ Queue" or Shuffle in Songs.
@@ -24,6 +24,18 @@ export function QueueCard({
   const picks = queue.filter((q) => q.hostPick);
   const voted = queue.filter((q) => !q.hostPick);
   const autoNext = state?.autoNext ?? [];
+  const view = state?.stageView ?? DEFAULT_STAGE_VIEW;
+  async function setView(next: StageView) {
+    setBusy(true);
+    setError(null);
+    try {
+      onState((await hostSetStageView(sessionCode, await getHeaders(), next)).state);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   const ids = picks.map((q) => q.trackId);
 
   async function save(next: string[]) {
@@ -37,6 +49,31 @@ export function QueueCard({
       setBusy(false);
     }
   }
+  /** ▶ Play a queued song now (a host pick leaves the queue as it starts). */
+  async function play(q: QueueItem) {
+    setBusy(true);
+    setError(null);
+    try {
+      onState((await hostPlayTrack(sessionCode, await getHeaders(), q.trackId)).state);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const playButton = (q: QueueItem) => (
+    <button
+      type="button"
+      className="btn compact play-now"
+      disabled={!ready || busy || state?.nowPlaying?.trackId === q.trackId}
+      onClick={() => void play(q)}
+      aria-label={`Play ${q.title} now`}
+      title="Play now"
+    >
+      ▶
+    </button>
+  );
+
   const move = (i: number, by: -1 | 1) => {
     const next = [...ids];
     [next[i], next[i + by]] = [next[i + by], next[i]];
@@ -49,6 +86,32 @@ export function QueueCard({
         <h2>Queue</h2>
         <button type="button" className="btn ghost compact" disabled={!ready || busy || !picks.length} onClick={() => void save([])}>
           Clear queue
+        </button>
+      </div>
+      {/* What the projector shows here: the queue or the vote count — or both, switching on its own. */}
+      <div className="stage-view-row" role="group" aria-label="Projector shows">
+        <span className="metric-label">Projector</span>
+        {(["queue", "votes"] as const).map((p) => (
+          <button
+            key={p}
+            type="button"
+            className={`btn compact${!view.auto && view.panel === p ? " primary" : ""}`}
+            aria-pressed={!view.auto && view.panel === p}
+            disabled={!ready || busy}
+            onClick={() => void setView({ panel: p, auto: false })}
+          >
+            {p === "queue" ? "Queue" : "Votes"}
+          </button>
+        ))}
+        <button
+          type="button"
+          className={`btn compact${view.auto ? " primary" : ""}`}
+          aria-pressed={view.auto}
+          disabled={!ready || busy}
+          onClick={() => void setView({ ...view, auto: !view.auto })}
+          title="Switch between the queue and the vote count every 12 seconds"
+        >
+          ⟳ Auto
         </button>
       </div>
       <p className="host-sub">
@@ -68,6 +131,7 @@ export function QueueCard({
               </em>
             </span>
             <span className="queue-actions">
+              {playButton(q)}
               <button type="button" className="btn ghost compact" disabled={!ready || busy || i === 0} onClick={() => move(i, -1)} aria-label={`Move ${q.title} up`}>
                 ↑
               </button>
@@ -102,6 +166,7 @@ export function QueueCard({
                 {q.boosts > 0 && ` · ⚡${q.boosts}`}
               </em>
             </span>
+            {playButton(q)}
           </li>
         ))}
         {/* Nothing queued: what auto play would pick next on its own (least recently played). */}
@@ -114,6 +179,7 @@ export function QueueCard({
                 <em>{q.artist}</em>
               </span>
               <span className="auto-tag">auto</span>
+              {playButton(q)}
             </li>
           ))}
         {!queue.length && !autoNext.length && (

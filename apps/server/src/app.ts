@@ -689,6 +689,21 @@ export function createApp(options: AppOptions) {
   app.post("/api/host/sessions/:id/playback/pause", ...requireHost, hostSession, playbackAction("pause"));
   app.post("/api/host/sessions/:id/playback/resume", ...requireHost, hostSession, playbackAction("resume"));
   app.post("/api/host/sessions/:id/previous", ...requireHost, hostSession, playbackAction("previous"));
+  const StageViewSchema = z.object({ panel: z.enum(["queue", "votes"]), auto: z.boolean() }).strict();
+  app.post("/api/host/sessions/:id/stage-view", ...requireHost, hostSession, async (req, res) => {
+    const parsed = StageViewSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid projector view" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.setStageView(parsed.data);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    res.json(outcome);
+  });
+
   app.post("/api/host/sessions/:id/crowd/reset", ...requireHost, hostSession, async (req, res) => {
     const outcome = await sessions.get(req.params.id)!.resetCrowd();
     if (outcome.status === "rejected") {

@@ -51,3 +51,22 @@ describe("session appearance (set on the host page, followed by stage + phones)"
     expect(restored.getState().appearance).toEqual({ preset: "lavender", mode: "dark", showEnergy: true });
   });
 });
+
+describe("projector view (queue / vote count / auto)", () => {
+  it("is host-only, validated, broadcast and saved", async () => {
+    const saved: Required<EventRecord>[] = [];
+    let n = Date.now();
+    const store = new SessionStore("demo", "Demo", {
+      persist: async (r) => (saved.push({ ...r, time: new Date((n += 10)) } as Required<EventRecord>), "stored"),
+    });
+    const { app } = createApp({ sessions: new Map([["demo", store]]), hostKey: "k" });
+    expect(store.getState().stageView).toEqual({ panel: "queue", auto: false });
+    expect((await request(app).post("/api/host/sessions/demo/stage-view").send({ panel: "votes", auto: false })).status).toBe(401);
+    expect((await request(app).post("/api/host/sessions/demo/stage-view").set("x-host-key", "k").send({ panel: "chart", auto: false })).status).toBe(400);
+    expect((await request(app).post("/api/host/sessions/demo/stage-view").set("x-host-key", "k").send({ panel: "votes", auto: true })).status).toBe(200);
+    expect(store.getState().stageView).toEqual({ panel: "votes", auto: true });
+    const restored = new SessionStore("demo", "Demo");
+    restored.replay(saved);
+    expect(restored.getState().stageView).toEqual({ panel: "votes", auto: true });
+  });
+});

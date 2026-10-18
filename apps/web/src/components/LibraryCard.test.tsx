@@ -124,6 +124,15 @@ describe("LibraryCard", () => {
     expect(calls.find((c) => c.url.endsWith("/queue"))?.method).toBe("PUT");
   });
 
+  it("▶ on a library song plays it now", async () => {
+    const calls = mockNet();
+    const onState = vi.fn();
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={onState} />);
+    await userEvent.click(screen.getByRole("button", { name: "Play Midnight now" }));
+    await waitFor(() => expect(calls.find((c) => c.url.endsWith("/advance"))?.body).toEqual({ trackId: "track_02" }));
+    expect(onState).toHaveBeenCalled();
+  });
+
   it("a song already in the queue can be queued again", async () => {
     const calls = mockNet();
     const queued = { ...state, queue: [{ trackId: "track_02", title: "Midnight", artist: "y", votes: 0, boosts: 0, hostPick: true }] } as unknown as SessionState;
