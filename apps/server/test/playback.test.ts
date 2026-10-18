@@ -142,7 +142,8 @@ describe("host queue, skip, seek, clear", () => {
     await request(app).put("/api/host/sessions/demo/queue").set(HOST).send({ trackIds: ["track_04", "track_02", "track_04"] });
     const restored = new SessionStore("demo", "Demo");
     restored.replay(saved);
-    expect(restored.getState().queue.filter((q) => q.hostPick).map((q) => q.trackId)).toEqual(["track_04", "track_02"]);
+    // The same song can be queued more than once.
+    expect(restored.getState().queue.filter((q) => q.hostPick).map((q) => q.trackId)).toEqual(["track_04", "track_02", "track_04"]);
   });
 
   it("Clear library removes every song — the playing one keeps playing to its end — and replays", async () => {
@@ -351,5 +352,26 @@ describe("auto entries when the queue is empty", () => {
     expect(store.getState().autoNext).toHaveLength(5);
     await vote(store, "track_07");
     expect(store.getState().autoNext).toEqual([]);
+  });
+});
+
+describe("queueing a song again", () => {
+  it("a song queued twice plays twice; each play takes only its first copy off the queue", async () => {
+    const { store, app } = setup();
+    await request(app).put("/api/host/sessions/demo/queue").set(HOST).send({ trackIds: ["track_02", "track_03", "track_02"] });
+    await store.advance(); // ⏭ → track_02
+    expect(store.getState().nowPlaying?.trackId).toBe("track_02");
+    expect(store.getState().queue.filter((q) => q.hostPick).map((q) => q.trackId)).toEqual(["track_03", "track_02"]);
+    await store.advance(); // → track_03
+    await store.advance(); // → track_02 again
+    expect(store.getState().nowPlaying?.trackId).toBe("track_02");
+    expect(store.getState().queue.filter((q) => q.hostPick)).toEqual([]);
+  });
+
+  it("the playing song can be queued to play again later", async () => {
+    const { store, app } = setup();
+    await store.advance("track_05");
+    await request(app).put("/api/host/sessions/demo/queue").set(HOST).send({ trackIds: ["track_01", "track_05"] });
+    expect(store.getState().queue.filter((q) => q.hostPick).map((q) => q.trackId)).toEqual(["track_01", "track_05"]);
   });
 });

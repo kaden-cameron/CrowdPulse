@@ -217,7 +217,7 @@ export function LibraryCard({
       let id = libraryIdFor(t.spotifyUri);
       if (!id) id = (await add([t])).trackIds[0];
       if (!id) throw new Error("Couldn't add that song");
-      await setQueue([...hostQueue.filter((q) => q !== id), id], `“${t.title}” is #${hostQueue.length + 1} in the queue.`);
+      await setQueue([...hostQueue, id], `“${t.title}” is #${hostQueue.length + 1} in the queue.`);
     });
 
   const playNow = (t: FoundTrack) =>
@@ -339,14 +339,15 @@ export function LibraryCard({
             const pos = id ? hostQueue.indexOf(id) : -1;
             return (
               <>
+                {pos >= 0 && <span className="queued-at">#{pos + 1}</span>}
                 <button
                   type="button"
                   className="btn compact"
-                  disabled={busy !== null || pos >= 0 || isPlaying(t.spotifyUri)}
+                  disabled={busy !== null}
                   onClick={() => void queueFound(t)}
-                  aria-label={pos >= 0 ? `${t.title} is #${pos + 1} in the queue` : `Add ${t.title} to the queue`}
+                  aria-label={pos >= 0 ? `Add ${t.title} to the queue again` : `Add ${t.title} to the queue`}
                 >
-                  {busy === `queue:${t.spotifyUri}` ? "…" : pos >= 0 ? `#${pos + 1}` : "+ Queue"}
+                  {busy === `queue:${t.spotifyUri}` ? "…" : "+ Queue"}
                 </button>
                 <button
                   type="button"
@@ -411,14 +412,16 @@ export function LibraryCard({
                   {t.metaSource && SOURCE_LABEL[t.metaSource] && <span className={`meta-${t.metaSource}`}> · {SOURCE_LABEL[t.metaSource]}</span>}
                 </em>
               </span>
+              {/* Already queued? Its first spot shows; "+ Queue" adds it again. */}
+              {pos >= 0 && <span className="queued-at">#{pos + 1}</span>}
               <button
                 type="button"
                 className="btn compact"
-                disabled={!ready || busy !== null || t.id === playingId || pos >= 0}
+                disabled={!ready || busy !== null}
                 onClick={() => void queueSong(t)}
-                aria-label={pos >= 0 ? `${t.title} is #${pos + 1} in the queue` : `Add ${t.title} to the queue`}
+                aria-label={pos >= 0 ? `Add ${t.title} to the queue again` : `Add ${t.title} to the queue`}
               >
-                {pos >= 0 ? `#${pos + 1}` : "+ Queue"}
+                + Queue
               </button>
               <button
                 type="button"

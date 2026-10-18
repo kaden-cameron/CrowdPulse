@@ -124,7 +124,7 @@ const recPath = (sessionId: string) => `/api/host/sessions/${encodeURIComponent(
 export const fetchRecommendations = (sessionId: string, auth: HostHeaders) =>
   hostGet<AiSnapshot>(recPath(sessionId), auth);
 
-export async function requestRecommendation(sessionId: string, auth: HostHeaders, hostTarget: HostTarget, request?: SongRequest) {
+export async function requestRecommendation(sessionId: string, auth: HostHeaders, hostTarget: HostTarget | null, request?: SongRequest) {
   const res = await fetch(recPath(sessionId), {
     method: "POST",
     headers: { "content-type": "application/json", ...auth },

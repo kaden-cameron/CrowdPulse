@@ -853,7 +853,8 @@ export function createApp(options: AppOptions) {
     .strict()
     .refine(rangeOk, "minStreams must be ≤ maxStreams");
   const TargetSchema = z
-    .object({ hostTarget: z.enum(HOST_TARGETS as [HostTarget, ...HostTarget[]]), request: RequestSchema.optional() })
+    // The host target is optional (no target = Gemini goes by the crowd alone).
+    .object({ hostTarget: z.enum(HOST_TARGETS as [HostTarget, ...HostTarget[]]).nullable().default(null), request: RequestSchema.optional() })
     .strict();
 
   // Songs from outside the library: Find (lyrics / a description) or Surprise me (random in a

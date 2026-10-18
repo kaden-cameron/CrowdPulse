@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   COMMON_GENRES,
   FIND_COUNTS,
-  HOST_TARGETS,
   SONG_REQUEST_LIMITS,
   STREAM_STOPS,
   type HostTarget,
@@ -23,7 +22,11 @@ import {
 } from "../lib/host";
 import { searchSpotifyTracks } from "../lib/spotify/search";
 import { SongPicker } from "./SongPicker";
+import { InfoTip } from "./InfoTip";
 import { useAutoHide } from "../hooks/useAutoHide";
+
+/** The two targets the host can choose (or neither). "Hold steady" is the same as no target. */
+const TARGET_CHOICES: HostTarget[] = ["raise_energy", "cool_down"];
 
 const TARGET_LABELS: Record<HostTarget, string> = {
   raise_energy: "Raise energy",
@@ -56,7 +59,7 @@ export function AiPanel({
   onState: (state: SessionState) => void;
 }) {
   const [snapshot, setSnapshot] = useState<AiSnapshot | null>(null);
-  const [target, setTarget] = useState<HostTarget>("raise_energy");
+  const [target, setTarget] = useState<HostTarget | null>(null);
   // What the host asks for: free text plus sliders (energy/tempo can be "any").
   const [prompt, setPrompt] = useState("");
   const [genres, setGenres] = useState<string[]>([]);
@@ -251,23 +254,6 @@ export function AiPanel({
         </p>
       )}
 
-      <fieldset className="mood-field compact-field">
-        <legend>Host target</legend>
-        <div className="target-row">
-          {HOST_TARGETS.map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`mood-chip ${target === t ? "selected" : ""}`}
-              aria-pressed={target === t}
-              onClick={() => setTarget(t)}
-            >
-              <span className="mood-label">{TARGET_LABELS[t]}</span>
-            </button>
-          ))}
-        </div>
-      </fieldset>
-
       <label className="host-field">
         <span className="metric-label">Ask for a kind of song, or type lyrics (optional)</span>
         <textarea
@@ -293,6 +279,24 @@ export function AiPanel({
       />
 
       <PopularityRange min={minIdx} max={maxIdx} onChange={(lo, hi) => (setMinIdx(lo), setMaxIdx(hi))} />
+
+      {/* Optional: tap a selected choice again for no target (Gemini then goes by the crowd). */}
+      <fieldset className="mood-field compact-field">
+        <legend>Host target (optional)</legend>
+        <div className="target-row two">
+          {TARGET_CHOICES.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`mood-chip ${target === t ? "selected" : ""}`}
+              aria-pressed={target === t}
+              onClick={() => setTarget((cur) => (cur === t ? null : t))}
+            >
+              <span className="mood-label">{TARGET_LABELS[t]}</span>
+            </button>
+          ))}
+        </div>
+      </fieldset>
 
       <div className="cta-row ai-actions">
         <button type="button" className="btn primary" disabled={!ready || !ai?.configured || busy !== null} onClick={ask}>
@@ -417,7 +421,7 @@ export function AiPanel({
                     {latest.modelVersion && ` (${latest.modelVersion})`}
                     {latest.latencyMs != null && ` · ${latest.latencyMs} ms`}
                     {latest.responseId && ` · response ${latest.responseId.slice(0, 12)}…`}
-                    {` · for “${TARGET_LABELS[latest.hostTarget]}”`}
+                    {latest.hostTarget && ` · for “${TARGET_LABELS[latest.hostTarget]}”`}
                   </p>
 
                   <details className="chart-table">
@@ -742,14 +746,3 @@ function ArtistPicker({
   );
 }
 
-/** A small "?" that shows an explanation on hover or keyboard focus. */
-function InfoTip({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <span className="info-tip" tabIndex={0} aria-label={`About ${label}`}>
-      <span aria-hidden>?</span>
-      <span className="info-tip-text" role="tooltip">
-        {children}
-      </span>
-    </span>
-  );
-}

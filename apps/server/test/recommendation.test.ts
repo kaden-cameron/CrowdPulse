@@ -241,3 +241,31 @@ describe("Gemini variety", () => {
     expect(s.eligible_tracks.map((t) => t.track_id)).toEqual(["a"]);
   });
 });
+
+describe("optional host target", () => {
+  it("accepts a recommendation request with no target, and tells Gemini there is none", async () => {
+    const store = new SessionStore("demo", "Demo");
+    let sent: Record<string, unknown> = {};
+    const model = {
+      model: "fake",
+      generate: async (i: { user: string }) => (
+        (sent = JSON.parse(i.user)),
+        {
+          text: JSON.stringify({ reason: "Crowd likes it", target_energy: 50, recommended_track_id: "track_02", visual_theme: "calm_waves", intensity: 0.5, confidence: 0.7 }),
+          responseId: "r",
+          modelVersion: "v",
+          latencyMs: 1,
+          usage: null,
+        }
+      ),
+    } as RecommendationModel;
+    const recommenders = new Map([["demo", new RecommendationService(store, model)]]);
+    const { app } = createApp({ sessions: new Map([["demo", store]]) as Sessions, hostKey: "k", recommenders });
+    const r = await request(app).post("/api/host/sessions/demo/recommendations").set("x-host-key", "k").send({});
+    expect(r.status).toBe(201);
+    expect(r.body.recommendation.hostTarget).toBeNull();
+    expect(sent.host_target).toBeNull();
+    const withTarget = await request(app).post("/api/host/sessions/demo/recommendations").set("x-host-key", "k").send({ hostTarget: "cool_down" });
+    expect(withTarget.body.recommendation.hostTarget).toBe("cool_down");
+  });
+});

@@ -113,7 +113,7 @@ describe("AiPanel", () => {
     await userEvent.click(ask);
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toEqual({
-      hostTarget: "raise_energy",
+      hostTarget: null,
       request: { prompt: "slow jam for the end of the night", genres: ["r&b", "soul"], artists: [], includeFeatures: false, minStreams: 1_000_000, maxStreams: 500_000_000 },
     });
   });
@@ -284,5 +284,34 @@ describe("AiPanel", () => {
     const body = calls.find((c) => c.url.endsWith("/find-songs"))!.body as Record<string, unknown>;
     expect(body.artists).toEqual(["DJ Hydra"]);
     expect(body.text).toBeUndefined();
+  });
+
+  it("host target is optional: two choices, tap again to clear", async () => {
+    const bodies: { hostTarget: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST" && url.endsWith("/recommendations")) {
+          bodies.push(JSON.parse(String(init.body)));
+          return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendation: rec() }, { status: 201 });
+        }
+        return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendations: [] });
+      }),
+    );
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    expect(screen.queryByRole("button", { name: "Hold steady" })).not.toBeInTheDocument();
+    const cool = screen.getByRole("button", { name: "Cool down" });
+    const ask = await screen.findByRole("button", { name: "Get recommendation" });
+    await waitFor(() => expect(ask).toBeEnabled());
+    await userEvent.click(cool);
+    expect(cool).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(ask);
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0].hostTarget).toBe("cool_down");
+    await userEvent.click(cool); // tap again: no target
+    expect(cool).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(ask);
+    await waitFor(() => expect(bodies).toHaveLength(2));
+    expect(bodies[1].hostTarget).toBeNull();
   });
 });

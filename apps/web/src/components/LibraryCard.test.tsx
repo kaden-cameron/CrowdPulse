@@ -124,6 +124,17 @@ describe("LibraryCard", () => {
     expect(calls.find((c) => c.url.endsWith("/queue"))?.method).toBe("PUT");
   });
 
+  it("a song already in the queue can be queued again", async () => {
+    const calls = mockNet();
+    const queued = { ...state, queue: [{ trackId: "track_02", title: "Midnight", artist: "y", votes: 0, boosts: 0, hostPick: true }] } as unknown as SessionState;
+    render(<LibraryCard sessionCode="demo" state={queued} ready getHeaders={async () => ({})} onState={() => {}} />);
+    expect(screen.getByText("#1")).toBeInTheDocument();
+    const again = screen.getByRole("button", { name: "Add Midnight to the queue again" });
+    expect(again).toBeEnabled();
+    await userEvent.click(again);
+    await waitFor(() => expect(calls.find((c) => c.url.endsWith("/queue"))?.body).toEqual({ trackIds: ["track_02", "track_02"] }));
+  });
+
   it("Shuffle puts every library song into the queue in random order", async () => {
     const calls = mockNet();
     render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);

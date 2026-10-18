@@ -13,6 +13,7 @@ import {
 } from "../lib/host";
 import { usePlayerEngine } from "../lib/player/usePlayerEngine";
 import { RepeatIcon } from "./Icons";
+import { InfoTip } from "./InfoTip";
 import { useAutoHide } from "../hooks/useAutoHide";
 import { usePublicConfig } from "../lib/publicConfig";
 import { useSpotifyCover } from "../lib/spotify/cover";
@@ -249,6 +250,12 @@ export function PlayerCard({
           />
           Highlights mode
         </label>
+        <InfoTip label="Highlights mode">
+          Plays only each song&apos;s best section — usually the chorus or the drop — instead of the whole song, then moves on.
+          Gemini finds the section (using the song&apos;s timed lyrics when available) and may start a little early so a
+          build-up lands. The clip length is a rough target; each clip follows the song. Use −10s / +10s to fix a clip&apos;s
+          start; it&apos;s remembered.
+        </InfoTip>
         {hl?.enabled ? (
           <span className="highlights-options">
             <select

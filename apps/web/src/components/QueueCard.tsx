@@ -57,7 +57,8 @@ export function QueueCard({
       </p>
       <ol className="panel host-queue-list">
         {picks.map((q, i) => (
-          <li key={q.trackId}>
+          // A song can be queued more than once, so position is part of the key.
+          <li key={`${q.trackId}-${i}`}>
             <span className="q-rank">{i + 1}</span>
             <span className="library-meta">
               <strong>{q.title}</strong>
@@ -83,7 +84,7 @@ export function QueueCard({
                 type="button"
                 className="btn ghost compact"
                 disabled={!ready || busy}
-                onClick={() => void save(ids.filter((id) => id !== q.trackId))}
+                onClick={() => void save(ids.filter((_, k) => k !== i))}
                 aria-label={`Take ${q.title} out of the queue`}
               >
                 ✕

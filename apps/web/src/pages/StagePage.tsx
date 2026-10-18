@@ -141,7 +141,7 @@ export function StagePage() {
           <Window title="Up next" className="stage-queue" bodyClassName="panel">
             <ol>
               {(state?.queue ?? []).slice(0, STAGE_QUEUE_SIZE).map((item, i) => (
-                <li key={item.trackId}>
+                <li key={`${item.trackId}-${i}`}>
                   <span className="q-rank">{i + 1}</span>
                   <span>
                     <strong>{item.title}</strong>

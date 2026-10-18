@@ -41,7 +41,8 @@ Rules:
 - visual_theme MUST be one of "allowed_visual_themes".
 - intensity is a number from 0 to 1. target_energy is an integer from 0 to 100. confidence is 0 to 1.
 - reason is one plain-text sentence (max 160 characters) that cites the crowd data you used. No links, code, or markup.
-- Weigh the host_target, the crowd's votes, the mood distribution, and the energy trend.
+- Weigh the host_target (raise_energy / cool_down; null = no preference, follow the crowd), the crowd's votes,
+  the mood distribution, and the energy trend.
 - Keep the set varied: never pick a track in "recently_played", and prefer artists and tracks that
   are not in "recent_recommendations".
 - Each eligible track has "recommended_before": how often you've suggested it this session. Prefer 0.
@@ -63,7 +64,7 @@ Rules:
 export function buildSummary(
   state: SessionState,
   energyChange: number,
-  hostTarget: HostTarget,
+  hostTarget: HostTarget | null,
   history: Recommendation[],
   recentlyPlayed: string[] = [],
   request: SongRequest | null = null,
@@ -233,7 +234,7 @@ export class RecommendationService {
    * Builds the summary, calls the model, and validates the result. Never touches stage
    * state — only an explicit host approval does that. Votes are unaffected by AI failures.
    */
-  async recommend(hostTarget: HostTarget, request: SongRequest | null = null): Promise<{ recommendation: Recommendation } | { busy: true }> {
+  async recommend(hostTarget: HostTarget | null, request: SongRequest | null = null): Promise<{ recommendation: Recommendation } | { busy: true }> {
     if (this.inFlight) return { busy: true };
     this.inFlight = true;
     try {

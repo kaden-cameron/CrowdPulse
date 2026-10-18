@@ -471,15 +471,16 @@ export class SessionStore {
   }
 
   /**
-   * Host action: set the host's queue (ordered track ids). These play before voted songs.
-   * Unknown ids, duplicates and the playing song are dropped. Saved and replayed.
+   * Host action: set the host's queue (ordered track ids). These play before voted songs. A song
+   * can be in it more than once (and can be the one playing — it plays again later). Unknown ids
+   * are refused. Saved and replayed.
    */
   setHostQueue(trackIds: string[]): Promise<EventOutcome> {
     return this.exclusive(async () => {
       const known = new Set(this.catalog.map((t) => t.id));
       const unknown = trackIds.find((id) => !known.has(id));
       if (unknown) return this.reject(`Unknown track ID ${unknown}`, 400);
-      const next = [...new Set(trackIds)].filter((id) => id !== this.nowPlaying?.id).slice(0, MAX_CATALOG_TRACKS);
+      const next = trackIds.slice(0, MAX_CATALOG_TRACKS);
       const saved = await this.persistHostAction("host_queue", { trackIds: next });
       if (saved) return saved;
       this.hostQueue = next;
@@ -1224,10 +1225,12 @@ export class SessionStore {
     const leaving = this.nowPlaying;
     if (leaving) this.lastPlayedAt.set(leaving.id, at);
     this.nowPlaying = track;
-    this.hostQueue = this.hostQueue.filter((id) => id !== track.id);
+    // The song came off the queue: drop its first queued copy only (later copies play again later).
+    const at1 = this.hostQueue.indexOf(track.id);
+    if (at1 >= 0) this.hostQueue = [...this.hostQueue.slice(0, at1), ...this.hostQueue.slice(at1 + 1)];
     if (previous) {
       if (this.playHistory.at(-1) === track.id) this.playHistory.pop();
-      if (leaving && leaving.id !== track.id) this.hostQueue = [leaving.id, ...this.hostQueue.filter((id) => id !== leaving.id)];
+      if (leaving && leaving.id !== track.id) this.hostQueue = [leaving.id, ...this.hostQueue];
     } else if (leaving && leaving.id !== track.id) {
       this.playHistory = [...this.playHistory, leaving.id].slice(-50);
     }
@@ -1344,7 +1347,7 @@ export class SessionStore {
     const byId = new Map(this.catalog.map((t) => [t.id, t]));
     const picked = this.hostQueue
       .map((id) => byId.get(id))
-      .filter((t): t is CatalogTrack => !!t && t.id !== this.nowPlaying?.id)
+      .filter((t): t is CatalogTrack => !!t)
       .map((t) => ({ ...this.toQueueItem(t), hostPick: true }));
     const hostIds = new Set(this.hostQueue);
     const voted = this.catalog

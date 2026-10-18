@@ -3093,6 +3093,8 @@ button.menubar-tab.menubar-action {
 
 /* Highlights mode controls (Now playing). */
 .highlights-row {
+  /* The "?" tooltip spans this row. */
+  position: relative;
   display: flex;
   flex-wrap: wrap;
   gap: 0.5rem 0.8rem;
@@ -3171,5 +3173,13 @@ button.menubar-tab.menubar-action {
   font-family: var(--font-caps);
   font-size: 10px;
   text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* Library: where an already-queued song sits (it can still be queued again). */
+.queued-at {
+  flex: none;
+  font-family: var(--font-num);
+  font-size: 18px;
   color: var(--ink-2);
 }

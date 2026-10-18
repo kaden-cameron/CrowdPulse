@@ -410,7 +410,8 @@ export interface Recommendation {
   sessionId: string;
   createdAt: string;
   status: "pending" | "approved" | "rejected" | "invalid" | "failed";
-  hostTarget: HostTarget;
+  /** Optional direction the host asked for (null = none: Gemini goes by the crowd). */
+  hostTarget: HostTarget | null;
   /** The host's own request (description + sliders), when given. */
   request?: SongRequest | null;
   /** The compact summary actually sent to the model. */
