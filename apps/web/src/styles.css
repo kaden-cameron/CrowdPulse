@@ -3041,3 +3041,27 @@ button.menubar-tab.menubar-action {
     grid-template-columns: 1fr;
   }
 }
+
+/* Attendee: search + sort on one row. */
+.vote-tools {
+  display: flex;
+  gap: 0.5rem;
+  align-items: stretch;
+  margin-top: 0.6rem;
+}
+
+.vote-tools .vote-search {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.vote-sort select {
+  height: 100%;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px var(--font-ui); /* 16px stops iOS zooming in on focus */
+}

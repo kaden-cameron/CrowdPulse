@@ -27,3 +27,20 @@ describe("attendee vote list", () => {
     expect(PAGE_SIZE).toBe(15);
   });
 });
+
+describe("attendee sort", () => {
+  const list = [t("b song", 1, { artist: "Zed", genre: "pop" }), t("A song", 5, { artist: "amy", genre: "house" }), t("c song", 0, { artist: "Bob", genre: "edm", status: "playing" })];
+  it("sorts by title, artist, genre or newest, keeping the playing song first", () => {
+    const titles = (s: Parameters<typeof filterAndRank>[2]) => filterAndRank(list, "", s).map((x) => x.title);
+    expect(titles("votes")).toEqual(["c song", "A song", "b song"]);
+    expect(titles("title")).toEqual(["c song", "A song", "b song"]);
+    expect(titles("artist")).toEqual(["c song", "A song", "b song"]);
+    expect(titles("genre")).toEqual(["c song", "A song", "b song"]);
+    expect(titles("newest")).toEqual(["c song", "A song", "b song"]);
+    const notPlaying = list.map((x) => ({ ...x, status: "open" }));
+    expect(filterAndRank(notPlaying, "", "newest").map((x) => x.title)).toEqual(["c song", "A song", "b song"]);
+    expect(filterAndRank(notPlaying, "", "artist").map((x) => x.title)).toEqual(["A song", "c song", "b song"]);
+    expect(filterAndRank(notPlaying, "", "genre").map((x) => x.title)).toEqual(["c song", "A song", "b song"]);
+    expect(filterAndRank(notPlaying, "", "title").map((x) => x.title)).toEqual(["A song", "b song", "c song"]);
+  });
+});

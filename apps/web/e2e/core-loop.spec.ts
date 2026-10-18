@@ -277,3 +277,9 @@ test("With crowd energy off, the projector shows a quiet screen: song, QR code a
   await request.post("/api/host/sessions/demo/appearance", { headers: host, data: { preset: "sky", mode: "light", showEnergy: true } });
   await expect(stage.locator(".energy-block")).toHaveCount(1);
 });
+
+test("The projector shows an empty song bar (0:00 / 0:00) when nothing is playing", async ({ browser }) => {
+  const stage = await openStage(browser);
+  await expect(stage.locator(".stage-timer")).toHaveText("0:00 / 0:00");
+  await expect(stage.locator(".song-progress")).toBeVisible();
+});

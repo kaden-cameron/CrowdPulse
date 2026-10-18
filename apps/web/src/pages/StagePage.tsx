@@ -174,8 +174,8 @@ export const fmtClock = (ms: number) => {
 };
 
 /**
- * Progress of the current song with a timer (elapsed / length), from the player's reports. Shown
- * while a song is playing or paused; hidden otherwise.
+ * Progress of the current song with a timer (elapsed / length), from the player's reports. Always
+ * shown: empty at 0:00 / 0:00 when nothing is playing, so the screen doesn't jump around.
  */
 function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionState | null }) {
   const [now, setNow] = useState(Date.now());
@@ -184,19 +184,24 @@ function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionSt
     return () => window.clearInterval(t);
   }, []);
   const pb = state?.playback;
-  if (!pb || !pb.durationMs) return null;
+  const dur = pb?.durationMs ?? 0;
   const elapsed =
-    pb.status === "paused" ? (pb.pausedPositionMs ?? 0) : pb.status === "playing" && pb.startedAt ? now - Date.parse(pb.startedAt) : null;
-  if (elapsed === null) return null;
-  const pos = Math.min(elapsed, pb.durationMs);
+    !pb || !dur
+      ? 0
+      : pb.status === "paused"
+        ? (pb.pausedPositionMs ?? 0)
+        : pb.status === "playing" && pb.startedAt
+          ? now - Date.parse(pb.startedAt)
+          : 0;
+  const pos = dur ? Math.min(Math.max(0, elapsed), dur) : 0;
   return (
     <div className="stage-progress">
       <div className="song-progress" aria-hidden>
-        <div style={{ width: `${(pos / pb.durationMs) * 100}%` }} />
+        <div style={{ width: `${dur ? (pos / dur) * 100 : 0}%` }} />
       </div>
-      <span className="stage-timer" aria-label={`${fmtClock(pos)} of ${fmtClock(pb.durationMs)}`}>
-        {fmtClock(pos)} / {fmtClock(pb.durationMs)}
-        {pb.status === "paused" && <em> · paused</em>}
+      <span className="stage-timer" aria-label={dur ? `${fmtClock(pos)} of ${fmtClock(dur)}` : "Nothing playing"}>
+        {fmtClock(pos)} / {fmtClock(dur)}
+        {pb?.status === "paused" && <em> · paused</em>}
       </span>
     </div>
   );

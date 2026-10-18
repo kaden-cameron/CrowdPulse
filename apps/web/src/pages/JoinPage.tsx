@@ -70,7 +70,8 @@ export function JoinPage() {
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const allTracks = state?.tracks ?? [];
-  const matching = filterAndRank(allTracks, search);
+  const [sort, setSort] = useState<VoteSort>("votes");
+  const matching = filterAndRank(allTracks, search, sort);
   const pages = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
   const pageIndex = Math.min(page, pages - 1);
   const tracks = matching.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
@@ -211,18 +212,37 @@ export function JoinPage() {
           </p>
 
           {allTracks.length > 0 && (
-            <label className="vote-search">
-              <span className="visually-hidden">Search songs</span>
-              <input
-                type="search"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setPage(0);
-                }}
-                placeholder={`Search ${allTracks.length} songs`}
-              />
-            </label>
+            <div className="vote-tools">
+              <label className="vote-search">
+                <span className="visually-hidden">Search songs</span>
+                <input
+                  type="search"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setPage(0);
+                  }}
+                  placeholder={`Search ${allTracks.length} songs`}
+                />
+              </label>
+              <label className="vote-sort">
+                <span className="visually-hidden">Sort songs</span>
+                <select
+                  value={sort}
+                  onChange={(e) => {
+                    setSort(e.target.value as VoteSort);
+                    setPage(0);
+                  }}
+                  aria-label="Sort songs"
+                >
+                  {(Object.keys(VOTE_SORT_LABELS) as VoteSort[]).map((k) => (
+                    <option key={k} value={k}>
+                      {VOTE_SORT_LABELS[k]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
           )}
 
           <ul className="track-list panel">
@@ -349,24 +369,43 @@ function saveJoinedRun(sessionCode: string, run: number) {
 /** Songs per page in the attendee's vote list. */
 export const PAGE_SIZE = 15;
 
+export type VoteSort = "votes" | "title" | "artist" | "genre" | "newest";
+export const VOTE_SORT_LABELS: Record<VoteSort, string> = {
+  votes: "Most votes",
+  title: "Title A–Z",
+  artist: "Artist A–Z",
+  genre: "Genre",
+  newest: "Newest added",
+};
+
 /**
- * The attendee's list: songs matching the search (title, artist or genre), most votes first
- * (boosts break ties, then library order). The playing song stays at the top.
+ * The attendee's list: songs matching the search (title, artist or genre) in the chosen order —
+ * by default most votes first (boosts break ties, then library order). The playing song stays on top.
  */
 export function filterAndRank<T extends { title: string; artist: string; genre: string; votes: number; boosts: number; status: string }>(
   tracks: T[],
   search: string,
+  sort: VoteSort = "votes",
 ): T[] {
   const q = search.trim().toLowerCase();
+  const az = (x: string, y: string) => x.localeCompare(y, undefined, { sensitivity: "base" });
+  const order = (a: { t: T; i: number }, b: { t: T; i: number }) => {
+    switch (sort) {
+      case "title":
+        return az(a.t.title, b.t.title);
+      case "artist":
+        return az(a.t.artist, b.t.artist) || az(a.t.title, b.t.title);
+      case "genre":
+        return az(a.t.genre, b.t.genre) || az(a.t.title, b.t.title);
+      case "newest":
+        return b.i - a.i;
+      default:
+        return b.t.votes - a.t.votes || b.t.boosts - a.t.boosts;
+    }
+  };
   return tracks
     .map((t, i) => ({ t, i }))
     .filter(({ t }) => !q || `${t.title} ${t.artist} ${t.genre}`.toLowerCase().includes(q))
-    .sort(
-      (a, b) =>
-        Number(b.t.status === "playing") - Number(a.t.status === "playing") ||
-        b.t.votes - a.t.votes ||
-        b.t.boosts - a.t.boosts ||
-        a.i - b.i,
-    )
+    .sort((a, b) => Number(b.t.status === "playing") - Number(a.t.status === "playing") || order(a, b) || a.i - b.i)
     .map(({ t }) => t);
 }
