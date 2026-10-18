@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { HIGHLIGHT_CLIP_SECONDS, type HighlightPart, type HighlightSettings, type PlaybackMode, type SessionState } from "@crowdpulse/shared";
+import { HIGHLIGHT_CLIP_SECONDS, type HighlightSettings, type PlaybackMode, type SessionState } from "@crowdpulse/shared";
 import {
   hostPause,
   hostPlaybackMode,
@@ -74,7 +74,7 @@ export function PlayerCard({
     dur = pb.durationMs;
     pos = Math.min(Date.now() - Date.parse(pb.startedAt), dur);
   }
-  const cover = useSpotifyCover(track?.spotifyUri, here?.imageUrl ?? track?.imageUrl);
+  const cover = useSpotifyCover(track?.spotifyUri ?? np?.spotifyUri, here?.imageUrl ?? track?.imageUrl ?? np?.imageUrl);
   const playedBy = here ? SOURCE_TEXT[here.source] : pb?.source && pb.status === "playing" ? SOURCE_TEXT[pb.source] ?? pb.source : null;
 
   async function run(label: string, action: () => Promise<{ state: SessionState }>) {
@@ -94,7 +94,7 @@ export function PlayerCard({
   const skip = () => run("Skipped to the next song", async () => hostSkip(sessionCode, await getHeaders()));
   const hl = pb?.highlights;
   const setHighlights = (next: HighlightSettings) =>
-    run(next.enabled ? `Highlights mode: ~${next.clipSec}s ${next.part === "auto" ? "best moments" : next.part === "chorus" ? "choruses" : "drops"}` : "Highlights mode off", async () =>
+    run(next.enabled ? `Highlights mode: ~${next.clipSec}s of each song's best part` : "Highlights mode off", async () =>
       hostSetHighlights(sessionCode, await getHeaders(), next),
     );
   /** Move this song's highlight start by ±10 s, save it for next time, and jump there. */
@@ -262,16 +262,6 @@ export function PlayerCard({
                   ~{n}s clips
                 </option>
               ))}
-            </select>
-            <select
-              value={hl.part}
-              disabled={busy || !ready}
-              aria-label="Which part of each song"
-              onChange={(e) => void setHighlights({ ...hl, part: e.target.value as HighlightPart })}
-            >
-              <option value="auto">Best moment</option>
-              <option value="chorus">Chorus</option>
-              <option value="drop">Drop</option>
             </select>
             <select
               value={hl.transition}

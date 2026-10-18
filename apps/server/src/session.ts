@@ -106,10 +106,14 @@ export function sanitizeHighlights(raw: unknown): HighlightSettings {
   return {
     enabled: r.enabled === true,
     clipSec: (HIGHLIGHT_CLIP_SECONDS as readonly number[]).includes(r.clipSec as number) ? (r.clipSec as HighlightSettings["clipSec"]) : DEFAULT_HIGHLIGHTS.clipSec,
-    part: HIGHLIGHT_PARTS.includes(r.part as HighlightPart) ? (r.part as HighlightPart) : DEFAULT_HIGHLIGHTS.part,
+    // The host no longer picks a part: Gemini finds each song's best section ("auto").
+    part: "auto",
     transition: r.transition === "cut" ? "cut" : "fade",
   };
 }
+
+/** How many "auto" entries to show when the queue is empty. */
+const AUTO_NEXT_SIZE = 5;
 
 export class SessionStore {
   readonly sessionId: string;
@@ -213,6 +217,7 @@ export class SessionStore {
       simulatedParticipants: [...this.participants].filter((p) => p.startsWith(SIMULATED_PREFIX)).length,
       nowPlaying: this.nowPlaying ? this.toQueueItem(this.nowPlaying) : null,
       queue,
+      autoNext: queue.length ? [] : this.upcomingAuto(AUTO_NEXT_SIZE),
       tracks: this.catalog.map((t) => ({
         ...t,
         votes: this.voteCount(t.id),
@@ -486,10 +491,13 @@ export class SessionStore {
     });
   }
 
-  /** Host action: remove every song from the library except the one playing. Saved and replayed. */
+  /**
+   * Host action: remove every song from the library — including the one playing, which keeps
+   * playing to its end (then the next song comes from the now-empty library / queue). Saved and replayed.
+   */
   clearLibrary(): Promise<EventOutcome & { removed?: number }> {
     return this.exclusive(async () => {
-      const ids = this.catalog.filter((t) => t.id !== this.nowPlaying?.id).map((t) => t.id);
+      const ids = this.catalog.map((t) => t.id);
       if (!ids.length) return this.reject("The library is already empty", 409);
       const saved = await this.persistHostAction("catalog_clear", {});
       if (saved) return saved;
@@ -1160,7 +1168,19 @@ export class SessionStore {
   }
 
   private applyClear() {
-    for (const t of this.catalog) if (t.id !== this.nowPlaying?.id) this.applyRemove(t.id);
+    for (const t of this.catalog) {
+      if (t.id !== this.nowPlaying?.id) {
+        this.applyRemove(t.id);
+        continue;
+      }
+      // The playing song leaves the library but keeps playing: keep its play count so the player's
+      // "ended" report still matches, and nowPlaying keeps its details (title, cover, Spotify link).
+      this.catalog = this.catalog.filter((c) => c.id !== t.id);
+      this.votes.delete(t.id);
+      this.boosts.delete(t.id);
+      this.hostQueue = this.hostQueue.filter((id) => id !== t.id);
+      for (const part of HIGHLIGHT_PARTS) this.highlightCache.delete(`${t.id}|${part}`);
+    }
   }
 
   private applyRemove(trackId: string) {
@@ -1345,12 +1365,20 @@ export class SessionStore {
   private nextTrackId(): string | null {
     const [top] = this.buildQueue();
     if (top) return top.trackId;
-    return (
-      this.catalog
-        .map((t, idx) => ({ t, idx, played: this.lastPlayedAt.get(t.id) ?? 0 }))
-        .filter(({ t }) => t.id !== this.nowPlaying?.id)
-        .sort((a, b) => a.played - b.played || a.idx - b.idx)[0]?.t.id ?? null
-    );
+    return this.upcomingAuto(1)[0]?.trackId ?? null;
+  }
+
+  /**
+   * What auto play picks with nothing queued: least recently played first (never-played songs in
+   * library order). Each pick then becomes the most recent, so the next `n` are simply this order.
+   */
+  private upcomingAuto(n: number): QueueItem[] {
+    return this.catalog
+      .map((t, idx) => ({ t, idx, played: this.lastPlayedAt.get(t.id) ?? 0 }))
+      .filter(({ t }) => t.id !== this.nowPlaying?.id)
+      .sort((a, b) => a.played - b.played || a.idx - b.idx)
+      .slice(0, n)
+      .map(({ t }) => this.toQueueItem(t));
   }
 
   private voteCount(trackId: string): number {
@@ -1369,6 +1397,8 @@ export class SessionStore {
       artist: t.artist,
       votes: this.voteCount(t.id),
       boosts: this.boostCount(t.id),
+      ...(t.spotifyUri ? { spotifyUri: t.spotifyUri } : {}),
+      ...(t.imageUrl ? { imageUrl: t.imageUrl } : {}),
     };
   }
 

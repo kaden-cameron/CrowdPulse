@@ -23,6 +23,7 @@ export function QueueCard({
   const queue = state?.queue ?? [];
   const picks = queue.filter((q) => q.hostPick);
   const voted = queue.filter((q) => !q.hostPick);
+  const autoNext = state?.autoNext ?? [];
   const ids = picks.map((q) => q.trackId);
 
   async function save(next: string[]) {
@@ -50,7 +51,10 @@ export function QueueCard({
           Clear queue
         </button>
       </div>
-      <p className="host-sub">Your picks play first, in this order. Then the crowd&apos;s top votes.</p>
+      <p className="host-sub">
+        Your picks play first, in this order. Then the crowd&apos;s top votes.
+        {!queue.length && autoNext.length > 0 && " Nothing queued — “auto” shows what plays next on its own."}
+      </p>
       <ol className="panel host-queue-list">
         {picks.map((q, i) => (
           <li key={q.trackId}>
@@ -99,7 +103,21 @@ export function QueueCard({
             </span>
           </li>
         ))}
-        {!queue.length && <li className="host-sub">Empty — add songs with “+ Queue” or 🔀 Shuffle, or wait for votes.</li>}
+        {/* Nothing queued: what auto play would pick next on its own (least recently played). */}
+        {!queue.length &&
+          autoNext.map((q, i) => (
+            <li key={q.trackId} className="queue-auto">
+              <span className="q-rank">{i + 1}</span>
+              <span className="library-meta">
+                <strong>{q.title}</strong>
+                <em>{q.artist}</em>
+              </span>
+              <span className="auto-tag">auto</span>
+            </li>
+          ))}
+        {!queue.length && !autoNext.length && (
+          <li className="host-sub">Empty — add songs with “+ Queue” or 🔀 Shuffle, or wait for votes.</li>
+        )}
       </ol>
       {error && <p className="feedback feedback-rejected">{error}</p>}
     </div>

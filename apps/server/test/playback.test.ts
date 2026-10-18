@@ -145,7 +145,7 @@ describe("host queue, skip, seek, clear", () => {
     expect(restored.getState().queue.filter((q) => q.hostPick).map((q) => q.trackId)).toEqual(["track_04", "track_02"]);
   });
 
-  it("Clear library removes everything but the playing song, and replays", async () => {
+  it("Clear library removes every song — the playing one keeps playing to its end — and replays", async () => {
     const saved: Required<EventRecord>[] = [];
     let n = Date.now();
     const store = new SessionStore("demo", "Demo", {
@@ -155,11 +155,16 @@ describe("host queue, skip, seek, clear", () => {
     await store.advance("track_03");
     const r = await request(app).delete("/api/host/sessions/demo/library").set(HOST);
     expect(r.status).toBe(200);
-    expect(store.getState().tracks.map((t) => t.id)).toEqual(["track_03"]);
+    expect(store.getState().tracks).toEqual([]);
+    expect(store.getState().nowPlaying?.trackId).toBe("track_03"); // still playing
+    // The player's reports for it still count (its play round is kept).
+    expect((await request(app).post("/api/host/sessions/demo/playback/report").set(HOST).send({ event: "started", trackId: "track_03", round: 1, durationMs: 100_000 })).status).toBe(200);
+    expect((await request(app).post("/api/host/sessions/demo/playback/report").set(HOST).send({ event: "ended", trackId: "track_03", round: 1 })).status).toBe(200);
     expect((await request(app).delete("/api/host/sessions/demo/library").set(HOST)).status).toBe(409);
     const restored = new SessionStore("demo", "Demo");
     restored.replay(saved);
-    expect(restored.getState().tracks.map((t) => t.id)).toEqual(["track_03"]);
+    expect(restored.getState().tracks).toEqual([]);
+    expect(restored.getState().nowPlaying?.trackId).toBe("track_03");
   });
 
   it("seek moves the song position and bumps seekSeq; progress reports don't undo it", async () => {
@@ -321,5 +326,30 @@ describe("🔁 repeat", () => {
     const restored = new SessionStore("demo", "Demo");
     restored.replay(saved);
     expect(restored.getState().playback.repeat).toBe(true);
+  });
+});
+
+describe("auto entries when the queue is empty", () => {
+  it("shows the next 5 songs auto play would pick, in the order it picks them", async () => {
+    const { store, report, mode } = setup();
+    await mode("auto");
+    await store.advance("track_01");
+    const predicted = store.getState().autoNext.map((q) => q.trackId);
+    expect(predicted).toEqual(["track_02", "track_03", "track_04", "track_05", "track_06"]);
+    // Auto play really does pick them in that order.
+    const played: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const pb = store.getState().playback;
+      await report({ event: "ended", trackId: pb.trackId, round: pb.round });
+      played.push(store.getState().nowPlaying!.trackId);
+    }
+    expect(played).toEqual(predicted);
+  });
+
+  it("disappears as soon as anything is queued or voted for", async () => {
+    const { store } = setup();
+    expect(store.getState().autoNext).toHaveLength(5);
+    await vote(store, "track_07");
+    expect(store.getState().autoNext).toEqual([]);
   });
 });

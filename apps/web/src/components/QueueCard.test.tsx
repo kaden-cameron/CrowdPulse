@@ -43,6 +43,16 @@ describe("QueueCard", () => {
   });
 });
 
+describe("QueueCard auto entries", () => {
+  it("with nothing queued, shows what auto play would pick next, tagged 'auto'", () => {
+    const empty = { queue: [], autoNext: [q("x", false), q("y", false)] } as unknown as SessionState;
+    render(<QueueCard sessionCode="demo" state={empty} ready getHeaders={async () => ({})} onState={() => {}} />);
+    expect(screen.getAllByText("auto")).toHaveLength(2);
+    expect(screen.getByText("Song x")).toBeInTheDocument();
+    expect(screen.queryByText(/Empty — add songs/)).not.toBeInTheDocument();
+  });
+});
+
 describe("libraryGenres (attendee join step)", () => {
   it("offers the library's genres, most songs first, without unknown ones", () => {
     const genres = libraryGenres([

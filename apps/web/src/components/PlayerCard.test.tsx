@@ -85,4 +85,12 @@ describe("PlayerCard (host page Now playing)", () => {
     expect(posts.find((p) => p.url.endsWith("/highlight/sp_1"))!.body).toEqual({ part: "auto", startMs: 70_000, endMs: 115_000 });
     await waitFor(() => expect(posts.find((p) => p.url.endsWith("/playback/seek"))?.body).toEqual({ positionMs: 70_000 }));
   });
+
+  it("Highlights has no part dropdown — Gemini picks each song's best section", () => {
+    mockNet();
+    const on = { highlights: { enabled: true, clipSec: 45, part: "auto", transition: "fade" } };
+    render(<PlayerCard {...props} state={stateWith({}, on)} />);
+    expect(screen.getByRole("combobox", { name: "Clip length" })).toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: "Which part of each song" })).not.toBeInTheDocument();
+  });
 });

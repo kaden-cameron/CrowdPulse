@@ -100,7 +100,14 @@ export function usePlayerEngine({
       void send({ event: "started", trackId: p.trackId, round: p.round, positionMs: player.positionMs(), durationMs: info?.durationMs, source: info?.source });
       return;
     }
-    const track = state!.tracks.find((t) => t.id === action.trackId);
+    const np = state!.nowPlaying;
+    // Normally from the library; a song cleared from the library while playing is still known from
+    // nowPlaying (e.g. Repeat brings it back).
+    const track =
+      state!.tracks.find((t) => t.id === action.trackId) ??
+      (np && np.trackId === action.trackId
+        ? { id: np.trackId, title: np.title, artist: np.artist, genre: "", bpm: 0, energy: 0, spotifyUri: np.spotifyUri, imageUrl: np.imageUrl }
+        : undefined);
     if (!track) return;
     busy.current = true;
     playing.current = { trackId: action.trackId, round: action.round };

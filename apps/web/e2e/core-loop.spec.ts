@@ -287,3 +287,13 @@ test("The projector shows an empty song bar (0:00 / 0:00) when nothing is playin
   await expect(stage.locator(".stage-timer")).toHaveText("0:00 / 0:00");
   await expect(stage.locator(".song-progress")).toBeVisible();
 });
+
+test("The projector shows only the next 4 songs, with a count of the rest", async ({ browser, request }) => {
+  await request.put("/api/host/sessions/demo/queue", {
+    headers: { "x-host-key": HOST_KEY },
+    data: { trackIds: ["track_01", "track_02", "track_03", "track_04", "track_05", "track_06"] },
+  });
+  const stage = await openStage(browser);
+  await expect(stage.locator(".stage-queue li")).toHaveCount(4);
+  await expect(stage.getByText("+2 more in the queue")).toBeVisible();
+});

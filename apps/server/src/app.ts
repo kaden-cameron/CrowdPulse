@@ -256,7 +256,8 @@ export function createApp(options: AppOptions) {
   app.get("/api/spotify/cover/:trackId", async (req, res) => {
     const id = req.params.trackId;
     const uri = `spotify:track:${id}`;
-    if (!/^[A-Za-z0-9]{22}$/.test(id) || ![...sessions.values()].some((s) => s.catalogTracks().some((t) => t.spotifyUri === uri))) {
+    const inUse = (s: SessionStore) => s.catalogTracks().some((t) => t.spotifyUri === uri) || s.getState().nowPlaying?.spotifyUri === uri;
+    if (!/^[A-Za-z0-9]{22}$/.test(id) || ![...sessions.values()].some(inUse)) {
       res.status(404).json({ error: "Not a song in this session" });
       return;
     }

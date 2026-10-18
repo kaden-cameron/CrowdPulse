@@ -50,6 +50,9 @@ export interface QueueItem {
   boosts: number;
   /** Put in the queue by the host (plays before voted songs, in the host's order). */
   hostPick?: boolean;
+  /** Carried with "now playing" so it still plays and shows its cover after the library is cleared. */
+  spotifyUri?: string;
+  imageUrl?: string;
 }
 
 export interface VisualState {
@@ -82,6 +85,11 @@ export interface SessionState {
   simulatedParticipants: number;
   nowPlaying: QueueItem | null;
   queue: QueueItem[];
+  /**
+   * When the queue is empty: the next songs auto play would pick on its own (least recently played
+   * first), shown as "auto" entries. Empty whenever the queue has anything in it.
+   */
+  autoNext: QueueItem[];
   tracks: Track[];
   moods: Record<Mood, number>;
   /** Genre each attendee picked when joining → how many people picked it (current run). */

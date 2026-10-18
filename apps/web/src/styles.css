@@ -3140,3 +3140,36 @@ button.menubar-tab.menubar-action {
   display: inline-flex;
   gap: 0.3rem;
 }
+
+/* Projector "Up next": just the next few songs, only as tall as its contents. */
+.stage-col > .stage-queue {
+  flex: none;
+}
+
+.queue-more {
+  margin: 0.4rem 0 0;
+  font-family: var(--font-caps);
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* "auto" entries: what auto play would pick next when nothing is queued (lighter than real picks). */
+.queue-auto {
+  opacity: 0.72;
+}
+
+.queue-auto strong {
+  font-weight: 400;
+}
+
+.auto-tag {
+  margin-left: auto;
+  padding: 0.05rem 0.4rem;
+  border: 1px dashed var(--line);
+  border-radius: 999px;
+  font-family: var(--font-caps);
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}

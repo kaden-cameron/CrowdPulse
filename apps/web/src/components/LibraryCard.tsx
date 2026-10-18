@@ -246,8 +246,13 @@ export function LibraryCard({
     });
 
   const clearLibrary = () => {
-    const n = tracks.filter((t) => t.id !== playingId).length;
-    if (!window.confirm(`Remove ${n} song${n === 1 ? "" : "s"} from the library${playingId ? " (the one playing stays)" : ""}? Their votes and queue spots go too.`)) return;
+    const n = tracks.length;
+    if (
+      !window.confirm(
+        `Remove all ${n} song${n === 1 ? "" : "s"} from the library? Their votes and queue spots go too.${playingId ? " The song playing now finishes first." : ""}`,
+      )
+    )
+      return;
     void withBusy("clear", async () => {
       const res = await hostClearLibrary(sessionCode, await getHeaders());
       onState(res.state);
@@ -383,7 +388,7 @@ export function LibraryCard({
           <button
             type="button"
             className="btn ghost compact"
-            disabled={!ready || busy !== null || !tracks.some((t) => t.id !== playingId)}
+            disabled={!ready || busy !== null || !tracks.length}
             onClick={clearLibrary}
           >
             {busy === "clear" ? "Clearing…" : "Clear library"}

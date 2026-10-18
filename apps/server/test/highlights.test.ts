@@ -104,11 +104,15 @@ describe("Highlights mode on the server", () => {
 
   it("settings are host-only, validated, broadcast and saved", async () => {
     const { app, store, saved } = setup();
-    const body = { enabled: true, clipSec: 60, part: "drop", transition: "cut" };
+    const body = { enabled: true, clipSec: 60, part: "auto", transition: "cut" };
     expect((await request(app).post("/api/host/sessions/demo/playback/highlights").send(body)).status).toBe(401);
     expect((await request(app).post("/api/host/sessions/demo/playback/highlights").set(HOST).send({ ...body, clipSec: 33 })).status).toBe(400);
     expect((await request(app).post("/api/host/sessions/demo/playback/highlights").set(HOST).send(body)).status).toBe(200);
     expect(store.getState().playback.highlights).toEqual(body);
+    // The part is always Gemini's choice ("auto"), even if an older client sends another.
+    await request(app).post("/api/host/sessions/demo/playback/highlights").set(HOST).send({ ...body, part: "drop" });
+    expect(store.getState().playback.highlights.part).toBe("auto");
+    await request(app).post("/api/host/sessions/demo/playback/highlights").set(HOST).send(body);
     const restored = new SessionStore("demo", "Demo");
     restored.replay(saved);
     expect(restored.getState().playback.highlights).toEqual(body);
