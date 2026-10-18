@@ -160,7 +160,7 @@ describe("AiPanel", () => {
     const onState = vi.fn();
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={onState} />);
     await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "is this the real life, is this just fantasy");
-    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    const find = await screen.findByRole("button", { name: "Find songs" });
     await waitFor(() => expect(find).toBeEnabled());
     await userEvent.click(find);
     expect(await screen.findByText("Bohemian Rhapsody")).toBeInTheDocument();
@@ -193,7 +193,7 @@ describe("AiPanel", () => {
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
     await userEvent.click(screen.getByText("Any genre"));
     await userEvent.click(screen.getByRole("checkbox", { name: "House" }));
-    const surprise = await screen.findByRole("button", { name: "🎲 Surprise me" });
+    const surprise = await screen.findByRole("button", { name: "Surprise me" });
     await waitFor(() => expect(surprise).toBeEnabled());
     await userEvent.click(surprise);
     expect(await screen.findByText("One More Time")).toBeInTheDocument();
@@ -225,7 +225,7 @@ describe("AiPanel", () => {
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
     await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "2000s pop punk");
     await userEvent.selectOptions(screen.getByRole("combobox", { name: "How many songs to find" }), "30");
-    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    const find = await screen.findByRole("button", { name: "Find songs" });
     await waitFor(() => expect(find).toBeEnabled());
     await userEvent.click(find);
     await screen.findByText("Song 3");
@@ -252,7 +252,7 @@ describe("AiPanel", () => {
     );
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
     await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "some song");
-    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    const find = await screen.findByRole("button", { name: "Find songs" });
     await waitFor(() => expect(find).toBeEnabled());
     await userEvent.click(find);
     expect(await screen.findAllByText("Song 1")).toHaveLength(1);
@@ -281,7 +281,7 @@ describe("AiPanel", () => {
     expect(screen.getByRole("button", { name: "Remove Calvin Harris" })).toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "Include features" }));
     await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "summer");
-    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    const find = await screen.findByRole("button", { name: "Find songs" });
     await waitFor(() => expect(find).toBeEnabled());
     await userEvent.click(find);
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/find-songs"))).toBe(true));
@@ -303,7 +303,7 @@ describe("AiPanel", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Search an artist" }), "artists like Daft Punk");
     await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "dance floor");
     expect(screen.getByText(/Gemini will look for artists matching “artists like Daft Punk”/)).toBeInTheDocument();
-    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    const find = await screen.findByRole("button", { name: "Find songs" });
     await waitFor(() => expect(find).toBeEnabled());
     await userEvent.click(find);
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/find-songs"))).toBe(true));
@@ -322,8 +322,8 @@ describe("AiPanel", () => {
       }),
     );
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
-    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
-    await waitFor(() => expect(screen.getByRole("button", { name: "🎲 Surprise me" })).toBeEnabled());
+    const find = await screen.findByRole("button", { name: "Find songs" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Surprise me" })).toBeEnabled());
     expect(find).toBeDisabled(); // nothing to go on yet
     await userEvent.type(screen.getByRole("textbox", { name: "Search an artist" }), "hydra");
     await userEvent.click(await screen.findByRole("button", { name: "DJ Hydra" }));

@@ -5,7 +5,6 @@ import {
   artistMatches,
   type AiStatus,
   type HostTarget,
-  type Mood,
   type Recommendation,
   type RecommendationProposal,
   type SessionState,
@@ -24,14 +23,6 @@ const RAW_LIMIT = 2_000;
 const RECENT_PLAYED_AVOID = 4;
 const RECENT_PROPOSED_AVOID = 3;
 
-/** Mood → the catalog energy (0–1) that fits it. Used by the evaluation's preference-fit metric. */
-export const MOOD_TARGET_ENERGY: Record<Mood, number> = {
-  chill: 0.25,
-  focused: 0.5,
-  hyped: 0.75,
-  wild: 0.95,
-};
-
 export const SYSTEM_PROMPT = `You are the AI DJ assistant for CrowdPulse, a live crowd-engagement system.
 You receive a JSON summary of the current session and propose the next track and stage visuals.
 A human host reviews every proposal before anything changes.
@@ -42,7 +33,7 @@ Rules:
 - intensity is a number from 0 to 1. target_energy is an integer from 0 to 100. confidence is 0 to 1.
 - reason is one plain-text sentence (max 160 characters) that cites the crowd data you used. No links, code, or markup.
 - Weigh the host_target (raise_energy / cool_down; null = no preference, follow the crowd), the crowd's votes,
-  the mood distribution, and the energy trend.
+  crowd_energy_average (0–100 from attendee sliders), crowd_energy_trend_last_30s, and the session energy_score.
 - Keep the set varied: never pick a track in "recently_played", and prefer artists and tracks that
   are not in "recent_recommendations".
 - Each eligible track has "recommended_before": how often you've suggested it this session. Prefer 0.
@@ -90,7 +81,9 @@ export function buildSummary(
     energy_score: state.energyScore,
     energy_change_last_30s: energyChange,
     participants: state.participants,
-    mood_counts: state.moods,
+    crowd_energy_average: state.crowdEnergy.average,
+    crowd_energy_count: state.crowdEnergy.count,
+    crowd_energy_trend_last_30s: state.crowdEnergy.trend,
     crowd_genres: state.genres ?? {},
     ...(request
       ? {

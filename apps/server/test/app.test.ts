@@ -104,12 +104,12 @@ describe("websocket event path", () => {
   });
 });
 
-describe("moods and taps", () => {
-  it("counts each participant's latest mood once", async () => {
+describe("crowd energy and taps", () => {
+  it("keeps each participant's latest energy level", async () => {
     const base = { type: "session.join", sessionId: "demo", participantId: "participant_cccc" };
-    await handleEvent({ ...base, eventId: randomUUID(), mood: "chill" }, "ip", "ws");
-    await handleEvent({ ...base, eventId: randomUUID(), mood: "wild" }, "ip", "ws");
-    expect(store.getState().moods).toEqual({ chill: 0, hyped: 0, focused: 0, wild: 1 });
+    await handleEvent({ ...base, eventId: randomUUID(), energy: 20 }, "ip", "ws");
+    await handleEvent({ ...base, eventId: randomUUID(), energy: 90 }, "ip", "ws");
+    expect(store.getState().crowdEnergy).toMatchObject({ average: 90, count: 1 });
   });
 
   it("completes a quest and starts the next one", async () => {

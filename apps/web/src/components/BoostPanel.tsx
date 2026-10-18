@@ -108,7 +108,7 @@ export function BoostPanel({
   return (
     <section className="boost-panel" aria-labelledby="boost-title">
       <div className="boost-head">
-        <h2 id="boost-title">⚡ Boost “{trackTitle}”</h2>
+        <h2 id="boost-title">Boost “{trackTitle}”</h2>
         <button type="button" className="btn ghost compact" onClick={onClose}>
           Close
         </button>

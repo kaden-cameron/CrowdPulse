@@ -4,7 +4,21 @@ export type VisualTheme =
   | "sunset"
   | "electric_blue";
 
-export type Mood = "chill" | "hyped" | "focused" | "wild";
+/** Attendee-reported energy level (low → high). Adjustable anytime after joining. */
+export type CrowdEnergyLevel = number; // integer 0–100
+export const MIN_CROWD_ENERGY = 0;
+export const MAX_CROWD_ENERGY = 100;
+export const DEFAULT_CROWD_ENERGY = 50;
+
+/** Average of attendees' energy levels, plus a short-window trend for the host gauge. */
+export interface CrowdEnergySummary {
+  /** Mean of current levels (0–100). Neutral `DEFAULT_CROWD_ENERGY` when nobody has set one. */
+  average: number;
+  /** How many attendees currently have an energy level. */
+  count: number;
+  /** Change in the average over roughly the last 30s (positive = rising). */
+  trend: number;
+}
 
 export type ConnectionStatus =
   | "connecting"
@@ -96,7 +110,8 @@ export interface SessionState {
    */
   autoNext: QueueItem[];
   tracks: Track[];
-  moods: Record<Mood, number>;
+  /** Crowd energy from attendee sliders (average + trend). Feeds the energy score and Gemini. */
+  crowdEnergy: CrowdEnergySummary;
   /** Genre each attendee picked when joining → how many people picked it (current run). */
   genres: Record<string, number>;
   /** How many songs one attendee can vote for at the same time. */
@@ -130,8 +145,9 @@ export interface JoinMessage {
   sessionId: string;
   eventId: string;
   participantId: string;
-  mood: Mood;
-  /** The genre this attendee wants to hear (lowercase), or omitted for "anything". */
+  /** Energy level 0–100 (low → high). Sent on join and whenever the attendee moves the slider. */
+  energy: CrowdEnergyLevel;
+  /** The genre this attendee wants to hear (lowercase), or omitted for "anything" / unchanged. */
   genre?: string;
 }
 
@@ -148,7 +164,8 @@ export interface VoteRetractMessage {
 export interface ParticipantState {
   run: number;
   joined: boolean;
-  mood: Mood | null;
+  /** This attendee's latest energy level (0–100), or null before the first set. */
+  energy: CrowdEnergyLevel | null;
   genre: string | null;
   /** Songs this attendee currently has a vote on. */
   votes: string[];
@@ -210,9 +227,13 @@ export const THEME_ALLOWLIST: VisualTheme[] = [
   "electric_blue",
 ];
 
-export const MOODS: Mood[] = ["chill", "hyped", "focused", "wild"];
-
 export const MAX_TAPS_PER_BATCH = 30;
+
+/** Clamp a crowd energy level to 0–100 as an integer. */
+export function clampCrowdEnergy(n: number): CrowdEnergyLevel {
+  if (!Number.isFinite(n)) return DEFAULT_CROWD_ENERGY;
+  return Math.max(MIN_CROWD_ENERGY, Math.min(MAX_CROWD_ENERGY, Math.round(n)));
+}
 
 // --- Appearance: chosen on the host page; every screen in the session (stage, phones) follows it ---
 

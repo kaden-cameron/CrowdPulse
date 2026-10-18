@@ -3,7 +3,7 @@
 // stage and host pages label them "Demo data". Never present this traffic as real people.
 //
 // Usage: node scripts/demo-crowd.mjs [--url http://localhost:8787] [--session demo]
-//          [--people 20] [--seconds 30] [--mood wild|hyped|focused|chill|mixed]
+//          [--people 20] [--seconds 30] [--energy 80|mixed]   (0–100, or mixed)
 
 import { randomUUID } from "node:crypto";
 
@@ -14,8 +14,7 @@ const BASE = (args.url ?? "http://localhost:8787").replace(/\/$/, "");
 const SESSION = args.session ?? "demo";
 const PEOPLE = Math.min(200, Number(args.people ?? 20));
 const SECONDS = Math.min(600, Number(args.seconds ?? 30));
-const MOOD = args.mood ?? "mixed";
-const MOODS = ["chill", "hyped", "focused", "wild"];
+const ENERGY_ARG = args.energy ?? args.mood ?? "mixed";
 
 const post = (path, body) =>
   fetch(`${BASE}${path}`, {
@@ -33,6 +32,12 @@ const pick = (xs) => xs[Math.floor(Math.random() * xs.length)];
 // A few favourite tracks so the queue shows a clear leader.
 const favourites = [...tracks].sort(() => Math.random() - 0.5).slice(0, 3);
 
+const pickEnergy = () => {
+  if (ENERGY_ARG === "mixed") return 20 + Math.floor(Math.random() * 81);
+  const n = Number(ENERGY_ARG);
+  return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 50;
+};
+
 console.log(`DEMO DATA: simulating ${PEOPLE} attendees for ${SECONDS}s against ${BASE} (session "${SESSION}")`);
 // The server hands out (signed) attendee ids; ask for simulated ones. An older server without
 // /api/participants accepts made-up "sim_" ids.
@@ -43,14 +48,23 @@ const newId = async () => {
   return (await res.json()).participantId;
 };
 const people = await Promise.all(Array.from({ length: PEOPLE }, newId));
-const tally = { moods: 0, votes: 0, taps: 0, rejected: 0 };
+const tally = { energy: 0, votes: 0, taps: 0, rejected: 0 };
 const count = (status, key, n = 1) => (status === 200 ? (tally[key] += n) : tally.rejected++);
 
-// Everyone joins with a mood.
+// Everyone joins with an energy level (and may nudge it later).
 await Promise.all(
   people.map(async (participantId) => {
-    const mood = MOOD === "mixed" ? pick(MOODS) : MOOD;
-    count(await post(`/api/sessions/${SESSION}/moods`, { sessionId: SESSION, eventId: randomUUID(), participantId, mood }), "moods");
+    const energy = pickEnergy();
+    count(
+      await post(`/api/sessions/${SESSION}/energy`, {
+        type: "session.join",
+        sessionId: SESSION,
+        eventId: randomUUID(),
+        participantId,
+        energy,
+      }),
+      "energy",
+    );
   }),
 );
 
@@ -73,9 +87,22 @@ while (Date.now() < end) {
         const n = 1 + Math.floor(Math.random() * (3 + 6 * progress));
         count(await post(`/api/sessions/${SESSION}/taps`, { sessionId: SESSION, eventId: randomUUID(), participantId, count: n }), "taps", n);
       }
+      // Occasional slider nudges so the host trend gauge moves.
+      if (Math.random() < 0.08) {
+        count(
+          await post(`/api/sessions/${SESSION}/energy`, {
+            type: "session.join",
+            sessionId: SESSION,
+            eventId: randomUUID(),
+            participantId,
+            energy: pickEnergy(),
+          }),
+          "energy",
+        );
+      }
     }),
   );
-  process.stdout.write(`\r  moods ${tally.moods}  votes ${tally.votes}  taps ${tally.taps}  rejected ${tally.rejected}   `);
+  process.stdout.write(`\r  energy ${tally.energy}  votes ${tally.votes}  taps ${tally.taps}  rejected ${tally.rejected}   `);
   await new Promise((r) => setTimeout(r, 1000));
 }
 console.log(`\nDone. All of the above is simulated demo data (participant IDs start with "sim_").`);

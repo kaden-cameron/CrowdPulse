@@ -273,8 +273,17 @@ export function LibraryCard({
 
   const shuffle = () =>
     withBusy("shuffle", () => {
-      const ids = shuffled(tracks.filter((t) => t.id !== playingId).map((t) => t.id));
-      return setQueue(ids, `Shuffled ${ids.length} songs into the queue.`);
+      // Host picks play before votes — never pull voted songs into the host queue or they
+      // would override crowd order. Only shuffle unvoted library songs.
+      const ids = shuffled(
+        tracks.filter((t) => t.id !== playingId && t.votes === 0 && t.boosts === 0).map((t) => t.id),
+      );
+      return setQueue(
+        ids,
+        ids.length
+          ? `Shuffled ${ids.length} unvoted song${ids.length === 1 ? "" : "s"} into the queue.`
+          : "Nothing to shuffle — every song has votes (or boosts).",
+      );
     });
 
   const clearLibrary = () => {
@@ -430,7 +439,7 @@ export function LibraryCard({
             disabled={!ready || busy !== null || tracks.length < 2}
             onClick={() => void shuffle()}
           >
-            {busy === "shuffle" ? "Shuffling…" : "🔀 Shuffle"}
+            {busy === "shuffle" ? "Shuffling…" : "Shuffle"}
           </button>
           <button type="button" className="btn ghost compact" disabled={!ready || busy !== null || !tracks.length} onClick={clearLibrary}>
             {busy === "clear" ? "Clearing…" : "Clear library"}

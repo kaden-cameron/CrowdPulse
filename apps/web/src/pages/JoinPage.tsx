@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import type { BoostConfig, Mood } from "@crowdpulse/shared";
+import { DEFAULT_CROWD_ENERGY, type BoostConfig, type CrowdEnergyLevel } from "@crowdpulse/shared";
 import { BoostPanel } from "../components/BoostPanel";
 import { SpotifySearch } from "../components/SpotifySearch";
 import { fetchBoostConfig } from "../lib/solana";
@@ -12,12 +12,12 @@ import { useSessionAppearance } from "../lib/theme";
 import { getParticipantId } from "../lib/ws";
 import { useSingleTab } from "../lib/singleTab";
 
-const MOODS: { id: Mood; label: string; hint: string }[] = [
-  { id: "chill", label: "Chill", hint: "Laid-back waves" },
-  { id: "hyped", label: "Hyped", hint: "Turn it up" },
-  { id: "focused", label: "Focused", hint: "Clean & crisp" },
-  { id: "wild", label: "Wild", hint: "Full send" },
-];
+function energyLabel(n: CrowdEnergyLevel): string {
+  if (n <= 25) return "Low";
+  if (n <= 50) return "Medium";
+  if (n <= 75) return "High";
+  return "Peak";
+}
 
 export function JoinPage() {
   const { sessionCode = "demo" } = useParams();
@@ -29,7 +29,7 @@ export function JoinPage() {
     voteFor,
     voteRejection,
     applyState,
-    setMood,
+    setEnergy,
     submitVote,
     retractVote,
     me,
@@ -38,19 +38,24 @@ export function JoinPage() {
   const tabs = useSingleTab(`crowdpulse-attendee-${sessionCode}`);
   useSessionAppearance(sessionCode, state?.appearance);
 
-  // Joined = this device picked a mood in the current run (the server remembers, so a reload or a
+  // Joined = this device set energy in the current run (the server remembers, so a reload or a
   // second tab goes straight to voting). A host "Start new run" sends everyone back to join.
   const joined = !!state && !!me && me.run === state.run && me.joined;
   const step: "join" | "vote" = joined ? "vote" : "join";
   const lastRun = readJoinedRun(sessionCode);
   const newRun = !!state && lastRun !== null && lastRun < state.run && !joined;
-  const [mood, setMoodLocal] = useState<Mood | null>(null);
+  const [energy, setEnergyLocal] = useState<CrowdEnergyLevel>(DEFAULT_CROWD_ENERGY);
   const [genre, setGenre] = useState<string | null>(null);
   const genreChoices = libraryGenres(state?.tracks ?? []);
   const maxVotes = state?.maxVotesPerPerson ?? 3;
   const votesLeft = Math.max(0, maxVotes - myVotes.length);
   const [boostConfig, setBoostConfig] = useState<BoostConfig | null>(null);
   const [boostTrack, setBoostTrack] = useState<string | null>(null);
+
+  // Keep the vote-page slider in sync with what the server last recorded for this device.
+  useEffect(() => {
+    if (me?.energy != null) setEnergyLocal(me.energy);
+  }, [me?.energy]);
 
   useEffect(() => {
     fetchBoostConfig()
@@ -59,9 +64,13 @@ export function JoinPage() {
   }, []);
 
   function continueToVote() {
-    if (!mood) return;
-    setMood(mood, genre);
+    setEnergy(energy, genre);
     if (state) saveJoinedRun(sessionCode, state.run);
+  }
+
+  function onEnergyChange(next: CrowdEnergyLevel) {
+    setEnergyLocal(next);
+    if (joined) setEnergy(next);
   }
 
   // Latest rejection that still applies, shown once above the list.
@@ -108,7 +117,7 @@ export function JoinPage() {
         <Window title="Welcome" className="join-panel" headingLevel={2}>
           {newRun && (
             <p className="feedback feedback-pending" role="status">
-              A new run just started — pick your mood to jump back in.
+              A new run just started — set your energy to jump back in.
             </p>
           )}
           <p className="session-kicker">You&apos;re joining</p>
@@ -118,23 +127,24 @@ export function JoinPage() {
             location, or microphone. Votes are shared only as totals.
           </p>
 
-          <fieldset className="mood-field">
-            <legend>Pick a mood</legend>
-            <div className="mood-grid">
-              {MOODS.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  className={`mood-chip ${mood === m.id ? "selected" : ""}`}
-                  onClick={() => setMoodLocal(m.id)}
-                  aria-pressed={mood === m.id}
-                >
-                  <span className="mood-label">{m.label}</span>
-                  <span className="mood-hint">{m.hint}</span>
-                </button>
-              ))}
+          <label className="energy-slider-field">
+            <span className="metric-label">
+              Your energy · {energyLabel(energy)} ({energy})
+            </span>
+            <div className="energy-slider-row">
+              <span className="energy-end">Low</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={energy}
+                onChange={(e) => setEnergyLocal(Number(e.target.value))}
+                aria-valuetext={`${energyLabel(energy)}, ${energy}`}
+              />
+              <span className="energy-end">High</span>
             </div>
-          </fieldset>
+          </label>
 
           <fieldset className="mood-field">
             <legend>What do you want to hear?</legend>
@@ -156,7 +166,7 @@ export function JoinPage() {
           <button
             type="button"
             className="btn primary wide"
-            disabled={!mood || !state}
+            disabled={!state}
             onClick={continueToVote}
           >
             Continue to vote
@@ -181,6 +191,25 @@ export function JoinPage() {
               {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
             </p>
           </div>
+
+          <label className="energy-slider-field compact">
+            <span className="metric-label">
+              Your energy · {energyLabel(energy)} ({energy}) — adjust anytime
+            </span>
+            <div className="energy-slider-row">
+              <span className="energy-end">Low</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={energy}
+                onChange={(e) => onEnergyChange(Number(e.target.value))}
+                aria-valuetext={`${energyLabel(energy)}, ${energy}`}
+              />
+              <span className="energy-end">High</span>
+            </div>
+          </label>
 
           <div role="status" aria-live="polite">
             {rejection && (
@@ -266,7 +295,7 @@ export function JoinPage() {
                   <p className="track-title">{track.title}</p>
                   <p className="track-meta">
                     {track.artist} · {track.votes} {track.votes === 1 ? "vote" : "votes"}
-                    {track.boosts > 0 && ` · ⚡${track.boosts}`}
+                    {track.boosts > 0 && ` · boost ×${track.boosts}`}
                     {track.status !== "open" && ` · ${track.status}`}
                   </p>
                 </div>
@@ -277,7 +306,7 @@ export function JoinPage() {
                     aria-label={`Boost ${track.title} with Solana devnet (optional)`}
                     onClick={() => setBoostTrack(track.id)}
                   >
-                    ⚡
+                    Boost
                   </button>
                 )}
                 <VoteButton

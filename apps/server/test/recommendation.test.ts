@@ -98,9 +98,10 @@ describe("recommendation flow", () => {
 
   it("GM-02: the input summary changes when the crowd changes", async () => {
     const before = buildSummary(store.getState(), 0, "hold_steady", []);
-    await store.recordMood({ mood: "chill", eventId: randomUUID(), participantId: "participant_a1" });
+    await store.recordEnergy({ energy: 20, eventId: randomUUID(), participantId: "participant_a1" });
     const after = buildSummary(store.getState(), 0, "hold_steady", []);
-    expect(after.mood_counts).not.toEqual(before.mood_counts);
+    expect(after.crowd_energy_average).not.toEqual(before.crowd_energy_average);
+    expect(after.crowd_energy_count).toBe(1);
   });
 
   it("a recommendation never changes the stage until the host approves", async () => {
@@ -198,7 +199,7 @@ describe.skipIf(!process.env.GEMINI_API_KEY)("Gemini live call", () => {
   it("GM-01: returns a schema-valid recommendation with a response ID", async () => {
     const live = new GeminiClient(process.env.GEMINI_API_KEY!, process.env.GEMINI_MODEL || undefined, 20_000);
     const liveSvc = new RecommendationService(store, live);
-    await store.recordMood({ mood: "wild", eventId: randomUUID(), participantId: "participant_l1" });
+    await store.recordEnergy({ energy: 95, eventId: randomUUID(), participantId: "participant_l1" });
     await store.submitVote({ trackId: "track_03", eventId: randomUUID(), participantId: "participant_l1" });
     const { recommendation } = (await liveSvc.recommend("raise_energy")) as {
       recommendation: import("@crowdpulse/shared").Recommendation;

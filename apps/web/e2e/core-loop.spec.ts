@@ -28,7 +28,6 @@ async function openPhone(browser: Browser): Promise<Page> {
   const page = await ctx.newPage();
   await page.goto("/join/demo");
   await expect(page.getByRole("heading", { name: "SwampHacks Main Stage" })).toBeVisible();
-  await page.getByRole("button", { name: /Wild/ }).click();
   await page.getByRole("button", { name: "Continue to vote" }).click();
   return page;
 }
@@ -136,7 +135,7 @@ test("Vote buttons come back after a track plays, and a new run starts fresh on 
   // The playing track can't be voted on from the page.
   await expect(phone.getByRole("button", { name: "Vote: Gator Glow" })).toBeDisabled();
 
-  // "Start new run" sends the phone back to pick a mood, with fresh buttons.
+  // "Start new run" sends the phone back to set energy, with fresh buttons.
   await phone.getByRole("button", { name: "Vote: Spanish Moss" }).click();
   await expect(phone.getByRole("button", { name: "Take back your vote for Spanish Moss" })).toBeVisible();
   expect((await request.post("/api/host/sessions/demo/reset", { headers: host })).status()).toBe(200);
@@ -325,8 +324,8 @@ test("Playlists: save the library under a name, clear it, load it back", async (
   await host.screenshot({ path: evidence("playlists.png"), fullPage: true });
 });
 
-test("The host can reset the crowd mood (votes stay)", async ({ browser, request }) => {
-  const phone = await openPhone(browser); // joins as Wild
+test("The host can reset crowd energy (votes stay)", async ({ browser, request }) => {
+  const phone = await openPhone(browser);
   await phone.getByRole("button", { name: "Vote: Stage Lightning" }).click();
   const host = await (await browser.newContext({ viewport: { width: 1300, height: 1400 } })).newPage();
   host.on("dialog", (d) => void d.accept());
@@ -334,12 +333,14 @@ test("The host can reset the crowd mood (votes stay)", async ({ browser, request
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
   await host.getByLabel(/Dev host key/).press("Enter");
   const crowd = host.locator(".crowd-card");
-  await expect(crowd.locator(".mood-bars li", { hasText: "wild" })).toContainText("1");
-  await crowd.getByRole("button", { name: /Reset mood/ }).click();
-  await expect(crowd.getByText("Crowd mood reset.")).toBeVisible();
-  await expect(crowd.locator(".mood-bars li", { hasText: "wild" })).toContainText("0");
+  await expect(crowd.getByText(/average/)).toBeVisible();
+  await expect(crowd.locator(".crowd-energy-readout strong")).not.toHaveText("");
+  await crowd.getByRole("button", { name: /Reset energy/ }).click();
+  await expect(crowd.getByText("Crowd energy reset.")).toBeVisible();
+  await expect(crowd.getByText(/0 set/)).toBeVisible();
   const state = await (await request.get("/api/sessions/demo/state")).json();
   expect(state.tracks.find((t: { id: string }) => t.id === "track_07").votes).toBe(1);
+  expect(state.crowdEnergy.count).toBe(0);
   // The phone stays on the vote screen.
   await expect(phone.getByRole("heading", { name: "Shape the queue" })).toBeVisible();
 });

@@ -1,9 +1,10 @@
 import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
-  MOODS,
+  DEFAULT_STAGE_VIEW,
   THEME_ALLOWLIST,
   type SessionState,
+  type StageView,
   type VisualTheme,
 } from "@crowdpulse/shared";
 import { AiPanel } from "../components/AiPanel";
@@ -20,10 +21,16 @@ import { QueueCard } from "../components/QueueCard";
 import { PlaylistsCard } from "../components/PlaylistsCard";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { ProfileIcon } from "../components/Icons";
-import { hostReset, hostResetCrowd, hostSetAppearance, hostSetVisual } from "../lib/host";
+import { hostReset, hostResetCrowd, hostSetAppearance, hostSetStageView, hostSetVisual } from "../lib/host";
 import { presetLabel } from "../lib/theme";
 import { PlayerCard } from "../components/PlayerCard";
 import { useAutoHide } from "../hooks/useAutoHide";
+
+function crowdTrendLabel(trend: number): string {
+  if (trend >= 3) return "Rising";
+  if (trend <= -3) return "Falling";
+  return "Steady";
+}
 
 
 export function HostPage() {
@@ -68,7 +75,28 @@ export function HostPage() {
     }
   }
 
-  const totalMoods = state ? MOODS.reduce((n, m) => n + state.moods[m], 0) : 0;
+  const crowd = state?.crowdEnergy;
+  const stageView = state?.stageView ?? DEFAULT_STAGE_VIEW;
+
+  async function setProjector(next: StageView) {
+    setBusy(true);
+    setMessage(null);
+    try {
+      applyState((await hostSetStageView(sessionCode, await access.getHeaders(), next)).state);
+      setMessage({
+        kind: "accepted",
+        text: next.auto
+          ? "Projector switches between queue and votes"
+          : next.panel === "votes"
+            ? "Projector shows the vote count"
+            : "Projector shows the queue",
+      });
+    } catch (err) {
+      setMessage({ kind: "rejected", text: err instanceof Error ? err.message : "Request failed" });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   // Nothing about the session (songs, queue, Gemini, numbers) is shown until a host signs in.
   if (!access.ready) {
@@ -228,7 +256,7 @@ export function HostPage() {
               onClick={() => {
                 if (
                   window.confirm(
-                    "Start a new run? Votes, moods, the queue and stage settings reset. Saved history is kept.",
+                    "Start a new run? Votes, crowd energy, the queue and stage settings reset. Saved history is kept.",
                   )
                 ) {
                   run("New run started", async () =>
@@ -237,9 +265,39 @@ export function HostPage() {
                 }
               }}
             >
-              Start new run ↺
+              Start new run
             </button>
           </div>
+
+          <fieldset className="mood-field">
+            <legend>Projector</legend>
+            <p className="host-sub">What the stage shows where the queue is.</p>
+            <div className="stage-view-row" role="group" aria-label="Projector shows">
+              {(["queue", "votes"] as const).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  className={`btn compact${!stageView.auto && stageView.panel === p ? " primary" : ""}`}
+                  aria-pressed={!stageView.auto && stageView.panel === p}
+                  disabled={busy || !access.ready}
+                  onClick={() => void setProjector({ panel: p, auto: false })}
+                >
+                  {p === "queue" ? "Queue" : "Votes"}
+                </button>
+              ))}
+              <button
+                type="button"
+                className={`btn compact${stageView.auto ? " primary" : ""}`}
+                aria-pressed={stageView.auto}
+                disabled={busy || !access.ready}
+                onClick={() => void setProjector({ ...stageView, auto: !stageView.auto })}
+                title="Switch between the queue and the vote count every 12 seconds"
+              >
+                Auto
+              </button>
+            </div>
+          </fieldset>
+
           <div role="status" aria-live="polite">
             {message && (
               <p className={`feedback feedback-${message.kind}`}>
@@ -291,46 +349,47 @@ export function HostPage() {
           onState={applyState}
         />
 
-        {/* Crowd mood, beside Playlists */}
+        {/* Crowd energy, beside Playlists */}
         <div className="host-block crowd-card">
           <div className="analytics-head">
-            <h2>Crowd mood</h2>
+            <h2>Crowd energy</h2>
             <button
               type="button"
               className="btn ghost compact"
               disabled={busy || !access.ready}
               onClick={() => {
-                if (window.confirm("Reset the crowd mood? Clears the mood tally, the genres people picked and the crowd energy. Votes, the queue and the library stay.")) {
+                if (window.confirm("Reset crowd energy? Clears attendee energy levels and genre picks. Votes, the queue and the library stay.")) {
                   void (async () => {
                     try {
                       applyState((await hostResetCrowd(sessionCode, await access.getHeaders())).state);
-                      setCrowdMsg({ kind: "accepted", text: "Crowd mood reset." });
+                      setCrowdMsg({ kind: "accepted", text: "Crowd energy reset." });
                     } catch (err) {
                       setCrowdMsg({ kind: "rejected", text: (err as Error).message });
                     }
                   })();
                 }
               }}
-              title="Clear moods, picked genres and crowd energy (votes, queue and library stay)"
+              title="Clear crowd energy and genre picks (votes, queue and library stay)"
             >
-              Reset mood ↺
+              Reset energy
             </button>
           </div>
-          <ul className="mood-bars">
-            {MOODS.map((m) => {
-              const n = state?.moods[m] ?? 0;
-              const pct = totalMoods ? Math.round((n / totalMoods) * 100) : 0;
-              return (
-                <li key={m}>
-                  <span>{m}</span>
-                  <span className="quest-bar">
-                    <div style={{ width: `${pct}%` }} />
-                  </span>
-                  <span>{n}</span>
-                </li>
-              );
-            })}
-          </ul>
+          <div className="crowd-energy-gauge" aria-live="polite">
+            <div className="crowd-energy-readout">
+              <strong>{crowd?.average ?? 50}</strong>
+              <span className="metric-label">average · {crowd?.count ?? 0} set</span>
+            </div>
+            <span className="quest-bar crowd-energy-bar" aria-hidden>
+              <div style={{ width: `${crowd?.average ?? 50}%` }} />
+            </span>
+            <p className="crowd-energy-trend">
+              Trend: <strong>{crowdTrendLabel(crowd?.trend ?? 0)}</strong>
+              {(crowd?.trend ?? 0) !== 0 && (
+                <span className="host-sub"> ({crowd!.trend > 0 ? "+" : ""}{crowd!.trend})</span>
+              )}
+            </p>
+            <p className="host-sub">Low → high from attendee sliders. Feeds the energy score and Gemini.</p>
+          </div>
           {crowdMsg && <p className={`feedback feedback-${crowdMsg.kind}`}>{crowdMsg.text}</p>}
           <h3 className="metric-label">Genres people want</h3>
           <ul className="genre-tally">

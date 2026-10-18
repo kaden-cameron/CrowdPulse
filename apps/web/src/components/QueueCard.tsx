@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { DEFAULT_STAGE_VIEW, type QueueItem, type SessionState, type StageView } from "@crowdpulse/shared";
-import { hostPlayTrack, hostSetQueue, hostSetStageView } from "../lib/host";
+import type { QueueItem, SessionState } from "@crowdpulse/shared";
+import { hostPlayTrack, hostSetQueue } from "../lib/host";
 
 // Host-page window: the queue. The host's picks play first, in the host's order (reorder, remove,
 // clear); after them come the crowd's top-voted songs. Add picks with "+ Queue" or Shuffle in Songs.
+// Projector queue/votes view lives in Settings (top right).
 
 export function QueueCard({
   sessionCode,
@@ -24,18 +25,6 @@ export function QueueCard({
   const picks = queue.filter((q) => q.hostPick);
   const voted = queue.filter((q) => !q.hostPick);
   const autoNext = state?.autoNext ?? [];
-  const view = state?.stageView ?? DEFAULT_STAGE_VIEW;
-  async function setView(next: StageView) {
-    setBusy(true);
-    setError(null);
-    try {
-      onState((await hostSetStageView(sessionCode, await getHeaders(), next)).state);
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  }
   const ids = picks.map((q) => q.trackId);
 
   async function save(next: string[]) {
@@ -88,35 +77,10 @@ export function QueueCard({
           Clear queue
         </button>
       </div>
-      {/* What the projector shows here: the queue or the vote count — or both, switching on its own. */}
-      <div className="stage-view-row" role="group" aria-label="Projector shows">
-        <span className="metric-label">Projector</span>
-        {(["queue", "votes"] as const).map((p) => (
-          <button
-            key={p}
-            type="button"
-            className={`btn compact${!view.auto && view.panel === p ? " primary" : ""}`}
-            aria-pressed={!view.auto && view.panel === p}
-            disabled={!ready || busy}
-            onClick={() => void setView({ panel: p, auto: false })}
-          >
-            {p === "queue" ? "Queue" : "Votes"}
-          </button>
-        ))}
-        <button
-          type="button"
-          className={`btn compact${view.auto ? " primary" : ""}`}
-          aria-pressed={view.auto}
-          disabled={!ready || busy}
-          onClick={() => void setView({ ...view, auto: !view.auto })}
-          title="Switch between the queue and the vote count every 12 seconds"
-        >
-          ⟳ Auto
-        </button>
-      </div>
       <p className="host-sub">
         Your picks play first, in this order. Then the crowd&apos;s top votes.
         {autoNext.length > 0 && " “auto” fills the rest: what plays on its own after the queue."}
+        {" "}Projector view is in Settings.
       </p>
       <ol className="panel host-queue-list">
         {picks.map((q, i) => (
@@ -169,7 +133,7 @@ export function QueueCard({
               <strong>{q.title}</strong>
               <em>
                 {q.artist} · {q.votes} vote{q.votes === 1 ? "" : "s"}
-                {q.boosts > 0 && ` · ⚡${q.boosts}`}
+                {q.boosts > 0 && ` · boost ×${q.boosts}`}
               </em>
             </span>
             {playButton(q)}
@@ -188,7 +152,7 @@ export function QueueCard({
           </li>
         ))}
         {!queue.length && !autoNext.length && (
-          <li className="host-sub">Empty — add songs with “+ Queue” or 🔀 Shuffle, or wait for votes.</li>
+          <li className="host-sub">Empty — add songs with “+ Queue” or Shuffle, or wait for votes.</li>
         )}
       </ol>
       {error && <p className="feedback feedback-rejected">{error}</p>}

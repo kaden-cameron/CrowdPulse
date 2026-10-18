@@ -1,5 +1,5 @@
 // Staged load test (Doc 07 §5, VU-06). Ramps 5 → 10 → 25 → 50 virtual attendees. Each holds a
-// WebSocket subscription like a real phone and sends a mix of taps, votes and moods (~1 action/s).
+// WebSocket subscription like a real phone and sends a mix of taps, votes and energy (~1 action/s).
 // Records request rate, p50/p95 latency, HTTP error rate, WebSocket disconnects, and how long a
 // vote takes to come back over the socket. Results are test measurements for the stated target
 // and client machine — not claimed capacity.
@@ -25,8 +25,6 @@ const SESSION = args.session ?? "demo";
 const STAGES = (args.stages ?? "5,10,25,50").split(",").map(Number).filter((n) => n > 0 && n <= 200);
 const SECONDS = Math.max(5, Math.min(300, Number(args.seconds ?? 20)));
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const MOODS = ["chill", "hyped", "focused", "wild"];
-
 const pct = (xs, p) => {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b);
@@ -104,7 +102,7 @@ async function runStage(users) {
       return { status, json, t0 };
     };
 
-    await post(`/api/sessions/${SESSION}/moods`, { mood: MOODS[n % MOODS.length] });
+    await post(`/api/sessions/${SESSION}/energy`, { energy: 20 + (n * 7) % 81 });
     await sleep(Math.random() * 1000); // spread start times
     while (Date.now() < deadline) {
       const r = Math.random();
@@ -121,7 +119,7 @@ async function runStage(users) {
       } else if (r < 0.9) {
         await post(`/api/sessions/${SESSION}/taps`, { count: 1 + Math.floor(Math.random() * 5) });
       } else {
-        await post(`/api/sessions/${SESSION}/moods`, { mood: MOODS[Math.floor(Math.random() * MOODS.length)] });
+        await post(`/api/sessions/${SESSION}/energy`, { energy: Math.floor(Math.random() * 101) });
       }
       await sleep(700 + Math.random() * 600); // ~1 action per second per attendee
     }

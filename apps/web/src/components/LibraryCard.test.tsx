@@ -178,13 +178,18 @@ describe("LibraryCard", () => {
     await waitFor(() => expect(calls.find((c) => c.url.endsWith("/queue"))?.body).toEqual({ trackIds: ["track_02", "track_02"] }));
   });
 
-  it("Shuffle puts every library song into the queue in random order", async () => {
+  it("Shuffle puts unvoted library songs into the queue (voted songs stay ordered by votes)", async () => {
     const calls = mockNet();
-    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
-    await userEvent.click(screen.getByRole("button", { name: "🔀 Shuffle" }));
+    const withVotes = {
+      ...state,
+      tracks: state.tracks.map((t, i) => (i === 0 ? { ...t, votes: 3 } : t)),
+    } as SessionState;
+    render(<LibraryCard sessionCode="demo" state={withVotes} ready getHeaders={async () => ({})} onState={() => {}} />);
+    await userEvent.click(screen.getByRole("button", { name: "Shuffle" }));
     await waitFor(() => expect(calls.some((c) => c.url.endsWith("/queue"))).toBe(true));
     const ids = (calls.find((c) => c.url.endsWith("/queue"))!.body as { trackIds: string[] }).trackIds;
-    expect([...ids].sort()).toEqual(["track_01", "track_02"]);
+    expect(ids).toEqual(["track_02"]);
+    expect(ids).not.toContain("track_01");
   });
 
   it("Clear library asks first, then empties it", async () => {

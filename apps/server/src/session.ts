@@ -17,17 +17,19 @@ import {
   type ParticipantState,
   DEMO_TRACKS,
   MAX_BOOSTS_PER_TRACK,
-  MOODS,
+  DEFAULT_CROWD_ENERGY,
+  clampCrowdEnergy,
   APPEARANCE_PRESETS,
   DEFAULT_APPEARANCE,
   DEFAULT_STAGE_VIEW,
   type StageView,
   type Appearance,
+  type CrowdEnergyLevel,
+  type CrowdEnergySummary,
   type LatestEvent,
   type PlaybackMode,
   type PlaybackReportEvent,
   type PlaybackState,
-  type Mood,
   type QueueItem,
   type SessionState,
   type Track,
@@ -47,9 +49,9 @@ const QUEST_BASE_GOAL = 100;
 const PLAYER_ONLINE_MS = 15_000;
 
 // Weights feeding the activity half of the energy score.
-const ACTIVITY_WEIGHT = { vote: 3, mood: 2, tap: 1 } as const;
-// Mood energies feeding the mood half of the energy score.
-const MOOD_ENERGY: Record<Mood, number> = {
+const ACTIVITY_WEIGHT = { vote: 3, energy: 2, tap: 1 } as const;
+/** Older TigerData rows stored discrete moods — map them onto the 0–100 slider. */
+const LEGACY_MOOD_ENERGY: Record<string, number> = {
   chill: 20,
   focused: 45,
   hyped: 80,
@@ -59,10 +61,10 @@ const MOOD_ENERGY: Record<Mood, number> = {
 // Shared by every session so the server restart is visible to clients.
 const EPOCH = randomUUID();
 
-function themeForEnergy(energy: number, mood?: Mood): VisualTheme {
-  if (mood === "chill" || energy < 25) return "calm_waves";
-  if (mood === "focused" || energy < 50) return "electric_blue";
-  if (mood === "wild" || energy >= 80) return "neon_pulse";
+function themeForEnergy(energy: number): VisualTheme {
+  if (energy < 25) return "calm_waves";
+  if (energy < 50) return "electric_blue";
+  if (energy >= 80) return "neon_pulse";
   return "sunset";
 }
 
@@ -130,7 +132,9 @@ export class SessionStore {
   private boosts = new Map<string, number>(); // trackId -> verified boosts since it last played
   private lastPlayedAt = new Map<string, number>();
   private nowPlaying: CatalogTrack | null = null;
-  private moods = new Map<string, Mood>(); // participantId -> latest mood
+  private energies = new Map<string, CrowdEnergyLevel>(); // participantId -> latest energy (0–100)
+  /** Recent crowd-energy averages, for the host trend gauge. */
+  private crowdEnergyHistory: { at: number; average: number }[] = [];
   private genres = new Map<string, string>(); // participantId -> genre picked when joining
   /** Phones that joined this run (kept when the host resets the crowd mood, so nobody is sent back). */
   private joined = new Set<string>();
@@ -244,11 +248,11 @@ export class SessionStore {
               ? "queued"
               : "open",
       })),
-      moods: this.moodTally(),
+      crowdEnergy: this.crowdEnergySummary(),
       genres: this.genreTally(),
       maxVotesPerPerson: MAX_VOTES_PER_PERSON,
       visualState: this.hostVisual ?? {
-        theme: themeForEnergy(this.energyScore, this.dominantMood()),
+        theme: themeForEnergy(this.energyScore),
         intensity: intensityForEnergy(this.energyScore),
       },
       visualMode: this.hostVisual ? "host" : "auto",
@@ -314,33 +318,47 @@ export class SessionStore {
     });
   }
 
-  /** One attendee's own view (their votes, mood, genre), for reloads and other tabs on the device. */
+  /** One attendee's own view (their votes, energy, genre), for reloads and other tabs on the device. */
   participantState(participantId: string): ParticipantState {
     return {
       run: this.run,
       joined: this.joined.has(participantId),
-      mood: this.moods.get(participantId) ?? null,
+      energy: this.energies.get(participantId) ?? null,
       genre: this.genres.get(participantId) ?? null,
       votes: this.catalog.filter((t) => this.votes.get(t.id)?.has(participantId)).map((t) => t.id),
     };
   }
 
-  recordMood(input: {
-    mood: Mood;
+  /**
+   * Join or update crowd energy. Attendees can move the slider anytime; genre is optional and
+   * only changes when provided (omitting it keeps the previous pick).
+   */
+  recordEnergy(input: {
+    energy: CrowdEnergyLevel;
     genre?: string;
     eventId: string;
     participantId: string;
   }): Promise<EventOutcome> {
+    const energy = clampCrowdEnergy(input.energy);
     return this.handleEvent(input, () => ({
-      record: { eventType: "mood", value: null, metadata: { mood: input.mood, ...(input.genre ? { genre: input.genre } : {}) } },
+      record: {
+        eventType: "mood",
+        value: energy,
+        metadata: { energy, ...(input.genre ? { genre: input.genre } : {}) },
+      },
       commit: () => {
-        this.moods.set(input.participantId, input.mood);
+        const first = !this.joined.has(input.participantId);
+        this.energies.set(input.participantId, energy);
         this.joined.add(input.participantId);
         if (input.genre) this.genres.set(input.participantId, input.genre);
-        else this.genres.delete(input.participantId);
         return {
-          weight: ACTIVITY_WEIGHT.mood,
-          event: { type: "mood.selected", message: `Someone is feeling ${input.mood}` },
+          weight: ACTIVITY_WEIGHT.energy,
+          event: {
+            type: first ? "energy.joined" : "energy.updated",
+            message: first
+              ? `Someone joined at energy ${energy}`
+              : `Someone set energy to ${energy}`,
+          },
         };
       },
     }));
@@ -402,7 +420,7 @@ export class SessionStore {
               type: "boost.verified",
               message: capped
                 ? `Boost verified for ${track.title} (cap reached)`
-                : `⚡ Verified devnet boost for ${track.title}`,
+                : `Verified devnet boost for ${track.title}`,
             },
           };
         },
@@ -621,15 +639,15 @@ export class SessionStore {
   }
 
   /**
-   * Host action: reset the crowd mood — the mood tally, the genres people picked and the crowd
-   * energy (back to neutral). Votes, queue, library and playback stay; phones stay joined.
+   * Host action: reset crowd energy — clear attendee energy levels and genre picks (score back to
+   * neutral). Votes, queue, library and playback stay; phones stay joined.
    */
   resetCrowd(): Promise<EventOutcome> {
     return this.exclusive(async () => {
       const saved = await this.persistHostAction("crowd_reset", {});
       if (saved) return saved;
       this.applyCrowdReset();
-      this.change({ type: "crowd.reset", message: "Crowd mood reset — waiting for fresh vibes" });
+      this.change({ type: "crowd.reset", message: "Crowd energy reset — waiting for fresh levels" });
       return { status: "accepted", state: this.getState() };
     });
   }
@@ -650,10 +668,11 @@ export class SessionStore {
   }
 
   private applyCrowdReset() {
-    this.moods.clear();
+    this.energies.clear();
     this.genres.clear();
     this.activity = [];
     this.energyHistory = [];
+    this.crowdEnergyHistory = [];
     this.recomputeEnergy();
   }
 
@@ -1021,6 +1040,9 @@ export class SessionStore {
     const now = this.now();
     this.energyHistory.push({ at: now, score: this.energyScore });
     this.energyHistory = this.energyHistory.filter((e) => now - e.at <= 120_000);
+    const avg = this.crowdEnergyAverage();
+    this.crowdEnergyHistory.push({ at: now, average: avg });
+    this.crowdEnergyHistory = this.crowdEnergyHistory.filter((e) => now - e.at <= 120_000);
     const playerFlipped = this.playerOnline() !== this.playerWasOnline;
     if (playerFlipped) {
       this.playerWasOnline = !this.playerWasOnline;
@@ -1105,15 +1127,28 @@ export class SessionStore {
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.vote });
           }
           break;
-        case "mood":
-          if (r.participantId && MOODS.includes(meta.mood as Mood)) {
-            this.moods.set(r.participantId, meta.mood as Mood);
+        case "mood": {
+          // Current rows store `energy` (0–100). Older rows stored a discrete `mood` string.
+          const fromLegacy =
+            typeof meta.mood === "string" && meta.mood in LEGACY_MOOD_ENERGY
+              ? LEGACY_MOOD_ENERGY[meta.mood]
+              : null;
+          const raw =
+            typeof meta.energy === "number"
+              ? meta.energy
+              : typeof r.value === "number"
+                ? r.value
+                : fromLegacy;
+          if (r.participantId && raw !== null && Number.isFinite(raw)) {
+            this.energies.set(r.participantId, clampCrowdEnergy(raw));
             this.joined.add(r.participantId);
-            if (typeof meta.genre === "string" && GENRE_PATTERN.test(meta.genre)) this.genres.set(r.participantId, meta.genre);
-            else this.genres.delete(r.participantId);
-            this.activity.push({ at, weight: ACTIVITY_WEIGHT.mood });
+            if (typeof meta.genre === "string" && GENRE_PATTERN.test(meta.genre)) {
+              this.genres.set(r.participantId, meta.genre);
+            }
+            this.activity.push({ at, weight: ACTIVITY_WEIGHT.energy });
           }
           break;
+        }
         case "unvote":
           if (typeof meta.trackId === "string" && r.participantId) this.applyUnvote(meta.trackId, r.participantId);
           break;
@@ -1495,12 +1530,13 @@ export class SessionStore {
     this.boosts.clear();
     this.lastPlayedAt.clear();
     this.nowPlaying = null;
-    this.moods.clear();
+    this.energies.clear();
     this.genres.clear();
     this.joined.clear();
     this.participants.clear();
     this.activity = [];
     this.energyHistory = [];
+    this.crowdEnergyHistory = [];
     this.questLevel = 1;
     this.questProgress = 0;
     this.hostVisual = null;
@@ -1537,6 +1573,9 @@ export class SessionStore {
   private change(event: Omit<LatestEvent, "at">) {
     this.latestEvent = { ...event, at: new Date(this.now()).toISOString() };
     this.recomputeEnergy();
+    const now = this.now();
+    this.crowdEnergyHistory.push({ at: now, average: this.crowdEnergyAverage() });
+    this.crowdEnergyHistory = this.crowdEnergyHistory.filter((e) => now - e.at <= 120_000);
     this.bump();
   }
 
@@ -1546,17 +1585,41 @@ export class SessionStore {
     for (const listener of this.listeners) listener();
   }
 
-  // Energy = 60% recent activity (last 30s, saturating) + 40% crowd mood (neutral 50 if none).
+  // Energy = 60% recent activity (last 30s, saturating) + 40% crowd energy average (neutral 50 if none).
   private recomputeEnergy() {
     const cutoff = this.now() - ACTIVITY_WINDOW_MS;
     this.activity = this.activity.filter((a) => a.at >= cutoff);
     const weighted = this.activity.reduce((sum, a) => sum + a.weight, 0);
     const activityScore = Math.min(100, weighted * 2);
-    const moods = [...this.moods.values()];
-    const moodScore = moods.length
-      ? moods.reduce((sum, m) => sum + MOOD_ENERGY[m], 0) / moods.length
-      : 50;
-    this.energyScore = Math.round(0.6 * activityScore + 0.4 * moodScore);
+    const crowdScore = this.crowdEnergyAverage();
+    this.energyScore = Math.round(0.6 * activityScore + 0.4 * crowdScore);
+  }
+
+  private crowdEnergyAverage(): number {
+    const levels = [...this.energies.values()];
+    if (!levels.length) return DEFAULT_CROWD_ENERGY;
+    return levels.reduce((sum, n) => sum + n, 0) / levels.length;
+  }
+
+  private crowdEnergySummary(): CrowdEnergySummary {
+    const levels = [...this.energies.values()];
+    const average = levels.length
+      ? Math.round(levels.reduce((sum, n) => sum + n, 0) / levels.length)
+      : DEFAULT_CROWD_ENERGY;
+    return {
+      average,
+      count: levels.length,
+      trend: this.crowdEnergyTrend(),
+    };
+  }
+
+  /** Change in the crowd's average energy over roughly the last 30s. */
+  private crowdEnergyTrend(windowMs = 30_000): number {
+    const now = this.now();
+    const cutoff = now - windowMs;
+    const past = this.crowdEnergyHistory.find((e) => e.at >= cutoff);
+    const current = this.crowdEnergyAverage();
+    return past ? Math.round(current - past.average) : 0;
   }
 
   private allowRequest(clientKey: string): boolean {
@@ -1634,18 +1697,4 @@ export class SessionStore {
     return QUEST_BASE_GOAL * this.questLevel;
   }
 
-  private dominantMood(): Mood | undefined {
-    const tally = this.moodTally();
-    const top = (Object.entries(tally) as [Mood, number][]).sort(
-      (a, b) => b[1] - a[1],
-    )[0];
-    if (!top || top[1] === 0) return undefined;
-    return top[0];
-  }
-
-  private moodTally(): Record<Mood, number> {
-    const tally = Object.fromEntries(MOODS.map((m) => [m, 0])) as Record<Mood, number>;
-    for (const m of this.moods.values()) tally[m] += 1;
-    return tally;
-  }
 }

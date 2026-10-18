@@ -88,7 +88,7 @@ describe("replay", () => {
     await original.submitVote(vote("track_05", "participant_a1"));
     await original.submitVote(vote("track_05", "participant_b2"));
     await original.submitVote(vote("track_06", "participant_a1"));
-    await original.recordMood({ mood: "wild", eventId: randomUUID(), participantId: "participant_a1" });
+    await original.recordEnergy({ energy: 95, eventId: randomUUID(), participantId: "participant_a1" });
     await original.recordTaps({ count: 12, eventId: randomUUID(), participantId: "participant_b2" });
     await original.advance();
     await original.setVisual({ theme: "neon_pulse", intensity: 0.9 });
@@ -100,7 +100,8 @@ describe("replay", () => {
     const b = restored.getState();
     expect(b.tracks).toEqual(a.tracks);
     expect(b.nowPlaying).toEqual(a.nowPlaying);
-    expect(b.moods).toEqual(a.moods);
+    expect(b.crowdEnergy.average).toBe(a.crowdEnergy.average);
+    expect(b.crowdEnergy.count).toBe(a.crowdEnergy.count);
     expect(b.crowdQuest).toEqual(a.crowdQuest);
     expect(b.visualState).toEqual(a.visualState);
     expect(b.participants).toBe(a.participants);

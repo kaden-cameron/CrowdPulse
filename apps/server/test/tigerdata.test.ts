@@ -134,11 +134,12 @@ describe.skipIf(!url)("TigerData integration (Doc 03)", () => {
     try {
       const live = new SessionStore(id, "Restart test", { persist: db.persist.bind(db) });
       await live.submitVote({ trackId: "track_03", eventId: randomUUID(), participantId: "participant_x1" });
-      await live.recordMood({ mood: "hyped", eventId: randomUUID(), participantId: "participant_x1" });
+      await live.recordEnergy({ energy: 75, eventId: randomUUID(), participantId: "participant_x1" });
       const restored = new SessionStore(id, "Restart test");
       restored.replay(await db.loadEvents(id));
       expect(restored.getState().tracks).toEqual(live.getState().tracks);
-      expect(restored.getState().moods).toEqual(live.getState().moods);
+      expect(restored.getState().crowdEnergy.average).toBe(live.getState().crowdEnergy.average);
+      expect(restored.getState().crowdEnergy.count).toBe(live.getState().crowdEnergy.count);
     } finally {
       await db.deleteSession(id);
     }

@@ -183,7 +183,7 @@ export function StagePage() {
                       <strong>{item.title}</strong>
                       <em>
                         {item.artist} · {item.votes}
-                        {item.boosts > 0 && ` · ⚡${item.boosts}`}
+                        {item.boosts > 0 && ` · boost ×${item.boosts}`}
                       </em>
                     </span>
                   </li>
@@ -251,7 +251,7 @@ function VoteCount({ state }: { state: SessionState | null }) {
             </span>
             <span className="vote-bar-count" aria-label={`${t.votes} votes`}>
               {t.votes}
-              {t.boosts > 0 && <small> ⚡{t.boosts}</small>}
+              {t.boosts > 0 && <small> boost ×{t.boosts}</small>}
             </span>
           </li>
         ))}

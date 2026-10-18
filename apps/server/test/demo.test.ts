@@ -24,7 +24,7 @@ describe("demo reset (Doc 08: two runs without manual DB edits)", () => {
     const { store, saved } = persisted();
     const v = { trackId: "track_01", eventId: randomUUID(), participantId: "participant_a1" };
     await store.submitVote(v);
-    await store.recordMood({ mood: "wild", eventId: randomUUID(), participantId: "participant_a1" });
+    await store.recordEnergy({ energy: 95, eventId: randomUUID(), participantId: "participant_a1" });
     await store.setVisual({ theme: "sunset", intensity: 0.7 });
     await store.advance();
 

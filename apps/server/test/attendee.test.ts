@@ -70,8 +70,8 @@ describe("joining: genre and one identity per device", () => {
     const { app, store } = setup();
     const join = (participantId: string, genre?: string) =>
       request(app)
-        .post("/api/sessions/demo/moods")
-        .send({ sessionId: "demo", eventId: randomUUID(), participantId, mood: "hyped", ...(genre ? { genre } : {}) });
+        .post("/api/sessions/demo/energy")
+        .send({ sessionId: "demo", eventId: randomUUID(), participantId, energy: 75, ...(genre ? { genre } : {}) });
     expect((await join("participant_g1", "house")).status).toBe(200);
     expect((await join("participant_g2", "house")).status).toBe(200);
     expect((await join("participant_g3")).status).toBe(200); // "Anything"
@@ -81,12 +81,12 @@ describe("joining: genre and one identity per device", () => {
 
   it("a device's own state (joined, genre, votes) comes back on reload, per run", async () => {
     const { app, vote, me, store } = setup();
-    expect((await me()).body).toEqual({ run: 1, joined: false, mood: null, genre: null, votes: [] });
+    expect((await me()).body).toEqual({ run: 1, joined: false, energy: null, genre: null, votes: [] });
     await request(app)
-      .post("/api/sessions/demo/moods")
-      .send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_att1", mood: "chill", genre: "lofi" });
+      .post("/api/sessions/demo/energy")
+      .send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_att1", energy: 20, genre: "lofi" });
     await vote("track_05");
-    expect((await me()).body).toEqual({ run: 1, joined: true, mood: "chill", genre: "lofi", votes: ["track_05"] });
+    expect((await me()).body).toEqual({ run: 1, joined: true, energy: 20, genre: "lofi", votes: ["track_05"] });
     await store.reset();
     expect((await me()).body).toMatchObject({ run: 2, joined: false, votes: [] });
     expect((await request(app).get("/api/sessions/demo/participants/bad!id")).status).toBe(400);
@@ -108,7 +108,7 @@ describe("Gemini song request (genre + popularity)", () => {
   it("limits Gemini's choices to the genre and passes the popularity range", async () => {
     const { buildSummary } = await import("../src/recommendation.js");
     const { store, app } = setup();
-    await requestApp(app).post("/api/sessions/demo/moods").send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_g1", mood: "hyped", genre: "techno" });
+    await requestApp(app).post("/api/sessions/demo/energy").send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_g1", energy: 75, genre: "techno" });
     const s = buildSummary(store.getState(), 0, "hold_steady", [], [], { prompt: "", genres: ["house", "techno"], artists: [], includeFeatures: false, minStreams: 1_000_000, maxStreams: null });
     expect(s.eligible_tracks.map((t) => t.track_id)).toEqual(["track_01", "track_03"]); // the house and techno songs
     expect(s.host_request).toEqual({ description: null, genres: ["house", "techno"], artists: null, min_streams: 1_000_000, max_streams: null });
@@ -310,28 +310,28 @@ describe("host-only analytics", () => {
   });
 });
 
-describe("reset crowd mood", () => {
-  it("clears moods, picked genres and energy — keeps votes, queue and joined phones — and replays", async () => {
+describe("reset crowd energy", () => {
+  it("clears energy levels and genres — keeps votes, queue and joined phones — and replays", async () => {
     const { app, store, saved, vote, me } = setup();
-    for (const [p, mood, genre] of [["participant_m1", "wild", "house"], ["participant_m2", "hyped", "techno"]] as const) {
-      await requestApp(app).post("/api/sessions/demo/moods").send({ sessionId: "demo", eventId: randomUUID(), participantId: p, mood, genre });
+    for (const [p, energy, genre] of [["participant_m1", 100, "house"], ["participant_m2", 75, "techno"]] as const) {
+      await requestApp(app).post("/api/sessions/demo/energy").send({ sessionId: "demo", eventId: randomUUID(), participantId: p, energy, genre });
     }
-    await requestApp(app).post("/api/sessions/demo/moods").send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_att1", mood: "chill" });
+    await requestApp(app).post("/api/sessions/demo/energy").send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_att1", energy: 20 });
     await vote("track_04");
-    expect(store.getState().moods.wild).toBe(1);
+    expect(store.getState().crowdEnergy.count).toBe(3);
     const before = store.getState().energyScore;
     expect((await requestApp(app).post("/api/host/sessions/demo/crowd/reset")).status).toBe(401);
     expect((await requestApp(app).post("/api/host/sessions/demo/crowd/reset").set("x-host-key", "k")).status).toBe(200);
     const s = store.getState();
-    expect(Object.values(s.moods).every((n) => n === 0)).toBe(true);
+    expect(s.crowdEnergy).toMatchObject({ average: 50, count: 0 });
     expect(s.genres).toEqual({});
-    expect(s.energyScore).toBe(20); // neutral: no activity, no moods
+    expect(s.energyScore).toBe(20); // neutral: no activity, no crowd energy set
     expect(s.energyScore).toBeLessThan(before);
     expect(s.tracks.find((t) => t.id === "track_04")?.votes).toBe(1); // votes stay
     expect((await me()).body.joined).toBe(true); // phones aren't sent back to join
     const restored = new SessionStore("demo", "Demo");
     restored.replay(saved);
     expect(restored.getState().genres).toEqual({});
-    expect(restored.getState().moods.wild).toBe(0);
+    expect(restored.getState().crowdEnergy.count).toBe(0);
   });
 });

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   PARTICIPANT_REJOIN,
+  clampCrowdEnergy,
   type ConnectionStatus,
-  type Mood,
+  type CrowdEnergyLevel,
   type ParticipantState,
   type SessionState,
   type VoteFeedback,
@@ -109,7 +110,7 @@ export function useSessionSocket(
               ? result.status !== "rejected" || result.reason === "Already voted for this track"
               : !(result.status !== "rejected" || result.reason === "No vote to take back");
           setMe((prev) => {
-            const m = prev ?? { run: 0, joined: true, mood: null, genre: null, votes: [] };
+            const m = prev ?? { run: 0, joined: true, energy: null, genre: null, votes: [] };
             return { ...m, votes: has ? [...new Set([...m.votes, op.trackId])] : m.votes.filter((id) => id !== op.trackId) };
           });
           if (op.kind === "unvote") {
@@ -184,12 +185,28 @@ export function useSessionSocket(
     };
   }, [sessionId, role, applyState]);
 
-  function setMood(mood: Mood, genre?: string | null) {
+  /** Join (first call) or update this device's energy slider anytime. Genre only changes when passed. */
+  function setEnergy(energy: CrowdEnergyLevel, genre?: string | null) {
+    const level = clampCrowdEnergy(energy);
     const eventId = createEventId();
+    const genreOpt = genre === undefined ? undefined : genre || undefined;
     void ensureParticipantId().then((participantId) =>
-      socketRef.current?.sendEvent({ type: "session.join", sessionId, eventId, participantId, mood, ...(genre ? { genre } : {}) }),
+      socketRef.current?.sendEvent({
+        type: "session.join",
+        sessionId,
+        eventId,
+        participantId,
+        energy: level,
+        ...(genreOpt ? { genre: genreOpt } : {}),
+      }),
     );
-    setMe((m) => ({ run: state?.run ?? m?.run ?? 0, joined: true, mood, genre: genre ?? null, votes: m?.votes ?? [] }));
+    setMe((m) => ({
+      run: state?.run ?? m?.run ?? 0,
+      joined: true,
+      energy: level,
+      genre: genre === undefined ? (m?.genre ?? null) : genre,
+      votes: m?.votes ?? [],
+    }));
   }
 
   function submitVote(trackId: string) {
@@ -248,7 +265,7 @@ export function useSessionSocket(
     voteFor,
     voteRejection,
     applyState,
-    setMood,
+    setEnergy,
     submitVote,
     retractVote,
     me,

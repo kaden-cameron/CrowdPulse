@@ -326,7 +326,7 @@ export function AiPanel({
             onClick={() => void find(false)}
             title="Lists songs for a description, an artist or a genre, or recognizes lyrics — even songs not in the library"
           >
-            {busy === "find" ? "Looking it up…" : "🔎 Find songs"}
+            {busy === "find" ? "Looking it up…" : "Find songs"}
           </button>
           <InfoTip label="Find songs">
             Lists songs from all of Spotify for your description, artists or genres — or recognizes a song from its lyrics. Tick the
@@ -350,7 +350,7 @@ export function AiPanel({
           onClick={() => void find(true)}
           title="A random song in these genres and popularity range (popular songs come up more often)"
         >
-          {busy === "surprise" ? "Picking…" : "🎲 Surprise me"}
+          {busy === "surprise" ? "Picking…" : "Surprise me"}
         </button>
         <InfoTip label="Surprise me">
           One random song in your genres, artists and popularity range that isn&apos;t in the library yet. Popular songs come up more

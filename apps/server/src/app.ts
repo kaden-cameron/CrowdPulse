@@ -19,7 +19,8 @@ import {
   PLAYBACK_MODES,
   MAX_TAPS_PER_BATCH,
   PARTICIPANT_REJOIN,
-  MOODS,
+  MAX_CROWD_ENERGY,
+  MIN_CROWD_ENERGY,
   THEME_ALLOWLIST,
   type EventResultMessage,
   type AppearancePreset,
@@ -27,7 +28,6 @@ import {
   type LibraryAddResult,
   type PlaybackMode,
   type VisualTheme,
-  type Mood,
 } from "@crowdpulse/shared";
 import { log } from "./log.js";
 import { RateLimiter } from "./rateLimit.js";
@@ -65,7 +65,7 @@ const JoinSchema = z
     sessionId,
     eventId,
     participantId,
-    mood: z.enum(MOODS as [Mood, ...Mood[]]),
+    energy: z.number().int().min(MIN_CROWD_ENERGY).max(MAX_CROWD_ENERGY),
     genre: z.string().regex(GENRE_PATTERN).optional(),
   })
   .strict();
@@ -190,7 +190,7 @@ export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute 
       : event.type === "vote.retract"
         ? session.retractVote(event)
         : event.type === "session.join"
-        ? session.recordMood(event)
+        ? session.recordEnergy(event)
         : session.recordTaps(event));
 
     if (outcome.status === "rejected") {
@@ -468,10 +468,11 @@ export function createApp(options: AppOptions) {
       );
     };
   app.post("/api/sessions/:id/votes", eventRoute("vote.submit"));
-  app.post("/api/sessions/:id/moods", eventRoute("session.join"));
+  app.post("/api/sessions/:id/moods", eventRoute("session.join")); // legacy path; same as /energy
+  app.post("/api/sessions/:id/energy", eventRoute("session.join"));
   app.post("/api/sessions/:id/votes/retract", eventRoute("vote.retract"));
 
-  // An attendee's own state (their votes, mood, genre). The participant id is a random per-device
+  // An attendee's own state (their votes, energy, genre). The participant id is a random per-device
   // id, so this only ever shows a device its own choices.
   app.get("/api/sessions/:id/participants/:participantId", (req, res) => {
     const session = sessions.get(req.params.id);
