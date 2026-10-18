@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { devices, expect, test, type Browser, type Page } from "@playwright/test";
+import type { SessionState } from "@crowdpulse/shared";
 
 const HOST_KEY = "e2e-host-key";
 const evidence = (name: string) =>
@@ -347,4 +348,111 @@ test("The host switches the projector to the vote count", async ({ browser, requ
   await stage.screenshot({ path: evidence("stage-vote-count.png") });
   await request.post("/api/host/sessions/demo/stage-view", { headers: host, data: { panel: "queue", auto: false } });
   await expect(stage.locator(".stage-queue").getByRole("heading", { name: "Up next" })).toBeVisible();
+});
+
+// --- Local files + AI DJ ---
+
+/** A synthetic song as a 16-bit mono WAV: kick on every beat (accented bar starts), an A minor pad, a quiet outro. */
+function wavSong(bpm: number, seconds: number, outroFromS: number): Buffer {
+  const rate = 22_050;
+  const n = Math.round(seconds * rate);
+  const x = new Float32Array(n);
+  const beat = 60 / bpm;
+  for (let k = 0; 0.5 + k * beat < seconds; k++) {
+    const t0 = 0.5 + k * beat;
+    const amp = (k % 4 === 0 ? 0.9 : 0.5) * (t0 >= outroFromS ? 0.25 : 1);
+    for (let i = 0; i < 0.15 * rate && Math.round(t0 * rate) + i < n; i++) {
+      x[Math.round(t0 * rate) + i] += amp * Math.sin((2 * Math.PI * 55 * i) / rate) * Math.exp(-i / (0.04 * rate));
+    }
+  }
+  for (let i = 0; i < n; i++) {
+    const q = i / rate >= outroFromS ? 0.25 : 1;
+    for (const f of [220, 261.63, 329.63]) x[i] += 0.05 * q * Math.sin((2 * Math.PI * f * i) / rate);
+  }
+  const buf = Buffer.alloc(44 + n * 2);
+  buf.write("RIFF", 0);
+  buf.writeUInt32LE(36 + n * 2, 4);
+  buf.write("WAVEfmt ", 8);
+  buf.writeUInt32LE(16, 16);
+  buf.writeUInt16LE(1, 20);
+  buf.writeUInt16LE(1, 22);
+  buf.writeUInt32LE(rate, 24);
+  buf.writeUInt32LE(rate * 2, 28);
+  buf.writeUInt16LE(2, 32);
+  buf.writeUInt16LE(16, 34);
+  buf.write("data", 36);
+  buf.writeUInt32LE(n * 2, 40);
+  for (let i = 0; i < n; i++) buf.writeInt16LE(Math.round(Math.max(-1, Math.min(1, x[i])) * 32767), 44 + i * 2);
+  return buf;
+}
+
+test("Local files + AI DJ: songs from this laptop are measured, then mixed into each other", async ({ browser, request }) => {
+  test.setTimeout(150_000);
+  const host = { "x-host-key": HOST_KEY };
+  const page = await (await browser.newContext({ viewport: { width: 1280, height: 1100 } })).newPage();
+  page.on("console", (m) => m.type() === "error" && console.log("PAGE", m.text()));
+  page.on("pageerror", (e) => console.log("PAGEERR", e.message));
+  await page.goto("/host/demo");
+  await page.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await expect(page.locator(".player-card")).toBeVisible();
+  const stateNow = async () => (await (await request.get("/api/sessions/demo/state")).json()) as SessionState;
+  let ids: string[] = [];
+  try {
+    // Two songs: 120 and 122 BPM (close enough to blend), both A minor, with a quiet outro from bar 24.
+    await page.getByLabel("Audio files").setInputFiles([
+      { name: "E2E DJ - Alpha.wav", mimeType: "audio/wav", buffer: wavSong(120, 64, 48.5) },
+      { name: "E2E DJ - Beta.wav", mimeType: "audio/wav", buffer: wavSong(122, 64, 47.7) },
+    ]);
+    await expect(page.getByText(/Added 2 local songs/)).toBeVisible();
+    const lib = page.locator(".library-list");
+    await expect(lib.locator("li", { hasText: "Alpha" })).toContainText("local");
+    // Measured in the browser: tempo and key appear in the library.
+    await expect(lib.locator("li", { hasText: "Alpha" })).toContainText(/1(19\.\d|20\.\d) BPM · 8A/, { timeout: 30_000 });
+    await expect(lib.locator("li", { hasText: "Beta" })).toContainText(/12(1\.\d|2\.\d) BPM · 8A/, { timeout: 30_000 });
+    const tracks = (await stateNow()).tracks.filter((t) => t.source === "local");
+    ids = tracks.map((t) => t.id);
+    const [alpha, beta] = ["Alpha", "Beta"].map((n) => tracks.find((t) => t.title === n)!);
+    expect(alpha.analysis!.mixOutMs).toBeGreaterThan(40_000);
+
+    // AI DJ on (style picked per pair — no Gemini here, so the rules), 8-bar blends, auto play.
+    expect((await request.post("/api/host/sessions/demo/playback/mode", { headers: host, data: { mode: "auto" } })).status()).toBe(200);
+    expect((await request.post("/api/host/sessions/demo/playback/mix", { headers: host, data: { enabled: true, style: "auto", bars: 8 } })).status()).toBe(200);
+    await page.getByRole("button", { name: "▶ Start audio on this device" }).click();
+    await expect(page.getByText("● This tab is the player")).toBeVisible();
+
+    // Play Alpha, with Beta next in the queue.
+    expect((await request.post("/api/host/sessions/demo/advance", { headers: host, data: { trackId: alpha.id } })).status()).toBe(200);
+    expect((await request.put("/api/host/sessions/demo/queue", { headers: host, data: { trackIds: [beta.id] } })).status()).toBe(200);
+    await expect.poll(async () => (await stateNow()).playback.status, { timeout: 15_000 }).toBe("playing");
+    expect((await stateNow()).playback.source).toBe("file");
+    await expect(page.locator(".mix-status")).toContainText(/Next: blend 8 bars into “Beta”/, { timeout: 15_000 });
+
+    // Jump close to the mix point: the blend starts on its bar line and Beta takes over early.
+    const plan = /at (\d+):(\d\d)/.exec((await page.locator(".mix-status").textContent()) ?? "")!;
+    const outAt = (Number(plan[1]) * 60 + Number(plan[2])) * 1000;
+    expect(outAt).toBeLessThan(48_000);
+    expect((await request.post("/api/host/sessions/demo/playback/seek", { headers: host, data: { positionMs: outAt - 4_000 } })).status()).toBe(200);
+    await expect(page.locator(".mix-status")).toContainText("Mixing into “Beta”", { timeout: 15_000 });
+    const s = await stateNow();
+    expect(s.nowPlaying?.trackId).toBe(beta.id);
+    // The beats stay on top of each other during the blend (phase-locked).
+    const errs: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      const e = await page.evaluate(() => (window as unknown as { __mixer?: { syncErrorMs(): number | null } }).__mixer?.syncErrorMs() ?? null);
+      if (e !== null) errs.push(Math.abs(e));
+      await page.waitForTimeout(200);
+    }
+    errs.sort((a, b) => a - b);
+    console.log(`beat sync during the blend: median ${errs[Math.floor(errs.length / 2)]?.toFixed(1)} ms, worst ${errs.at(-1)?.toFixed(1)} ms (${errs.length} samples)`);
+    expect(errs.length).toBeGreaterThan(10);
+    expect(errs[Math.floor(errs.length / 2)]).toBeLessThan(15);
+    // Alpha hadn't finished: Beta took over with ~16 s of Alpha left (an 8-bar blend).
+    await expect.poll(async () => (await stateNow()).playback.status, { timeout: 10_000 }).toBe("playing");
+    await page.locator(".player-card").screenshot({ path: evidence("ai-dj-mixing.png") });
+  } finally {
+    await request.post("/api/host/sessions/demo/playback/mix", { headers: host, data: { enabled: false, style: "auto", bars: 16 } });
+    await request.post("/api/host/sessions/demo/playback/mode", { headers: host, data: { mode: "dj" } });
+    await request.post("/api/host/sessions/demo/advance", { headers: host, data: { trackId: "track_01" } });
+    for (const id of ids) await request.delete(`/api/host/sessions/demo/library/${id}`, { headers: host });
+  }
 });

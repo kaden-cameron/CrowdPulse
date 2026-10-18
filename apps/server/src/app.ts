@@ -13,6 +13,9 @@ import {
   type HighlightPart,
   type HighlightSettings,
   GENRE_PATTERN,
+  LOCAL_TRACK_ID,
+  MIX_STYLES,
+  type MixSettings,
   SONG_REQUEST_LIMITS,
   SPOTIFY_IMAGE_URL,
   PLAYBACK_MODES,
@@ -37,6 +40,7 @@ import type { RecommendationModel } from "./gemini.js";
 import type { RecommendationService } from "./recommendation.js";
 import { estimateSongs } from "./trackEstimator.js";
 import { findSongs } from "./songFinder.js";
+import { chooseTransition, type TransitionChoice } from "./mixPlanner.js";
 import { fetchSyncedLyrics, findHighlight, type SongInfo } from "./highlightFinder.js";
 import { httpStatusFor, type BoostVerifier } from "./solana.js";
 import type { EventOutcome, SessionStore } from "./session.js";
@@ -473,6 +477,7 @@ export function createApp(options: AppOptions) {
       playerId: z.string().regex(/^[A-Za-z0-9_-]{6,40}$/).optional(),
       clipStartMs: z.number().min(0).max(24 * 3_600_000).optional(),
       clipEndMs: z.number().min(0).max(24 * 3_600_000).optional(),
+      nextTrackId: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/).optional(),
     })
     .strict();
 
@@ -558,6 +563,21 @@ export function createApp(options: AppOptions) {
     res.json({ status: "accepted" });
   });
 
+  const RenameSchema = z.object({ title: z.string().trim().min(1).max(120), artist: z.string().trim().min(1).max(120) }).strict();
+  app.patch("/api/host/sessions/:id/library/:trackId", ...requireHost, hostSession, async (req: express.Request<{ id: string; trackId: string }>, res: express.Response) => {
+    const parsed = RenameSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Give the song a title and an artist" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.renameTrack(req.params.trackId, parsed.data.title, parsed.data.artist);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    res.json(outcome);
+  });
+
   app.delete("/api/host/sessions/:id/library", ...requireHost, hostSession, async (req, res) => {
     const outcome = await sessions.get(req.params.id)!.clearLibrary();
     if (outcome.status === "rejected") {
@@ -636,6 +656,142 @@ export function createApp(options: AppOptions) {
     }
     log({ kind: "host.playback_mode", sessionId: req.params.id, mode: parsed.data.mode });
     res.json(outcome);
+  });
+
+  // --- Local files: audio on the host's laptop. Only the details come here; the sound never does. ---
+  const LocalAddSchema = z
+    .object({
+      tracks: z
+        .array(
+          z
+            .object({
+              id: z.string().regex(LOCAL_TRACK_ID),
+              title: z.string().trim().min(1).max(120),
+              artist: z.string().trim().min(1).max(120),
+              genre: z.string().trim().toLowerCase().regex(GENRE_PATTERN).optional(),
+              bpm: z.number().min(40).max(250).optional(),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(MAX_TRACKS_PER_ADD),
+    })
+    .strict();
+  app.post("/api/host/sessions/:id/local-tracks", ...requireHost, hostSession, async (req, res) => {
+    const parsed = LocalAddSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid local songs" });
+      return;
+    }
+    const session = sessions.get(req.params.id)!;
+    const known = new Set(session.catalogTracks().map((t) => t.id));
+    const seen = new Set<string>();
+    const songs = parsed.data.tracks.filter((t) => !known.has(t.id) && !seen.has(t.id) && seen.add(t.id));
+    const alreadyThere = parsed.data.tracks.length - songs.length;
+    if (!songs.length) {
+      const body: LibraryAddResult = { added: 0, skipped: alreadyThere, estimatedBy: null, note: "Those songs are already in the library", trackIds: [] };
+      res.json(body);
+      return;
+    }
+    // Gemini fills in genre / energy the files' tags don't have (the speaker measures the real BPM).
+    const { meta, note } = await estimateSongs(trackEstimator, songs);
+    const tracks: CatalogTrack[] = songs.map((s, i) => ({
+      id: s.id,
+      title: s.title,
+      artist: s.artist,
+      source: "local" as const,
+      genre: s.genre ?? meta[i].genre,
+      bpm: s.bpm ? Math.round(s.bpm) : meta[i].bpm,
+      energy: meta[i].energy,
+      metaSource: meta[i].metaSource,
+    }));
+    const outcome = await session.addTracks(tracks);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    const body: LibraryAddResult = {
+      added: outcome.added?.length ?? 0,
+      skipped: alreadyThere + (outcome.skipped ?? 0),
+      estimatedBy: meta.some((m) => m.metaSource === "gemini") ? "gemini" : "default",
+      note,
+      trackIds: outcome.added ?? [],
+    };
+    log({ kind: "host.local_add", sessionId: req.params.id, added: body.added, skipped: body.skipped });
+    res.json(body);
+  });
+
+  // The speaker measured a local song (tempo, beat grid, key, loudness, mix points).
+  const AnalysisSchema = z
+    .object({
+      bpm: z.number().min(40).max(250),
+      beatMs: z.number().min(0).max(3_600_000),
+      key: z.string().regex(/^(?:[1-9]|1[0-2])[AB]$/).nullable(),
+      gainDb: z.number().min(-24).max(24),
+      mixInMs: z.number().min(0).max(3_600_000),
+      mixOutMs: z.number().min(0).max(3_600_000),
+      durationMs: z.number().min(1_000).max(3_600_000),
+    })
+    .strict();
+  app.put("/api/host/sessions/:id/analysis/:trackId", ...requireHost, hostSession, async (req: express.Request<{ id: string; trackId: string }>, res: express.Response) => {
+    const parsed = AnalysisSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid analysis" });
+      return;
+    }
+    const ok = await sessions.get(req.params.id)!.saveAnalysis(req.params.trackId, parsed.data);
+    if (!ok) {
+      res.status(404).json({ error: "Unknown track" });
+      return;
+    }
+    res.json({ ok: true });
+  });
+
+  const MixSchema = z
+    .object({
+      enabled: z.boolean(),
+      style: z.enum(["auto", ...MIX_STYLES] as [string, ...string[]]),
+      bars: z.union([z.literal(8), z.literal(16), z.literal(32)]),
+    })
+    .strict();
+  app.post("/api/host/sessions/:id/playback/mix", ...requireHost, hostSession, async (req, res) => {
+    const parsed = MixSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid AI DJ settings" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.setMix(parsed.data as MixSettings);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    res.json(outcome);
+  });
+
+  // AI DJ: which transition style to use between two measured songs (Gemini, else rules). Cached.
+  const transitions = new Map<string, Promise<TransitionChoice>>();
+  const TransitionSchema = z.object({ fromId: z.string().max(64), toId: z.string().max(64) }).strict();
+  app.post("/api/host/sessions/:id/transition", ...requireHost, hostSession, async (req, res) => {
+    const parsed = TransitionSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid transition request" });
+      return;
+    }
+    const tracks = sessions.get(req.params.id)!.catalogTracks();
+    const from = tracks.find((t) => t.id === parsed.data.fromId);
+    const to = tracks.find((t) => t.id === parsed.data.toId);
+    if (!from?.analysis || !to?.analysis) {
+      res.status(404).json({ error: "Both songs need to be analyzed first" });
+      return;
+    }
+    const key = `${req.params.id}|${from.id}|${to.id}`;
+    let job = transitions.get(key);
+    if (!job) {
+      job = chooseTransition(options.songFinder ?? trackEstimator, { ...from, analysis: from.analysis }, { ...to, analysis: to.analysis });
+      transitions.set(key, job);
+      if (transitions.size > 500) transitions.delete(transitions.keys().next().value!);
+    }
+    res.json(await job);
   });
 
   app.post("/api/host/sessions/:id/playback/report", ...requireHost, hostSession, async (req, res) => {

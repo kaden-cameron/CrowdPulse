@@ -116,7 +116,7 @@ export function QueueCard({
       </div>
       <p className="host-sub">
         Your picks play first, in this order. Then the crowd&apos;s top votes.
-        {!queue.length && autoNext.length > 0 && " Nothing queued — “auto” shows what plays next on its own."}
+        {autoNext.length > 0 && " “auto” fills the rest: what plays on its own after the queue."}
       </p>
       <ol className="panel host-queue-list">
         {picks.map((q, i) => (
@@ -132,7 +132,13 @@ export function QueueCard({
             </span>
             <span className="queue-actions">
               {playButton(q)}
-              <button type="button" className="btn ghost compact" disabled={!ready || busy || i === 0} onClick={() => move(i, -1)} aria-label={`Move ${q.title} up`}>
+              <button
+                type="button"
+                className="btn ghost compact"
+                disabled={!ready || busy || i === 0}
+                onClick={() => move(i, -1)}
+                aria-label={`Move ${q.title} up`}
+              >
                 ↑
               </button>
               <button
@@ -169,19 +175,18 @@ export function QueueCard({
             {playButton(q)}
           </li>
         ))}
-        {/* Nothing queued: what auto play would pick next on its own (least recently played). */}
-        {!queue.length &&
-          autoNext.map((q, i) => (
-            <li key={q.trackId} className="queue-auto">
-              <span className="q-rank">{i + 1}</span>
-              <span className="library-meta">
-                <strong>{q.title}</strong>
-                <em>{q.artist}</em>
-              </span>
-              <span className="auto-tag">auto</span>
-              {playButton(q)}
-            </li>
-          ))}
+        {/* The rest of the next 5: what auto play picks on its own once the queue runs out. */}
+        {autoNext.map((q, i) => (
+          <li key={q.trackId} className="queue-auto">
+            <span className="q-rank">{queue.length + i + 1}</span>
+            <span className="library-meta">
+              <strong>{q.title}</strong>
+              <em>{q.artist}</em>
+            </span>
+            <span className="auto-tag">auto</span>
+            {playButton(q)}
+          </li>
+        ))}
         {!queue.length && !autoNext.length && (
           <li className="host-sub">Empty — add songs with “+ Queue” or 🔀 Shuffle, or wait for votes.</li>
         )}

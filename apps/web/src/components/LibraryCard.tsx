@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import type { SessionState, Track } from "@crowdpulse/shared";
-import { hostAddToLibrary, hostClearLibrary, hostPlayTrack, hostRemoveFromLibrary, hostSetQueue } from "../lib/host";
+import { hostAddToLibrary, hostClearLibrary, hostPlayTrack, hostRemoveFromLibrary, hostRenameTrack, hostSetQueue } from "../lib/host";
 import { usePublicConfig } from "../lib/publicConfig";
 import {
   disconnectSpotify,
@@ -13,6 +13,8 @@ import {
 import { fetchPlaylistTracks, parsePlaylistId, type FoundTrack } from "../lib/spotify/library";
 import { searchSpotifyTracks } from "../lib/spotify/search";
 import { SongPicker } from "./SongPicker";
+import { LocalFiles } from "./LocalFiles";
+import { hasLocalFile, useLocalFiles } from "../lib/local/files";
 import { useAutoHide } from "../hooks/useAutoHide";
 
 // Host-page window: pick songs. Search Spotify (no login needed when the server has the client
@@ -87,7 +89,12 @@ export function buildSpotifyQuery(free: string, f: SearchFields): string {
 
 /** For the results header: "daft punk · artist Daft Punk · album Discovery". */
 function describeSearch(free: string, f: SearchFields): string {
-  return [free.trim(), f.title.trim() && `title ${f.title.trim()}`, f.artist.trim() && `artist ${f.artist.trim()}`, f.album.trim() && `album ${f.album.trim()}`]
+  return [
+    free.trim(),
+    f.title.trim() && `title ${f.title.trim()}`,
+    f.artist.trim() && `artist ${f.artist.trim()}`,
+    f.album.trim() && `album ${f.album.trim()}`,
+  ]
     .filter(Boolean)
     .join(" · ");
 }
@@ -117,6 +124,7 @@ export function LibraryCard({
 }) {
   const config = usePublicConfig();
   const connected = useSpotifyConnected();
+  useLocalFiles(); // re-render when local files get linked
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<Msg>(null);
   useAutoHide(msg, () => setMsg(null));
@@ -129,6 +137,8 @@ export function LibraryCard({
   const [fields, setFields] = useState<SearchFields>({ title: "", artist: "", album: "" });
   const hasQuery = query.trim().length >= 2 || Object.values(fields).some((v) => v.trim());
   const [sort, setSort] = useState<LibrarySort>("added");
+  // Renaming a local song: its new title / artist while the host types.
+  const [renaming, setRenaming] = useState<{ id: string; title: string; artist: string } | null>(null);
 
   const tracks = state?.tracks ?? [];
   const playingId = state?.nowPlaying?.trackId;
@@ -153,6 +163,17 @@ export function LibraryCard({
     }
   }
 
+  const saveRename = (e: FormEvent) => {
+    e.preventDefault();
+    const r = renaming;
+    if (!r || !r.title.trim() || !r.artist.trim()) return;
+    void withBusy(`rename:${r.id}`, async () => {
+      onState((await hostRenameTrack(sessionCode, await getHeaders(), r.id, r.title.trim(), r.artist.trim())).state);
+      setRenaming(null);
+      setMsg({ kind: "accepted", text: `Renamed to “${r.title.trim()}” by ${r.artist.trim()}.` });
+    });
+  };
+
   async function add(found: FoundTrack[]) {
     setMsg({ kind: "pending", text: `Adding ${found.length} song${found.length === 1 ? "" : "s"} — Gemini is estimating BPM and energy…` });
     const r = await hostAddToLibrary(
@@ -161,7 +182,11 @@ export function LibraryCard({
       found.map(({ title, artist, spotifyUri, coverUrl }) => ({ title, artist, spotifyUri, ...(coverUrl ? { imageUrl: coverUrl } : {}) })),
     );
     const how =
-      r.estimatedBy === "gemini" ? " BPM/energy estimated by Gemini." : r.estimatedBy === "mixed" ? " Most BPM/energy estimated by Gemini." : "";
+      r.estimatedBy === "gemini"
+        ? " BPM/energy estimated by Gemini."
+        : r.estimatedBy === "mixed"
+          ? " Most BPM/energy estimated by Gemini."
+          : "";
     setMsg({
       kind: r.added ? "accepted" : "rejected",
       text:
@@ -312,7 +337,9 @@ export function LibraryCard({
       </form>
       {!ready && <p className="host-sub">Sign in as host to pick songs.</p>}
       {ready && config && !canSearch && (
-        <p className="host-sub">Connect Spotify under &ldquo;Import a Spotify playlist&rdquo; to search, or set SPOTIFY_CLIENT_SECRET on the server.</p>
+        <p className="host-sub">
+          Connect Spotify under &ldquo;Import a Spotify playlist&rdquo; to search, or set SPOTIFY_CLIENT_SECRET on the server.
+        </p>
       )}
       {results && (
         <div className="results-head">
@@ -320,7 +347,13 @@ export function LibraryCard({
             {results.length ? `${results.length} result${results.length === 1 ? "" : "s"}` : "No songs found"}
             {searched && ` for “${searched}”`}
           </span>
-          <button type="button" className="btn ghost compact" onClick={() => setResults(null)} aria-label="Close search results" title="Close">
+          <button
+            type="button"
+            className="btn ghost compact"
+            onClick={() => setResults(null)}
+            aria-label="Close search results"
+            title="Close"
+          >
             ✕
           </button>
         </div>
@@ -332,14 +365,13 @@ export function LibraryCard({
             key: t.spotifyUri,
             title: t.title,
             artist: t.artist,
-            meta: [t.durationMs > 0 ? fmtDuration(t.durationMs) : "", t.explicit ? "explicit" : ""].filter(Boolean).join(" · ") || undefined,
+            meta:
+              [t.durationMs > 0 ? fmtDuration(t.durationMs) : "", t.explicit ? "explicit" : ""].filter(Boolean).join(" · ") || undefined,
             imageUrl: t.imageUrl,
             unavailable: inLibrary.has(t.spotifyUri) ? "In library" : undefined,
           }))}
           busy={busy !== null}
-          onAdd={(keys) =>
-            withBusy("add-search", async () => void (await add(results.filter((t) => keys.includes(t.spotifyUri)))))
-          }
+          onAdd={(keys) => withBusy("add-search", async () => void (await add(results.filter((t) => keys.includes(t.spotifyUri)))))}
           rowAction={(item) => {
             const t = results.find((r) => r.spotifyUri === item.key)!;
             const id = libraryIdFor(t.spotifyUri);
@@ -375,6 +407,8 @@ export function LibraryCard({
         {msg && <p className={`feedback feedback-${msg.kind}`}>{msg.text}</p>}
       </div>
 
+      <LocalFiles sessionCode={sessionCode} state={state} ready={ready} getHeaders={getHeaders} />
+
       <div className="library-head">
         <span className="metric-label">
           Library · {tracks.length} song{tracks.length === 1 ? "" : "s"}
@@ -390,15 +424,15 @@ export function LibraryCard({
           </select>
         </label>
         <span className="cta-row">
-          <button type="button" className="btn compact" disabled={!ready || busy !== null || tracks.length < 2} onClick={() => void shuffle()}>
-            {busy === "shuffle" ? "Shuffling…" : "🔀 Shuffle"}
-          </button>
           <button
             type="button"
-            className="btn ghost compact"
-            disabled={!ready || busy !== null || !tracks.length}
-            onClick={clearLibrary}
+            className="btn compact"
+            disabled={!ready || busy !== null || tracks.length < 2}
+            onClick={() => void shuffle()}
           >
+            {busy === "shuffle" ? "Shuffling…" : "🔀 Shuffle"}
+          </button>
+          <button type="button" className="btn ghost compact" disabled={!ready || busy !== null || !tracks.length} onClick={clearLibrary}>
             {busy === "clear" ? "Clearing…" : "Clear library"}
           </button>
         </span>
@@ -408,47 +442,112 @@ export function LibraryCard({
         {sortLibrary(tracks, sort).map((t) => {
           const pos = hostQueue.indexOf(t.id);
           return (
-            <li key={t.id}>
-              <span className="library-meta">
-                <strong>
-                  {t.id === playingId && "▶ "}
-                  {t.title}
-                </strong>
-                <em>
-                  {t.artist} · {t.genre} · {t.bpm} BPM · energy {t.energy.toFixed(2)}
-                  {t.metaSource && SOURCE_LABEL[t.metaSource] && <span className={`meta-${t.metaSource}`}> · {SOURCE_LABEL[t.metaSource]}</span>}
-                </em>
-              </span>
-              {/* Already queued? Its first spot shows; "+ Queue" adds it again. */}
-              {pos >= 0 && <span className="queued-at">#{pos + 1}</span>}
-              <button
-                type="button"
-                className="btn compact play-now"
-                disabled={!ready || busy !== null || t.id === playingId}
-                onClick={() => void playLibrary(t)}
-                aria-label={`Play ${t.title} now`}
-                title="Play now"
-              >
-                {busy === `playlib:${t.id}` ? "…" : "▶"}
-              </button>
-              <button
-                type="button"
-                className="btn compact"
-                disabled={!ready || busy !== null}
-                onClick={() => void queueSong(t)}
-                aria-label={pos >= 0 ? `Add ${t.title} to the queue again` : `Add ${t.title} to the queue`}
-              >
-                + Queue
-              </button>
-              <button
-                type="button"
-                className="btn ghost compact"
-                disabled={!ready || busy !== null || t.id === playingId}
-                onClick={() => void remove(t)}
-                aria-label={`Remove ${t.title} from the library`}
-              >
-                ✕
-              </button>
+            <li key={t.id} className={t.source === "local" && !hasLocalFile(t.id) ? "unlinked" : undefined}>
+              {renaming?.id === t.id ? (
+                <form className="track-rename" onSubmit={saveRename}>
+                  <input
+                    type="text"
+                    value={renaming.title}
+                    maxLength={120}
+                    onChange={(e) => setRenaming({ ...renaming, title: e.target.value })}
+                    aria-label={`New title for ${t.title}`}
+                    placeholder="Title"
+                    autoFocus
+                  />
+                  <input
+                    type="text"
+                    value={renaming.artist}
+                    maxLength={120}
+                    onChange={(e) => setRenaming({ ...renaming, artist: e.target.value })}
+                    aria-label={`New artist for ${t.title}`}
+                    placeholder="Artist"
+                  />
+                  <button
+                    type="submit"
+                    className="btn primary compact"
+                    disabled={busy !== null || !renaming.title.trim() || !renaming.artist.trim()}
+                    aria-label="Save the new name"
+                  >
+                    {busy === `rename:${t.id}` ? "…" : "Save"}
+                  </button>
+                  <button type="button" className="btn ghost compact" onClick={() => setRenaming(null)}>
+                    Cancel
+                  </button>
+                </form>
+              ) : (
+                <>
+                  <span className="library-meta">
+                    <strong>
+                      {t.id === playingId && "▶ "}
+                      {t.title}
+                    </strong>
+                    <em>
+                      {t.source === "local" && (
+                        <span
+                          className="local-tag"
+                          title={hasLocalFile(t.id) ? "A file on this laptop" : "A file on the laptop — not linked on this device"}
+                        >
+                          {hasLocalFile(t.id) ? "local" : "local · not linked"}
+                        </span>
+                      )}
+                      {t.artist} · {t.genre} ·{" "}
+                      {t.analysis ? (
+                        <span title="Measured from the audio">
+                          {t.analysis.bpm.toFixed(1)} BPM{t.analysis.key ? ` · ${t.analysis.key}` : ""}
+                        </span>
+                      ) : (
+                        `${t.bpm} BPM`
+                      )}{" "}
+                      · energy {t.energy.toFixed(2)}
+                      {t.metaSource && SOURCE_LABEL[t.metaSource] && (
+                        <span className={`meta-${t.metaSource}`}> · {SOURCE_LABEL[t.metaSource]}</span>
+                      )}
+                    </em>
+                  </span>
+                  {/* Already queued? Its first spot shows; "+ Queue" adds it again. */}
+                  {pos >= 0 && <span className="queued-at">#{pos + 1}</span>}
+                  <button
+                    type="button"
+                    className="btn compact play-now"
+                    disabled={!ready || busy !== null || t.id === playingId}
+                    onClick={() => void playLibrary(t)}
+                    aria-label={`Play ${t.title} now`}
+                    title="Play now"
+                  >
+                    {busy === `playlib:${t.id}` ? "…" : "▶"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn compact"
+                    disabled={!ready || busy !== null}
+                    onClick={() => void queueSong(t)}
+                    aria-label={pos >= 0 ? `Add ${t.title} to the queue again` : `Add ${t.title} to the queue`}
+                  >
+                    + Queue
+                  </button>
+                  {t.source === "local" && (
+                    <button
+                      type="button"
+                      className="btn ghost compact"
+                      disabled={!ready || busy !== null}
+                      onClick={() => setRenaming({ id: t.id, title: t.title, artist: t.artist })}
+                      aria-label={`Rename ${t.title}`}
+                      title="Rename (title and artist)"
+                    >
+                      ✎
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn ghost compact"
+                    disabled={!ready || busy !== null || t.id === playingId}
+                    onClick={() => void remove(t)}
+                    aria-label={`Remove ${t.title} from the library`}
+                  >
+                    ✕
+                  </button>
+                </>
+              )}
             </li>
           );
         })}

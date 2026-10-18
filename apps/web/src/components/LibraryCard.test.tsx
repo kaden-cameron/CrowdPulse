@@ -50,6 +50,7 @@ function mockNet() {
         return Response.json({ items: [t(1, "First Song"), t(2, "Second Song"), t(3, "Third Song")], next: null });
       }
       if (url.endsWith("/advance")) return Response.json({ status: "accepted", state });
+      if (init?.method === "PATCH") return Response.json({ status: "accepted", state });
       return new Response("{}", { status: 404 });
     }),
   );
@@ -131,6 +132,28 @@ describe("LibraryCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Play Midnight now" }));
     await waitFor(() => expect(calls.find((c) => c.url.endsWith("/advance"))?.body).toEqual({ trackId: "track_02" }));
     expect(onState).toHaveBeenCalled();
+  });
+
+  it("local songs can be renamed (title and artist); Spotify songs can't", async () => {
+    const calls = mockNet();
+    const onState = vi.fn();
+    const withLocal = {
+      ...state,
+      tracks: [...state.tracks, { id: "lf_00000000000000aa", title: "track01", artist: "Unknown artist", genre: "house", bpm: 124, energy: 0.5, votes: 0, boosts: 0, round: 0, status: "open", source: "local" }],
+    } as unknown as SessionState;
+    render(<LibraryCard sessionCode="demo" state={withLocal} ready getHeaders={async () => ({})} onState={onState} />);
+    expect(screen.queryByRole("button", { name: "Rename Gator Glow" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Rename track01" }));
+    const title = screen.getByRole("textbox", { name: "New title for track01" });
+    await userEvent.clear(title);
+    await userEvent.type(title, "Sunrise");
+    const artist = screen.getByRole("textbox", { name: "New artist for track01" });
+    await userEvent.clear(artist);
+    await userEvent.type(artist, "DJ Gator");
+    await userEvent.click(screen.getByRole("button", { name: "Save the new name" }));
+    await waitFor(() => expect(calls.find((c) => c.method === "PATCH")).toMatchObject({ url: "/api/host/sessions/demo/library/lf_00000000000000aa", body: { title: "Sunrise", artist: "DJ Gator" } }));
+    expect(onState).toHaveBeenCalled();
+    expect(await screen.findByText("Renamed to “Sunrise” by DJ Gator.")).toBeInTheDocument();
   });
 
   it("a song already in the queue can be queued again", async () => {

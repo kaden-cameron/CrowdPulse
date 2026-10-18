@@ -291,45 +291,7 @@ export function HostPage() {
           onState={applyState}
         />
 
-
-      </section>
-
-      {/* Numbers and charts: their own section so the controls above can pack tightly without
-          pulling these up between them. */}
-      <section className="host-grid metrics-grid" aria-label="Session numbers">
-        <div className="metric-strip" role="group" aria-label="Session metrics">
-          <div>
-            <span className="metric-label">Energy</span>
-            <strong>{state?.energyScore ?? "—"}</strong>
-          </div>
-          <div>
-            <span className="metric-label">Crowd</span>
-            <strong>{state?.participants ?? "—"}</strong>
-            {!!state?.simulatedParticipants && (
-              <span className="demo-data-badge small">
-                Demo data · {state.simulatedParticipants} simulated
-              </span>
-            )}
-          </div>
-          <div>
-            <span className="metric-label">Theme</span>
-            <strong>
-              {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
-            </strong>
-          </div>
-          <div>
-            <span className="metric-label">
-              Intensity · {state?.visualMode ?? "—"}
-            </span>
-            <strong>
-              {state
-                ? Math.round(state.visualState.intensity * 100)
-                : "—"}
-              %
-            </strong>
-          </div>
-        </div>
-
+        {/* Crowd mood, beside Playlists */}
         <div className="host-block crowd-card">
           <div className="analytics-head">
             <h2>Crowd mood</h2>
@@ -385,6 +347,45 @@ export function HostPage() {
           <p className="host-sub">
             Latest: {state?.latestEvent?.message ?? "no events yet"}
           </p>
+        </div>
+
+
+      </section>
+
+      {/* Numbers and charts: their own section so the controls above can pack tightly without
+          pulling these up between them. */}
+      <section className="host-grid metrics-grid" aria-label="Session numbers">
+        <div className="metric-strip" role="group" aria-label="Session metrics">
+          <div>
+            <span className="metric-label">Energy</span>
+            <strong>{state?.energyScore ?? "—"}</strong>
+          </div>
+          <div>
+            <span className="metric-label">Crowd</span>
+            <strong>{state?.participants ?? "—"}</strong>
+            {!!state?.simulatedParticipants && (
+              <span className="demo-data-badge small">
+                Demo data · {state.simulatedParticipants} simulated
+              </span>
+            )}
+          </div>
+          <div>
+            <span className="metric-label">Theme</span>
+            <strong>
+              {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
+            </strong>
+          </div>
+          <div>
+            <span className="metric-label">
+              Intensity · {state?.visualMode ?? "—"}
+            </span>
+            <strong>
+              {state
+                ? Math.round(state.visualState.intensity * 100)
+                : "—"}
+              %
+            </strong>
+          </div>
         </div>
 
         <AnalyticsPanel

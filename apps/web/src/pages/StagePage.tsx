@@ -37,7 +37,10 @@ export function StagePage() {
   };
 
   const playingTrack = state?.nowPlaying ? state.tracks.find((t) => t.id === state.nowPlaying!.trackId) : undefined;
-  const cover = useSpotifyCover(playingTrack?.spotifyUri ?? state?.nowPlaying?.spotifyUri, playingTrack?.imageUrl ?? state?.nowPlaying?.imageUrl);
+  const cover = useSpotifyCover(
+    playingTrack?.spotifyUri ?? state?.nowPlaying?.spotifyUri,
+    playingTrack?.imageUrl ?? state?.nowPlaying?.imageUrl,
+  );
   // The host turned crowd energy off: show the calm layout without the visuals.
   const minimal = state?.appearance.showEnergy === false;
   // Where the queue sits: the queue, the vote count, or both in turn (the host chooses).
@@ -72,7 +75,10 @@ export function StagePage() {
                       ●
                     </span>
                   </p>
-                  <h1 className={`stage-song-title clamp-2${(state?.nowPlaying?.title.length ?? 0) > 40 ? " long" : ""}`} title={state?.nowPlaying?.title}>
+                  <h1
+                    className={`stage-song-title clamp-2${(state?.nowPlaying?.title.length ?? 0) > 40 ? " long" : ""}`}
+                    title={state?.nowPlaying?.title}
+                  >
                     {state?.nowPlaying?.title ?? "Waiting for the first pick"}
                   </h1>
                   {state?.nowPlaying && (
@@ -115,7 +121,10 @@ export function StagePage() {
               <div className="stage-now">
                 {cover && <img className="stage-cover" src={cover} alt="" width={72} height={72} />}
                 <div className="now-playing-text">
-                  <p className={`now-playing-title clamp-2${(state?.nowPlaying?.title.length ?? 0) > 50 ? " long" : ""}`} title={state?.nowPlaying?.title}>
+                  <p
+                    className={`now-playing-title clamp-2${(state?.nowPlaying?.title.length ?? 0) > 50 ? " long" : ""}`}
+                    title={state?.nowPlaying?.title}
+                  >
                     {state?.nowPlaying ? state.nowPlaying.title : "Waiting for the first pick"}
                   </p>
                   {state?.nowPlaying && (
@@ -179,18 +188,17 @@ export function StagePage() {
                     </span>
                   </li>
                 ))}
-                {/* Nothing queued: what auto play would pick next on its own. */}
-                {!state?.queue.length &&
-                  (state?.autoNext ?? []).slice(0, STAGE_QUEUE_SIZE).map((item, i) => (
-                    <li key={item.trackId} className="queue-auto">
-                      <span className="q-rank">{i + 1}</span>
-                      <span>
-                        <strong>{item.title}</strong>
-                        <em>{item.artist}</em>
-                      </span>
-                      <span className="auto-tag">auto</span>
-                    </li>
-                  ))}
+                {/* The rest of the list: what auto play picks on its own once the queue runs out. */}
+                {(state?.autoNext ?? []).slice(0, Math.max(0, STAGE_QUEUE_SIZE - (state?.queue.length ?? 0))).map((item, i) => (
+                  <li key={item.trackId} className="queue-auto">
+                    <span className="q-rank">{(state?.queue.length ?? 0) + i + 1}</span>
+                    <span>
+                      <strong>{item.title}</strong>
+                      <em>{item.artist}</em>
+                    </span>
+                    <span className="auto-tag">auto</span>
+                  </li>
+                ))}
                 {!state?.queue.length && !state?.autoNext?.length && <li className="empty-queue">Votes will fill the queue</li>}
               </ol>
               {(state?.queue.length ?? 0) > STAGE_QUEUE_SIZE && (
@@ -249,7 +257,11 @@ function VoteCount({ state }: { state: SessionState | null }) {
         ))}
         {!ranked.length && <li className="empty-queue">No votes yet — scan the code and pick the next song!</li>}
       </ol>
-      {total > 0 && <p className="queue-more">{total} vote{total === 1 ? "" : "s"} so far</p>}
+      {total > 0 && (
+        <p className="queue-more">
+          {total} vote{total === 1 ? "" : "s"} so far
+        </p>
+      )}
     </Window>
   );
 }
@@ -284,7 +296,10 @@ function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionSt
           ? now - Date.parse(pb.startedAt)
           : 0;
   // Highlights mode: the bar and timer cover just the clip being played.
-  const clip = pb && pb.clipStartMs != null && pb.clipEndMs != null && pb.clipEndMs > pb.clipStartMs ? { start: pb.clipStartMs, end: pb.clipEndMs } : null;
+  const clip =
+    pb && pb.clipStartMs != null && pb.clipEndMs != null && pb.clipEndMs > pb.clipStartMs
+      ? { start: pb.clipStartMs, end: pb.clipEndMs }
+      : null;
   const full = dur ? Math.min(Math.max(0, elapsed), dur) : 0;
   const length = clip ? clip.end - clip.start : dur;
   const pos = clip ? Math.min(Math.max(0, full - clip.start), length) : full;
@@ -293,7 +308,10 @@ function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionSt
       <div className="song-progress" aria-hidden>
         <div style={{ width: `${length ? (pos / length) * 100 : 0}%` }} />
       </div>
-      <span className="stage-timer" aria-label={length ? `${fmtClock(pos)} of ${fmtClock(length)}${clip ? " (highlight)" : ""}` : "Nothing playing"}>
+      <span
+        className="stage-timer"
+        aria-label={length ? `${fmtClock(pos)} of ${fmtClock(length)}${clip ? " (highlight)" : ""}` : "Nothing playing"}
+      >
         {fmtClock(pos)} / {fmtClock(length)}
         {clip && <em> · highlight</em>}
         {pb?.status === "paused" && <em> · paused</em>}

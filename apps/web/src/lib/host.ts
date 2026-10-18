@@ -13,6 +13,12 @@ import type {
   Highlight,
   HighlightPart,
   HighlightSettings,
+  LocalTrackInput,
+  MixSettings,
+  MixStyle,
+  PlaybackState,
+  QueueItem,
+  TrackAnalysis,
   PlaylistSummary,
   StageView,
   VisualState,
@@ -188,13 +194,15 @@ export interface PlaybackReport {
   round: number;
   positionMs?: number;
   durationMs?: number;
-  source?: "spotify";
+  source?: "spotify" | "file";
   message?: string;
   /** This tab's player id (one speaker at a time). */
   playerId?: string;
   /** Highlights mode: the part of the song being played. */
   clipStartMs?: number;
   clipEndMs?: number;
+  /** AI DJ: the player is already mixing into this song as the current one ends. */
+  nextTrackId?: string;
 }
 
 /** From the player page. 409 just means the server has moved on to another track. */
@@ -207,7 +215,33 @@ export async function reportPlayback(sessionId: string, auth: HostHeaders, repor
   if (res.status === 409) return { stale: true as const };
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Report failed (${res.status})`);
-  return { stale: false as const };
+  return { stale: false as const, playback: data.playback as PlaybackState | undefined, nowPlaying: data.nowPlaying as QueueItem | null | undefined };
+}
+
+/** Local files: add their details (read from tags on this laptop) to the library. */
+export async function hostAddLocalTracks(sessionId: string, auth: HostHeaders, tracks: LocalTrackInput[]) {
+  const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/local-tracks`, {
+    method: "POST",
+    headers: { "content-type": "application/json", ...auth },
+    body: JSON.stringify({ tracks }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Couldn't add songs (${res.status})`);
+  return data as LibraryAddResult;
+}
+
+/** Save what this laptop measured from a local song (tempo, key, beat grid, mix points). */
+export async function hostSaveAnalysis(sessionId: string, auth: HostHeaders, trackId: string, analysis: TrackAnalysis) {
+  await hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/analysis/${encodeURIComponent(trackId)}`, auth, analysis, "PUT");
+}
+
+export const hostSetMix = (sessionId: string, auth: HostHeaders, mix: MixSettings) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/mix`, auth, mix);
+
+/** AI DJ: the transition style for one song into the next (Gemini, else rules). */
+export async function fetchTransition(sessionId: string, auth: HostHeaders, fromId: string, toId: string) {
+  const data = (await hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/transition`, auth, { fromId, toId })) as unknown;
+  return data as { style: MixStyle; reason: string; source: "gemini" | "rules" };
 }
 
 export const hostSetAppearance = (sessionId: string, auth: HostHeaders, appearance: Appearance) =>
@@ -232,6 +266,10 @@ export async function hostRemoveFromLibrary(sessionId: string, auth: HostHeaders
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error ?? `Couldn't remove the song (${res.status})`);
 }
+
+/** Rename a local song in the library (title / artist; the file itself is untouched). */
+export const hostRenameTrack = (sessionId: string, auth: HostHeaders, trackId: string, title: string, artist: string) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/library/${encodeURIComponent(trackId)}`, auth, { title, artist }, "PATCH");
 
 /** Play a specific song next (e.g. one just found in search). */
 export const hostPlayTrack = (sessionId: string, auth: HostHeaders, trackId: string) =>

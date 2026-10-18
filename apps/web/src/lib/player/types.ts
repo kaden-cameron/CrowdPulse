@@ -1,5 +1,6 @@
 // The player contract. CrowdPulse decides what plays (votes, boosts, Gemini, host); the player
-// makes sound through Spotify on the speaker laptop and reports back.
+// makes sound on the speaker laptop (Spotify, or local files through the mixer) and reports back.
+import type { TrackAnalysis } from "@crowdpulse/shared";
 
 export interface PlayableTrack {
   id: string;
@@ -12,9 +13,12 @@ export interface PlayableTrack {
   /** Used by the Spotify player; when missing it searches by title + artist. */
   spotifyUri?: string;
   imageUrl?: string;
+  /** "local" = a file on this laptop (played by the mixer). */
+  source?: "spotify" | "local";
+  analysis?: TrackAnalysis;
 }
 
-export type PlaybackSource = "spotify";
+export type PlaybackSource = "spotify" | "file";
 
 export interface StartedInfo {
   durationMs: number;

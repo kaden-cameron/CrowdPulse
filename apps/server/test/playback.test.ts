@@ -347,11 +347,14 @@ describe("auto entries when the queue is empty", () => {
     expect(played).toEqual(predicted);
   });
 
-  it("disappears as soon as anything is queued or voted for", async () => {
+  it("fills the rest of the next 5 when only some songs are queued, skipping queued songs", async () => {
     const { store } = setup();
     expect(store.getState().autoNext).toHaveLength(5);
-    await vote(store, "track_07");
-    expect(store.getState().autoNext).toEqual([]);
+    await vote(store, "track_01");
+    const st = store.getState();
+    expect(st.queue.map((q) => q.trackId)).toEqual(["track_01"]);
+    expect(st.autoNext).toHaveLength(4);
+    expect(st.autoNext.map((q) => q.trackId)).not.toContain("track_01");
   });
 });
 

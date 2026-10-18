@@ -34,6 +34,13 @@ export interface Track {
   metaSource?: "catalog" | "gemini" | "default";
   /** Album cover (~300px, Spotify's image CDN only). */
   imageUrl?: string;
+  /**
+   * "local" = an audio file on the speaker laptop: only its details are on the server; the sound
+   * never leaves the laptop. Missing = Spotify.
+   */
+  source?: "spotify" | "local";
+  /** Measured from the audio itself (local files): tempo, beat grid, key, loudness, mix points. */
+  analysis?: TrackAnalysis;
   votes: number;
   /** Verified Solana devnet boosts currently counting for this track (capped). */
   boosts: number;
@@ -254,6 +261,8 @@ export interface PlaybackState {
   seekSeq: number;
   /** The tab that is the speaker output (the last one to start a song). Others stand down. */
   playerId: string | null;
+  /** AI DJ: local songs blend into each other (beat-matched) instead of stopping and starting. */
+  mix: MixSettings;
 }
 
 export type PlaybackReportEvent = "started" | "progress" | "ended" | "error";
@@ -588,3 +597,170 @@ export interface StageView {
 export const DEFAULT_STAGE_VIEW: StageView = { panel: "queue", auto: false };
 /** How long each panel shows when auto-switching. Every projector uses the clock, so they stay in sync. */
 export const STAGE_ROTATE_MS = 12_000;
+
+// --- Local files + AI DJ mixing ---
+
+/** Audio files a host can add from their laptop. */
+export const LOCAL_AUDIO_EXTENSIONS = ["mp3", "m4a", "aac", "wav", "flac", "ogg", "oga", "opus", "webm"] as const;
+/** Library ids for local files: "lf_" + 16 hex characters (from the file's name and size). */
+export const LOCAL_TRACK_ID = /^lf_[0-9a-f]{16}$/;
+
+/** A local file's details, read from its tags (or its file name) on the host's laptop. */
+export interface LocalTrackInput {
+  id: string;
+  title: string;
+  artist: string;
+  genre?: string;
+  bpm?: number;
+}
+
+/**
+ * What the speaker laptop measured from a local song's audio. Times are ms into the song, in the
+ * song's own tempo.
+ */
+export interface TrackAnalysis {
+  bpm: number;
+  /** The first downbeat (beat 1 of a bar); bars run every 4 beats from here. */
+  beatMs: number;
+  /** Musical key in Camelot notation ("8A" = A minor), or null if unclear. */
+  key: string | null;
+  /** Gain that brings the song to a common loudness (dB, ±12). */
+  gainDb: number;
+  /** Where to bring the song in (a downbeat near the start of the music). */
+  mixInMs: number;
+  /** Where to start mixing out (a phrase boundary before the outro). */
+  mixOutMs: number;
+  durationMs: number;
+}
+
+export type MixStyle = "blend" | "filter" | "echo" | "cut";
+export const MIX_STYLES: MixStyle[] = ["blend", "filter", "echo", "cut"];
+export const MIX_BARS = [8, 16, 32] as const;
+export type MixBars = (typeof MIX_BARS)[number];
+
+export interface MixSettings {
+  enabled: boolean;
+  /** "auto" = the AI DJ picks per transition (Gemini, with rules as the fallback). */
+  style: MixStyle | "auto";
+  /** Length of blends and filter sweeps. */
+  bars: MixBars;
+}
+export const DEFAULT_MIX: MixSettings = { enabled: false, style: "auto", bars: 16 };
+
+/** How the speaker moves from one song to the next. */
+export interface TransitionPlan {
+  style: MixStyle;
+  bars: number;
+  /** Playback rate for the incoming song so its beat matches (1 = untouched). */
+  rate: number;
+  /** Position in the outgoing song where the transition starts (on a bar line). */
+  outAtMs: number;
+  /** Where in the incoming song it starts playing. */
+  inFromMs: number;
+  /** How long the overlap lasts, in real time. */
+  lengthMs: number;
+  reason: string;
+}
+
+/** Most tempo change (either way) a blend will make: past this, songs don't blend cleanly. */
+export const MAX_STRETCH = 0.08;
+
+const KEY_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"];
+
+/** Pitch class (0 = C … 11 = B) and mode → Camelot ("8A" = A minor, "8B" = C major). */
+export function toCamelot(pitchClass: number, minor: boolean): string {
+  const major = minor ? (pitchClass + 3) % 12 : pitchClass; // a minor key sits with its relative major
+  return `${(((major * 7) % 12) + 7) % 12 + 1}${minor ? "A" : "B"}`;
+}
+
+/** "8A" → "A minor" (for the host). */
+export function camelotName(code: string): string {
+  const m = code.match(/^(\d{1,2})([AB])$/);
+  if (!m) return code;
+  const n = Number(m[1]);
+  const major = (((n - 8) * 7) % 12 + 12) % 12; // inverse of the circle of fifths step
+  return m[2] === "B" ? `${KEY_NAMES[major]} major` : `${KEY_NAMES[(major + 9) % 12]} minor`;
+}
+
+/**
+ * Steps between two keys on the Camelot wheel: 0 = same key, 1 = a neighbour or the relative
+ * major/minor (both mix well), 2+ = increasingly clashing. Unknown keys count as 1.
+ */
+export function camelotDistance(a: string | null | undefined, b: string | null | undefined): number {
+  const pa = a?.match(/^(\d{1,2})([AB])$/);
+  const pb = b?.match(/^(\d{1,2})([AB])$/);
+  if (!pa || !pb) return 1;
+  const d = Math.abs(Number(pa[1]) - Number(pb[1]));
+  const steps = Math.min(d, 12 - d);
+  return pa[2] === pb[2] ? steps : steps + 1;
+}
+
+/**
+ * The playback rate that brings `to` to `from`'s tempo, counting half / double time (a 70 BPM song
+ * fits a 140 BPM one), and how far that is from untouched (0.03 = 3%).
+ */
+export function tempoMatch(fromBpm: number, toBpm: number): { rate: number; stretch: number } {
+  let best = { rate: 1, stretch: Infinity };
+  for (const k of [0.5, 1, 2]) {
+    const rate = fromBpm / (toBpm * k);
+    const stretch = Math.abs(rate - 1);
+    if (stretch < best.stretch) best = { rate: rate * k, stretch };
+  }
+  return best;
+}
+
+/** 0–1: how well `b` follows `a` (tempo, then key). Used by the AI DJ to order auto picks. */
+export function mixCompatibility(a: TrackAnalysis | undefined, b: TrackAnalysis | undefined): number {
+  if (!a || !b) return 0.5;
+  const { stretch } = tempoMatch(a.bpm, b.bpm);
+  const tempo = stretch <= MAX_STRETCH ? 1 - stretch / MAX_STRETCH / 2 : Math.max(0, 0.3 - stretch);
+  const key = [1, 0.9, 0.6, 0.3][Math.min(3, camelotDistance(a.key, b.key))];
+  return Math.round((0.6 * tempo + 0.4 * key) * 1000) / 1000;
+}
+
+/** The style the rules pick: blend when tempo and key fit, a filter sweep when only tempo does, else echo out. */
+export function ruleStyle(from: TrackAnalysis, to: TrackAnalysis): MixStyle {
+  const { stretch } = tempoMatch(from.bpm, to.bpm);
+  if (stretch > MAX_STRETCH) return "echo";
+  return camelotDistance(from.key, to.key) <= 2 && stretch <= 0.06 ? "blend" : "filter";
+}
+
+/**
+ * Plans one transition: when it starts in the outgoing song (on a bar line, before its outro and
+ * early enough to finish before the song ends), where the incoming song starts, its rate, and how
+ * long the overlap is. `want` is the host's / AI's style; styles that need matching tempos fall
+ * back to echo out when the tempos are too far apart.
+ */
+export function planTransition(from: TrackAnalysis, to: TrackAnalysis, want: { style: MixStyle; bars: number; reason?: string }): TransitionPlan {
+  const { rate, stretch } = tempoMatch(from.bpm, to.bpm);
+  const beat = 60_000 / from.bpm;
+  const bar = 4 * beat;
+  let style = want.style;
+  let reason = want.reason ?? "";
+  if ((style === "blend" || style === "filter") && stretch > MAX_STRETCH) {
+    style = "echo";
+    reason = `${Math.round(from.bpm)} → ${Math.round(to.bpm)} BPM is too far apart to blend, so it echoes out`;
+  }
+  const beatmatched = style === "blend" || style === "filter";
+  const bars = beatmatched ? want.bars : style === "echo" ? 2 : 0;
+  // Echo out: the outgoing song's last bar rings out while the incoming one starts a bar later.
+  const lengthMs = beatmatched ? bars * bar : style === "echo" ? bar : 0;
+  // Start on a bar line, and finish before the outgoing song runs out.
+  const latest = from.durationMs - lengthMs - 1_000;
+  const snap = (ms: number) => from.beatMs + Math.floor((ms - from.beatMs) / bar) * bar;
+  let outAtMs = snap(Math.min(from.mixOutMs, latest));
+  if (outAtMs < from.beatMs) outAtMs = Math.max(0, latest);
+  if (!reason) {
+    const keyNote = from.key && to.key ? `, ${from.key} → ${to.key}` : "";
+    reason = `${Math.round(from.bpm)} → ${Math.round(to.bpm)} BPM${keyNote}`;
+  }
+  return {
+    style,
+    bars,
+    rate: beatmatched ? Math.round(rate * 10_000) / 10_000 : 1,
+    outAtMs: Math.round(outAtMs),
+    inFromMs: Math.round(to.mixInMs),
+    lengthMs: Math.round(lengthMs),
+    reason,
+  };
+}

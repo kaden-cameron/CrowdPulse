@@ -77,6 +77,17 @@ describe("QueueCard auto entries", () => {
   });
 });
 
+describe("QueueCard auto fill", () => {
+  it("after a queued song, fills the rest with auto entries numbered after it", () => {
+    const some = { queue: [q("a", true)], autoNext: [q("x", false), q("y", false)] } as unknown as SessionState;
+    render(<QueueCard sessionCode="demo" state={some} ready getHeaders={async () => ({})} onState={() => {}} />);
+    expect(screen.getByText("Song a")).toBeInTheDocument();
+    expect(screen.getAllByText("auto")).toHaveLength(2);
+    const ranks = Array.from(document.querySelectorAll(".host-queue-list .q-rank")).map((e) => e.textContent);
+    expect(ranks).toEqual(["1", "2", "3"]);
+  });
+});
+
 describe("libraryGenres (attendee join step)", () => {
   it("offers the library's genres, most songs first, without unknown ones", () => {
     const genres = libraryGenres([

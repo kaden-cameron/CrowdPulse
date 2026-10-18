@@ -3430,3 +3430,47 @@ button.menubar-tab.menubar-action {
 .stage-view-row .metric-label {
   margin-right: 0.2rem;
 }
+
+/* Local files (Songs window) and the AI DJ status (Now playing) */
+.local-files {
+  margin: 0.4rem 0 0.2rem;
+  padding: 0.4rem 0 0.1rem;
+  border-top: 1px dashed var(--line);
+}
+.local-files .library-head {
+  margin-top: 0;
+}
+.local-unlinked {
+  margin: 0.25rem 0 0;
+}
+.local-tag {
+  display: inline-block;
+  margin-right: 0.35rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--font-caps);
+  font-size: 9px;
+  text-transform: uppercase;
+  vertical-align: 1px;
+  color: var(--ink-2);
+}
+.library-list li.unlinked .library-meta {
+  opacity: 0.55;
+}
+.mix-status {
+  margin: 0.2rem 0 0;
+  font-size: 0.82rem;
+}
+.track-rename {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+.track-rename input {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
