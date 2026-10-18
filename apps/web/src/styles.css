@@ -3183,3 +3183,99 @@ button.menubar-tab.menubar-action {
   font-size: 18px;
   color: var(--ink-2);
 }
+
+/* ---------- Saved playlists ---------- */
+.playlist-list {
+  display: grid;
+  max-height: 22rem;
+  overflow-y: auto;
+  margin: 0.5rem 0;
+  padding: 0.25rem 0.6rem;
+  list-style: none;
+}
+
+.playlist-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  border-bottom: 1px dotted var(--ink);
+}
+
+.playlist-list li:last-child {
+  border-bottom: 0;
+}
+
+.playlist-actions {
+  display: inline-flex;
+  flex: none;
+  gap: 0.3rem;
+  align-items: center;
+}
+
+.playlist-more {
+  position: relative;
+}
+
+.playlist-more summary {
+  list-style: none;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  cursor: pointer;
+}
+
+.playlist-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.playlist-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 2px);
+  z-index: 20;
+  display: grid;
+  gap: 0.25rem;
+  min-width: 11rem;
+  padding: 0.35rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  box-shadow: var(--shadow), 3px 3px 0 var(--line);
+}
+
+.playlist-rename {
+  display: flex;
+  flex: 1;
+  gap: 0.35rem;
+}
+
+.playlist-rename input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px var(--font-ui);
+}
+
+/* ✕ to close a recommendation box (e.g. "Rejected by server validator"). */
+.rec-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.rec-head .rec-status {
+  margin-top: 0;
+}
+
+.rec-close {
+  flex: none;
+  margin: -0.35rem -0.35rem 0 0;
+  padding: 0.1rem 0.45rem;
+}

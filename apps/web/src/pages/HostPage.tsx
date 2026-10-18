@@ -17,6 +17,7 @@ import { useSessionAppearance } from "../lib/theme";
 import { AppearanceCard } from "../components/AppearanceCard";
 import { LibraryCard } from "../components/LibraryCard";
 import { QueueCard } from "../components/QueueCard";
+import { PlaylistsCard } from "../components/PlaylistsCard";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { ProfileIcon } from "../components/Icons";
 import { hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
@@ -274,6 +275,13 @@ export function HostPage() {
           onState={applyState}
         />
         <QueueCard
+          sessionCode={sessionCode}
+          state={state}
+          ready={access.ready}
+          getHeaders={access.getHeaders}
+          onState={applyState}
+        />
+        <PlaylistsCard
           sessionCode={sessionCode}
           state={state}
           ready={access.ready}

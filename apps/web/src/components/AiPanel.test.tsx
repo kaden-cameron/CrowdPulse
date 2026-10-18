@@ -314,4 +314,13 @@ describe("AiPanel", () => {
     await waitFor(() => expect(bodies).toHaveLength(2));
     expect(bodies[1].hostTarget).toBeNull();
   });
+
+  it("a recommendation box (e.g. rejected by the validator) can be closed with ✕", async () => {
+    mockFetch(rec({ status: "invalid", proposal: null, validationErrors: ["No songs in the library match “polka”"] }));
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    expect(await screen.findByText(/No songs in the library match/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close this recommendation" }));
+    expect(screen.queryByText(/No songs in the library match/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Rejected by server validator")).not.toBeInTheDocument();
+  });
 });

@@ -297,3 +297,19 @@ test("The projector shows only the next 4 songs, with a count of the rest", asyn
   await expect(stage.locator(".stage-queue li")).toHaveCount(4);
   await expect(stage.getByText("+2 more in the queue")).toBeVisible();
 });
+
+test("Playlists: save the library under a name, clear it, load it back", async ({ browser }) => {
+  const host = await (await browser.newContext({ viewport: { width: 1300, height: 1400 } })).newPage();
+  host.on("dialog", (d) => void d.accept());
+  await host.goto("/host/demo");
+  await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  const card = host.locator(".playlists-card");
+  await card.getByPlaceholder(/Name it/).fill(`Warm-up ${Date.now() % 10000}`);
+  await card.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(card.getByText(/Saved “Warm-up/)).toBeVisible();
+  await host.locator(".library-card").getByRole("button", { name: "Clear library" }).click();
+  await expect(host.locator(".library-card").getByText("Library · 0 songs")).toBeVisible();
+  await card.getByRole("button", { name: /^Load Warm-up/ }).first().click();
+  await expect(host.locator(".library-card").getByText("Library · 7 songs")).toBeVisible();
+  await host.screenshot({ path: evidence("playlists.png"), fullPage: true });
+});

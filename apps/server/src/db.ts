@@ -34,7 +34,9 @@ export type PersistedEventType =
   | "catalog_clear"
   | "host_queue"
   | "unvote"
-  | "highlight";
+  | "highlight"
+  | "playlist_save"
+  | "playlist_delete";
 
 export type PersistResult = "stored" | "duplicate";
 

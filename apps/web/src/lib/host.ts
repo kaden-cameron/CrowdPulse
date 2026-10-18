@@ -13,12 +13,13 @@ import type {
   Highlight,
   HighlightPart,
   HighlightSettings,
+  PlaylistSummary,
   VisualState,
 } from "@crowdpulse/shared";
 
 // Host API calls. `auth` comes from HostAccess: an Auth0 bearer token, or the local dev key.
 type HostHeaders = Record<string, string>;
-async function hostPost(path: string, auth: HostHeaders, body: object = {}, method: "POST" | "PUT" | "DELETE" = "POST") {
+async function hostPost(path: string, auth: HostHeaders, body: object = {}, method: "POST" | "PUT" | "PATCH" | "DELETE" = "POST") {
   const res = await fetch(path, {
     method,
     headers: { "content-type": "application/json", ...auth },
@@ -109,6 +110,25 @@ export async function hostFindSongs(
   if (!res.ok) throw new Error(data.error ?? `Request failed (${res.status})`);
   return data as { songs: FoundSong[]; note: string | null };
 }
+
+// --- Saved playlists ---
+const plPath = (sessionId: string, rest = "") => `/api/host/sessions/${encodeURIComponent(sessionId)}/playlists${rest}`;
+
+export const fetchPlaylists = (sessionId: string, auth: HostHeaders) =>
+  hostGet<{ playlists: PlaylistSummary[] }>(plPath(sessionId), auth).then((r) => r.playlists);
+
+/** Save the current library: as a new playlist ({name}) or as an existing one's songs ({id}). */
+export const hostSavePlaylist = (sessionId: string, auth: HostHeaders, body: { name?: string; id?: string }) =>
+  hostPost(plPath(sessionId), auth, body);
+
+export const hostRenamePlaylist = (sessionId: string, auth: HostHeaders, id: string, name: string) =>
+  hostPost(plPath(sessionId, `/${encodeURIComponent(id)}`), auth, { name }, "PATCH");
+
+export const hostDeletePlaylist = (sessionId: string, auth: HostHeaders, id: string) =>
+  hostPost(plPath(sessionId, `/${encodeURIComponent(id)}`), auth, {}, "DELETE");
+
+export const hostLoadPlaylist = (sessionId: string, auth: HostHeaders, id: string, opts: { replace: boolean; queue: boolean }) =>
+  hostPost(plPath(sessionId, `/${encodeURIComponent(id)}/load`), auth, opts);
 
 export type AiSnapshot = { ai: AiStatus; recommendations: Recommendation[] };
 

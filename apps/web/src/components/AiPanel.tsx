@@ -91,6 +91,7 @@ export function AiPanel({
   useAutoHide(foundMsg, () => setFoundMsg(null));
   // Results fold away; new results open them again.
   const [showResults, setShowResults] = useState(true);
+  const [closedRec, setClosedRec] = useState<string | null>(null);
   // Find needs something to go on: text, or an artist (picked or described), or a genre.
   const canFind = prompt.trim().length >= 2 || artists.length > 0 || artistText.trim().length > 0 || genres.length > 0;
   const [error, setError] = useState<string | null>(null);
@@ -225,7 +226,9 @@ export function AiPanel({
   }
 
   const title = (id: string | null) => (id ? (tracks.find((t) => t.id === id)?.title ?? id) : "—");
-  const latest = snapshot?.recommendations[0] ?? null;
+  // The latest recommendation, unless the host closed it (✕). A newer one shows again.
+  const newest = snapshot?.recommendations[0] ?? null;
+  const latest = newest && newest.id !== closedRec ? newest : null;
   const history = (snapshot?.recommendations.length ?? 0) > 1;
   const ai = snapshot?.ai;
 
@@ -366,7 +369,18 @@ export function AiPanel({
             <div className="ai-results">
               {latest && (
                 <div className={`rec rec-${latest.status}`} aria-live="polite">
-                  <p className="rec-status">{STATUS_LABELS[latest.status]}</p>
+                  <div className="rec-head">
+                    <p className="rec-status">{STATUS_LABELS[latest.status]}</p>
+                    <button
+                      type="button"
+                      className="btn ghost compact rec-close"
+                      onClick={() => setClosedRec(latest.id)}
+                      aria-label="Close this recommendation"
+                      title="Close"
+                    >
+                      ✕
+                    </button>
+                  </div>
                   {latest.request?.prompt && <p className="rec-asked">You asked: “{latest.request.prompt}”</p>}
 
                   {latest.proposal ? (

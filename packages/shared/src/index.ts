@@ -550,3 +550,26 @@ export const DEMO_TRACKS: Omit<Track, "votes" | "status" | "boosts" | "round">[]
   { id: "track_06", title: "Crowd Current", artist: "Signal Kids", genre: "synthwave", bpm: 110, energy: 0.5 },
   { id: "track_07", title: "Stage Lightning", artist: "DJ Hydra", genre: "drum & bass", bpm: 174, energy: 0.95 },
 ];
+
+// --- Saved playlists: named sets of songs the host can store and load back into the library ---
+export const MAX_PLAYLISTS = 50;
+export const PLAYLIST_NAME_MAX = 60;
+
+/** A song as stored in a playlist: everything needed to put it back in the library (no Gemini call). */
+export type PlaylistTrack = Omit<Track, "votes" | "status" | "boosts" | "round">;
+
+export interface Playlist {
+  id: string;
+  name: string;
+  tracks: PlaylistTrack[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The list view: no song details. */
+export interface PlaylistSummary {
+  id: string;
+  name: string;
+  count: number;
+  updatedAt: string;
+}

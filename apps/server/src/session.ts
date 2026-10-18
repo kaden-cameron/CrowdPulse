@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import {
   BOOST_VOTE_WEIGHT,
   MAX_CATALOG_TRACKS,
+  MAX_PLAYLISTS,
   MAX_VOTES_PER_PERSON,
+  type Playlist,
+  type PlaylistSummary,
+  type PlaylistTrack,
   DEFAULT_HIGHLIGHTS,
   HIGHLIGHT_CLIP_SECONDS,
   HIGHLIGHT_PARTS,
@@ -152,6 +156,8 @@ export class SessionStore {
   private highlightSettings: HighlightSettings = { ...DEFAULT_HIGHLIGHTS };
   /** Each song's highlight start, per part ("trackId|part"). Saved and replayed. */
   private highlightCache = new Map<string, Highlight>();
+  /** The host's saved playlists (survive new runs and restarts). */
+  private playlists = new Map<string, Playlist>();
   private appearance: Appearance = DEFAULT_APPEARANCE;
   private playback: Omit<PlaybackState, "mode" | "repeat" | "highlights" | "playerOnline"> = {
     status: "idle",
@@ -582,6 +588,118 @@ export class SessionStore {
     return [...(this.nowPlaying ? [this.nowPlaying.id] : []), ...past.filter((id) => id !== this.nowPlaying?.id)].slice(0, n);
   }
 
+  // --- Saved playlists ---
+
+  /** The host's playlists, most recently changed first. */
+  listPlaylists(): PlaylistSummary[] {
+    return [...this.playlists.values()]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((p) => ({ id: p.id, name: p.name, count: p.tracks.length, updatedAt: p.updatedAt }));
+  }
+
+  getPlaylist(id: string): Playlist | undefined {
+    return this.playlists.get(id);
+  }
+
+  /**
+   * Save the current library as a playlist: a new one (with `name`), or overwrite an existing one's
+   * songs (`id`). Songs keep their genre/BPM/energy/cover, so loading needs no Gemini call.
+   */
+  savePlaylist(input: { id?: string; name?: string }): Promise<EventOutcome & { playlist?: PlaylistSummary }> {
+    return this.exclusive(async () => {
+      const existing = input.id ? this.playlists.get(input.id) : undefined;
+      if (input.id && !existing) return this.reject("Unknown playlist", 404);
+      if (!existing && this.playlists.size >= MAX_PLAYLISTS) return this.reject(`You can keep up to ${MAX_PLAYLISTS} playlists — delete one first`, 409);
+      if (!this.catalog.length) return this.reject("The library is empty — add songs first", 409);
+      const name = (input.name ?? existing?.name ?? "").trim();
+      if (!name) return this.reject("Give the playlist a name", 400);
+      const now = new Date(this.now()).toISOString();
+      const playlist: Playlist = {
+        id: existing?.id ?? `pl_${randomUUID().slice(0, 12)}`,
+        name,
+        tracks: this.catalog.slice(0, MAX_CATALOG_TRACKS).map((t) => ({ ...t })),
+        createdAt: existing?.createdAt ?? now,
+        updatedAt: now,
+      };
+      const saved = await this.persistHostAction("playlist_save", { playlist });
+      if (saved) return saved;
+      this.playlists.set(playlist.id, playlist);
+      this.change({ type: "playlist.saved", message: `Saved playlist “${name}” (${playlist.tracks.length} songs)` });
+      return { status: "accepted", state: this.getState(), playlist: { id: playlist.id, name, count: playlist.tracks.length, updatedAt: now } };
+    });
+  }
+
+  renamePlaylist(id: string, name: string): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const pl = this.playlists.get(id);
+      if (!pl) return this.reject("Unknown playlist", 404);
+      const next = { ...pl, name: name.trim(), updatedAt: new Date(this.now()).toISOString() };
+      if (!next.name) return this.reject("Give the playlist a name", 400);
+      const saved = await this.persistHostAction("playlist_save", { playlist: next });
+      if (saved) return saved;
+      this.playlists.set(id, next);
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  deletePlaylist(id: string): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const pl = this.playlists.get(id);
+      if (!pl) return this.reject("Unknown playlist", 404);
+      const saved = await this.persistHostAction("playlist_delete", { id });
+      if (saved) return saved;
+      this.playlists.delete(id);
+      this.change({ type: "playlist.deleted", message: `Deleted playlist “${pl.name}”` });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /**
+   * Load a playlist into the library: `replace` clears the library first (the playing song keeps
+   * playing), otherwise its songs are added. With `queue`, they also go into the host's queue in the
+   * playlist's order. Saved as ordinary library / queue events, so a restart rebuilds it the same way.
+   */
+  loadPlaylist(id: string, opts: { replace: boolean; queue: boolean }): Promise<EventOutcome & { added?: number }> {
+    return this.exclusive(async () => {
+      const pl = this.playlists.get(id);
+      if (!pl) return this.reject("Unknown playlist", 404);
+      if (opts.replace && this.catalog.length) {
+        const saved = await this.persistHostAction("catalog_clear", {});
+        if (saved) return saved;
+        this.applyClear();
+      }
+      const ids = new Set(this.catalog.map((t) => t.id));
+      const uris = new Set(this.catalog.map((t) => t.spotifyUri).filter(Boolean));
+      const fresh: CatalogTrack[] = [];
+      for (const t of pl.tracks) {
+        if (ids.has(t.id) || (t.spotifyUri && uris.has(t.spotifyUri))) continue;
+        if (this.catalog.length + fresh.length >= MAX_CATALOG_TRACKS) break;
+        ids.add(t.id);
+        if (t.spotifyUri) uris.add(t.spotifyUri);
+        fresh.push({ ...t });
+      }
+      if (fresh.length) {
+        const saved = await this.persistHostAction("catalog_add", { tracks: fresh });
+        if (saved) return saved;
+        this.catalog = [...this.catalog, ...fresh];
+      }
+      if (opts.queue) {
+        // The playlist's songs as they now sit in the library (matching by id or Spotify link).
+        const libId = (t: PlaylistTrack) => this.catalog.find((c) => c.id === t.id || (t.spotifyUri && c.spotifyUri === t.spotifyUri))?.id;
+        const order = pl.tracks.map(libId).filter((x): x is string => !!x);
+        const next = [...(opts.replace ? [] : this.hostQueue), ...order].slice(0, MAX_CATALOG_TRACKS);
+        const saved = await this.persistHostAction("host_queue", { trackIds: next });
+        if (saved) return saved;
+        this.hostQueue = next;
+      }
+      this.change({
+        type: "playlist.loaded",
+        message: `Loaded “${pl.name}”${opts.replace ? "" : ` (+${fresh.length} songs)`}${opts.queue ? " into the queue" : ""}`,
+      });
+      return { status: "accepted", state: this.getState(), added: fresh.length };
+    });
+  }
+
   /** Host action: the session's look. Stage and attendee screens follow it. Saved and replayed. */
   setAppearance(appearance: Appearance): Promise<EventOutcome> {
     return this.exclusive(async () => {
@@ -958,6 +1076,14 @@ export class SessionStore {
         case "catalog_clear":
           this.applyClear();
           break;
+        case "playlist_save": {
+          const pl = meta.playlist as Playlist | undefined;
+          if (pl && typeof pl.id === "string" && typeof pl.name === "string" && Array.isArray(pl.tracks)) this.playlists.set(pl.id, pl);
+          break;
+        }
+        case "playlist_delete":
+          if (typeof meta.id === "string") this.playlists.delete(meta.id);
+          break;
         case "playback_mode":
           if (meta.mode === "auto" || meta.mode === "dj") this.playbackMode = meta.mode;
           if (typeof meta.repeat === "boolean") this.repeat = meta.repeat;
@@ -1122,7 +1248,9 @@ export class SessionStore {
       | "catalog_remove"
       | "catalog_clear"
       | "host_queue"
-      | "highlight",
+      | "highlight"
+      | "playlist_save"
+      | "playlist_delete",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {

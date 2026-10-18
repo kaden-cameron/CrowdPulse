@@ -6,6 +6,7 @@ import {
   HOST_TARGETS,
   MAX_CATALOG_TRACKS,
   MAX_TRACKS_PER_ADD,
+  PLAYLIST_NAME_MAX,
   HIGHLIGHT_CLIP_SECONDS,
   HIGHLIGHT_PARTS,
   type Highlight,
@@ -688,6 +689,68 @@ export function createApp(options: AppOptions) {
   app.post("/api/host/sessions/:id/playback/pause", ...requireHost, hostSession, playbackAction("pause"));
   app.post("/api/host/sessions/:id/playback/resume", ...requireHost, hostSession, playbackAction("resume"));
   app.post("/api/host/sessions/:id/previous", ...requireHost, hostSession, playbackAction("previous"));
+  // --- Saved playlists (host-only): name, store, load back into the library ---
+  const PlaylistName = z
+    .string()
+    .trim()
+    .min(1)
+    .max(PLAYLIST_NAME_MAX)
+    .refine((n) => !/[\u0000-\u001f<>]/.test(n), "plain text only");
+  const sendOutcome = (res: express.Response, outcome: EventOutcome & Record<string, unknown>) => {
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    res.json(outcome);
+  };
+
+  app.get("/api/host/sessions/:id/playlists", ...requireHost, hostSession, (req, res) => {
+    res.json({ playlists: sessions.get(req.params.id)!.listPlaylists() });
+  });
+
+  app.get("/api/host/sessions/:id/playlists/:pid", ...requireHost, hostSession, (req: express.Request<{ id: string; pid: string }>, res: express.Response) => {
+    const pl = sessions.get(req.params.id)!.getPlaylist(req.params.pid);
+    if (!pl) {
+      res.status(404).json({ error: "Unknown playlist" });
+      return;
+    }
+    res.json(pl);
+  });
+
+  // Save the current library as a new playlist ({name}) — or as an existing one's songs ({id}).
+  const SavePlaylistSchema = z.object({ name: PlaylistName.optional(), id: z.string().max(40).optional() }).strict();
+  app.post("/api/host/sessions/:id/playlists", ...requireHost, hostSession, async (req, res) => {
+    const parsed = SavePlaylistSchema.safeParse(req.body ?? {});
+    if (!parsed.success || (!parsed.data.name && !parsed.data.id)) {
+      res.status(400).json({ error: "Give the playlist a name (up to 60 characters)" });
+      return;
+    }
+    sendOutcome(res, await sessions.get(req.params.id)!.savePlaylist(parsed.data));
+  });
+
+  app.patch("/api/host/sessions/:id/playlists/:pid", ...requireHost, hostSession, async (req: express.Request<{ id: string; pid: string }>, res: express.Response) => {
+    const parsed = z.object({ name: PlaylistName }).strict().safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Give the playlist a name (up to 60 characters)" });
+      return;
+    }
+    sendOutcome(res, await sessions.get(req.params.id)!.renamePlaylist(req.params.pid, parsed.data.name));
+  });
+
+  app.delete("/api/host/sessions/:id/playlists/:pid", ...requireHost, hostSession, async (req: express.Request<{ id: string; pid: string }>, res: express.Response) => {
+    sendOutcome(res, await sessions.get(req.params.id)!.deletePlaylist(req.params.pid));
+  });
+
+  const LoadPlaylistSchema = z.object({ replace: z.boolean().default(false), queue: z.boolean().default(false) }).strict();
+  app.post("/api/host/sessions/:id/playlists/:pid/load", ...requireHost, hostSession, async (req: express.Request<{ id: string; pid: string }>, res: express.Response) => {
+    const parsed = LoadPlaylistSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid load options" });
+      return;
+    }
+    sendOutcome(res, await sessions.get(req.params.id)!.loadPlaylist(req.params.pid, parsed.data));
+  });
+
   // --- Highlights mode: play only each song's best bit ---
   const HighlightSettingsSchema = z
     .object({

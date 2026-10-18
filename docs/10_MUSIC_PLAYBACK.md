@@ -78,6 +78,15 @@ The **Songs** window on `/host/demo` builds the session's song list straight fro
 - **Auto play never loops through broken songs.** If the player itself can't play (Spotify disconnected, not Premium), that device stops and asks the host to press Start audio again; nothing is skipped. If 3 songs in a row fail, auto play pauses and the host page shows the error.
 - **Gemini avoids repeats.** It's never offered the last 4 songs played or its own last 3 suggestions (unless the library is too small), and it sees how often it has suggested each song.
 
+### Saved playlists
+
+The **Playlists** window stores named sets of songs inside CrowdPulse (no Spotify account needed to use them):
+
+- **Save:** name it and save the current library. Each song keeps its genre, BPM, energy and cover, so loading never calls Gemini again.
+- **Load** replaces the library (after asking; the song playing finishes first). **Add** adds the playlist's songs to the library (songs already there aren't duplicated). Tick **Also put loaded songs in the queue** to queue them in the playlist's order.
+- **⋯** → **Rename**, **Update with library** (replace its songs with the current library) or **Delete**.
+- Up to 50 playlists; saved in TigerData, so they survive restarts and new runs. Host-only.
+
 ### Highlights mode
 
 Tick **Highlights mode** in Now playing to play only each song's best bit, then move on (in auto play, the queue keeps going).
