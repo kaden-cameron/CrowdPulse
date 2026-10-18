@@ -64,7 +64,17 @@ export const hostSeek = (sessionId: string, auth: HostHeaders, positionMs: numbe
 export async function hostFindSongs(
   sessionId: string,
   auth: HostHeaders,
-  query: { text?: string; surprise?: boolean; count?: number; genres: string[]; minStreams: number | null; maxStreams: number | null },
+  query: {
+    text?: string;
+    surprise?: boolean;
+    count?: number;
+    genres: string[];
+    artists: string[];
+    includeFeatures: boolean;
+    artistHint?: string;
+    minStreams: number | null;
+    maxStreams: number | null;
+  },
 ) {
   const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/find-songs`, {
     method: "POST",

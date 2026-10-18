@@ -2524,7 +2524,9 @@ button.menubar-tab.menubar-action {
 /* ---------- Transport (⏮ ⏸ ⏭), library sort, attendee search + pages ---------- */
 .transport {
   align-items: center;
-  gap: 0.4rem;
+  justify-content: center;
+  gap: 0.5rem;
+  margin: 0.2rem 0 0.8rem;
 }
 
 .transport .btn {
@@ -2671,4 +2673,77 @@ button.menubar-tab.menubar-action {
   display: inline-flex;
   gap: 0.4rem;
   align-items: center;
+}
+
+/* Artist picker (Gemini): search with suggestions, "Include features" right beside it. */
+.artist-row {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.artist-search {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.artist-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px var(--font-ui);
+}
+
+.artist-suggestions {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  max-height: 14rem;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.2rem 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  box-shadow: var(--shadow), 3px 3px 0 var(--line);
+}
+
+.artist-suggestions button {
+  display: block;
+  width: 100%;
+  padding: 0.35rem 0.6rem;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: 14px var(--font-ui);
+  text-align: left;
+  cursor: pointer;
+}
+
+.artist-suggestions button:hover,
+.artist-suggestions button:focus-visible {
+  background: var(--pool);
+}
+
+.feat-toggle {
+  display: inline-flex;
+  flex: none;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.artist-hint {
+  margin: 0.3rem 0 0;
+  font-size: 12px;
+  color: var(--ink-2);
 }

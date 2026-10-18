@@ -15,7 +15,7 @@ votes · boosts · Gemini · host ──▶ server: nowPlaying + playback state 
    - **Now playing** shows the album cover, the song, and a progress bar. Covers are saved when a song is added from Spotify. For songs added before that, the server looks the cover up on Spotify, which needs `SPOTIFY_CLIENT_SECRET`.
 2. On the host page, use the **Now playing** window:
    - **Auto play:** when a song ends, the top-voted track starts. If nothing has votes, it plays the least-recently-played track. Music never stops on its own.
-   - **DJ picks:** when a song ends, nothing else starts until the host taps **⏭ Skip** or approves a Gemini recommendation.
+   - **Host picks:** when a song ends, nothing else starts until the host taps **⏭ Skip** or approves a Gemini recommendation.
    - The card shows whether the player is online (it reports every 5 s), what's playing, and any playback error.
 3. The stage shows a progress bar under **Now playing** while a song is actually playing.
 
@@ -91,10 +91,10 @@ The ⚙︎ button at the right of the host page's menu bar opens Account, Appear
 
 ### Asking Gemini
 
-The Gemini window has a text box (a description or a line of lyrics, optional), an optional **genres** picker (choose any number; none = any genre), and one **Popularity** slider: a minimum and maximum of all-time Spotify streams (0 to 2B+). Spotify doesn't give apps play counts, so stream numbers are **Gemini's estimates**, labelled as such.
+The Gemini window has a text box (a description or a line of lyrics, optional), an optional **genres** picker (choose any number; none = any genre), an optional **artists** box (pick exact artists from the suggestions, strictly enforced; or just type something like "artists like Daft Punk" and Gemini treats it as a looser condition; **Include features** also counts songs where picked artists are featured), and one **Popularity** slider: a minimum and maximum of all-time Spotify streams (0 to 2B+). Spotify doesn't give apps play counts, so stream numbers are **Gemini's estimates**, labelled as such.
 
 - **Get recommendation** picks from the library, limited to the chosen genres and aimed at the popularity range. The host still approves every pick. If no library song is in that genre, it says so instead of asking Gemini.
-- **🔎 Find songs** lists songs for a description ("songs for a late-night hackathon party") or recognizes lyrics, even songs not in the library. Choose **How many** (5–50). Gemini names the songs (titles and artists only, never lyrics) with estimated streams; songs outside the range are dropped, and each one is checked on Spotify (a 20-song find takes about 7 s). Tick songs, or **Select all**, then **Add selected**; or **Play now** on one.
+- **🔎 Find songs** lists songs for a description ("songs for a late-night hackathon party") or recognizes lyrics, even songs not in the library. Choose **How many** (5–50); if Gemini can't find that many that fit, it says so and shows what it found. Gemini names the songs (titles and artists only, never lyrics) with estimated streams; songs outside the range are dropped, and each one is checked on Spotify (a 20-song find takes about 7 s). Tick songs, or **Select all**, then **Add selected**; or **Play now** on one.
 - **🎲 Surprise me** finds one random song in the genre and popularity range that isn't already in the library. Gemini suggests a varied pool; the server picks one at random, weighted toward more-streamed songs (by the square root of streams, so hits come up more often without always winning), and confirms it on Spotify.
 
 Find and Surprise me need `GEMINI_API_KEY` and `SPOTIFY_CLIENT_SECRET`.
@@ -106,7 +106,7 @@ A catalog file (below) is still supported for a fixed starting list. Songs added
 1. On the speaker laptop, use Chrome, Edge or Firefox to open `https://<your-host>/player/demo` (or `http://127.0.0.1:5173/player/demo` locally) and sign in as host.
 2. **Play music from → Spotify → Connect Spotify (Premium account)**, then log in. You come back to the player.
 3. Press **▶ Start audio on this device**. The Spotify app on any phone will now list a "CrowdPulse" device. Leave it alone, because picking another device takes playback away from CrowdPulse.
-4. Use Auto play or DJ picks on the host page as usual.
+4. Use Auto play or Host picks on the host page as usual.
 
 When a track ends, the player pauses Spotify straight away, so Spotify's autoplay doesn't start an unrelated song, and tells the server. There's no crossfade, because Spotify forbids mixing in third-party apps.
 

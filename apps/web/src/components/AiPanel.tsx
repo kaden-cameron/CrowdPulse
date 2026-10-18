@@ -21,6 +21,7 @@ import {
   requestRecommendation,
   type AiSnapshot,
 } from "../lib/host";
+import { searchSpotifyTracks } from "../lib/spotify/search";
 import { SongPicker } from "./SongPicker";
 
 const TARGET_LABELS: Record<HostTarget, string> = {
@@ -58,6 +59,10 @@ export function AiPanel({
   // What the host asks for: free text plus sliders (energy/tempo can be "any").
   const [prompt, setPrompt] = useState("");
   const [genres, setGenres] = useState<string[]>([]);
+  const [artists, setArtists] = useState<string[]>([]);
+  const [includeFeatures, setIncludeFeatures] = useState(false);
+  // Whatever is typed in the artist box but not picked as an exact artist: a free-form condition.
+  const [artistText, setArtistText] = useState("");
   const [count, setCount] = useState<number>(10);
   // Popularity range as indexes into STREAM_STOPS (the ends mean no limit).
   const [minIdx, setMinIdx] = useState(0);
@@ -65,6 +70,9 @@ export function AiPanel({
   const [busy, setBusy] = useState<"ask" | "decide" | "find" | "surprise" | "add" | `song:${string}` | null>(null);
   const filters = {
     genres,
+    artists,
+    includeFeatures,
+    ...(artistText.trim() ? { artistHint: artistText.trim() } : {}),
     minStreams: minIdx === 0 ? null : STREAM_STOPS[minIdx],
     maxStreams: maxIdx === STREAM_STOPS.length - 1 ? null : STREAM_STOPS[maxIdx],
   };
@@ -78,6 +86,8 @@ export function AiPanel({
   const [foundMsg, setFoundMsg] = useState<string | null>(null);
   // Results fold away; new results open them again.
   const [showResults, setShowResults] = useState(true);
+  // Find needs something to go on: text, or an artist (picked or described), or a genre.
+  const canFind = prompt.trim().length >= 2 || artists.length > 0 || artistText.trim().length > 0 || genres.length > 0;
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -126,7 +136,7 @@ export function AiPanel({
         await hostFindSongs(
           sessionId,
           await getHeaders(),
-          surprise ? { surprise: true, ...filters } : { text: prompt.trim(), count, ...filters },
+          surprise ? { surprise: true, ...filters } : { ...(prompt.trim() ? { text: prompt.trim() } : {}), count, ...filters },
         ),
       );
     } catch (err) {
@@ -269,6 +279,16 @@ export function AiPanel({
       </label>
 
       <GenrePicker options={genreOptions} value={genres} onChange={setGenres} max={SONG_REQUEST_LIMITS.maxGenres} />
+      <ArtistPicker
+        libraryArtists={tracks.map((t) => t.artist)}
+        value={artists}
+        onChange={setArtists}
+        includeFeatures={includeFeatures}
+        onIncludeFeatures={setIncludeFeatures}
+        text={artistText}
+        onText={setArtistText}
+        max={SONG_REQUEST_LIMITS.maxArtists}
+      />
 
       <PopularityRange min={minIdx} max={maxIdx} onChange={(lo, hi) => (setMinIdx(lo), setMaxIdx(hi))} />
 
@@ -280,9 +300,9 @@ export function AiPanel({
           <button
             type="button"
             className="btn compact"
-            disabled={!ready || !ai?.configured || busy !== null || prompt.trim().length < 2}
+            disabled={!ready || !ai?.configured || busy !== null || !canFind}
             onClick={() => void find(false)}
-            title="Lists songs for a description, or recognizes lyrics — even songs not in the library"
+            title="Lists songs for a description, an artist or a genre, or recognizes lyrics — even songs not in the library"
           >
             {busy === "find" ? "Looking it up…" : "🔎 Find songs"}
           </button>
@@ -566,6 +586,146 @@ function GenrePicker({
           ))}
           <button type="button" className="genre-chip clear" onClick={() => onChange([])}>
             Any genre
+          </button>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Split "A, B feat. C" into individual artist names. */
+const splitArtists = (credits: string) =>
+  credits
+    .split(/\s*(?:,|&|\bfeat\.?|\bft\.?|\bfeaturing\b|\bwith\b)\s*/i)
+    .map((a) => a.trim())
+    .filter(Boolean);
+
+/**
+ * Artists to limit Gemini to: type to search (your library's artists plus Spotify), pick from the
+ * suggestions or press Enter, remove with ✕. "Include features" sits right beside it.
+ */
+function ArtistPicker({
+  libraryArtists,
+  value,
+  onChange,
+  includeFeatures,
+  onIncludeFeatures,
+  max,
+  text: q,
+  onText: setQ,
+}: {
+  text: string;
+  onText: (text: string) => void;
+  libraryArtists: string[];
+  value: string[];
+  onChange: (artists: string[]) => void;
+  includeFeatures: boolean;
+  onIncludeFeatures: (v: boolean) => void;
+  max: number;
+}) {
+  const [fromSpotify, setFromSpotify] = useState<string[]>([]);
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLDivElement>(null);
+  const query = q.trim().toLowerCase();
+
+  // Spotify suggestions (debounced); library artists are matched instantly below.
+  useEffect(() => {
+    if (query.length < 2) {
+      setFromSpotify([]);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      searchSpotifyTracks(query)
+        .then(({ tracks }) => !cancelled && setFromSpotify(tracks.flatMap((h) => splitArtists(h.artist))))
+        .catch(() => !cancelled && setFromSpotify([]));
+    }, 300);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [query]);
+
+  // Close the suggestion list on a click elsewhere.
+  useEffect(() => {
+    const close = (e: PointerEvent) => !box.current?.contains(e.target as Node) && setOpen(false);
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
+
+  const chosen = new Set(value.map((a) => a.toLowerCase()));
+  const seen = new Set<string>();
+  const suggestions = query
+    ? [...libraryArtists.flatMap(splitArtists), ...fromSpotify]
+        .filter((a) => a.toLowerCase().includes(query) && !chosen.has(a.toLowerCase()))
+        .filter((a) => (seen.has(a.toLowerCase()) ? false : (seen.add(a.toLowerCase()), true)))
+        .slice(0, 8)
+    : [];
+
+  const add = (name: string) => {
+    const a = name.trim();
+    if (!a || chosen.has(a.toLowerCase()) || value.length >= max) return;
+    onChange([...value, a]);
+    setQ("");
+    setOpen(false);
+  };
+
+  return (
+    <div className="host-field artist-picker">
+      <span className="metric-label">Artists (optional) — pick exact artists, or describe them</span>
+      <div className="artist-row">
+        <div className="artist-search" ref={box}>
+          <input
+            type="text"
+            value={q}
+            placeholder={value.length >= max ? `Up to ${max} artists` : "Search an artist, or e.g. “artists like Daft Punk”"}
+            disabled={value.length >= max}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setOpen(true);
+            }}
+            onFocus={() => setOpen(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                add(suggestions[0] ?? q);
+              } else if (e.key === "Escape") setOpen(false);
+            }}
+            aria-label="Search an artist"
+            aria-autocomplete="list"
+            aria-expanded={open && suggestions.length > 0}
+          />
+          {open && suggestions.length > 0 && (
+            <ul className="artist-suggestions" role="listbox" aria-label="Artist suggestions">
+              {suggestions.map((a) => (
+                <li key={a} role="option" aria-selected={false}>
+                  <button type="button" onClick={() => add(a)}>
+                    {a}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        <label className="feat-toggle" title="Also songs where these artists are featured (feat.)">
+          <input type="checkbox" checked={includeFeatures} onChange={(e) => onIncludeFeatures(e.target.checked)} />
+          Include features
+        </label>
+      </div>
+      {q.trim() && !open && (
+        <p className="artist-hint">
+          Gemini will look for artists matching “{q.trim()}”. Press Enter to make it an exact artist instead.
+        </p>
+      )}
+      {value.length > 0 && (
+        <span className="genre-chips">
+          {value.map((a) => (
+            <button key={a} type="button" className="genre-chip" onClick={() => onChange(value.filter((x) => x !== a))} aria-label={`Remove ${a}`}>
+              {a} ✕
+            </button>
+          ))}
+          <button type="button" className="genre-chip clear" onClick={() => onChange([])}>
+            Any artist
           </button>
         </span>
       )}

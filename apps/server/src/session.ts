@@ -573,7 +573,7 @@ export class SessionStore {
     });
   }
 
-  /** Host action: auto (songs follow each other) or DJ picks (host starts each song). Saved and replayed. */
+  /** Host action: auto (songs follow each other) or Host picks (host starts each song). Saved and replayed. */
   setPlaybackMode(mode: PlaybackMode): Promise<EventOutcome> {
     return this.exclusive(async () => {
       const saved = await this.persistHostAction("playback_mode", { mode });
@@ -581,7 +581,7 @@ export class SessionStore {
       this.playbackMode = mode;
       this.change({
         type: "playback.mode",
-        message: mode === "auto" ? "Auto play on — songs follow the crowd's queue" : "DJ picks — the host starts each song",
+        message: mode === "auto" ? "Auto play on — songs follow the crowd's queue" : "Host picks — the host starts each song",
       });
       return { status: "accepted", state: this.getState() };
     });

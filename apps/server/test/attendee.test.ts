@@ -109,9 +109,9 @@ describe("Gemini song request (genre + popularity)", () => {
     const { buildSummary } = await import("../src/recommendation.js");
     const { store, app } = setup();
     await requestApp(app).post("/api/sessions/demo/moods").send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_g1", mood: "hyped", genre: "techno" });
-    const s = buildSummary(store.getState(), 0, "hold_steady", [], [], { prompt: "", genres: ["house", "techno"], minStreams: 1_000_000, maxStreams: null });
+    const s = buildSummary(store.getState(), 0, "hold_steady", [], [], { prompt: "", genres: ["house", "techno"], artists: [], includeFeatures: false, minStreams: 1_000_000, maxStreams: null });
     expect(s.eligible_tracks.map((t) => t.track_id)).toEqual(["track_01", "track_03"]); // the house and techno songs
-    expect(s.host_request).toEqual({ description: null, genres: ["house", "techno"], min_streams: 1_000_000, max_streams: null });
+    expect(s.host_request).toEqual({ description: null, genres: ["house", "techno"], artists: null, min_streams: 1_000_000, max_streams: null });
     expect(s.crowd_genres).toEqual({ techno: 1 });
   });
 
@@ -120,7 +120,7 @@ describe("Gemini song request (genre + popularity)", () => {
     const { store } = setup();
     let called = false;
     const svc = new RecommendationService(store, { model: "fake", generate: async () => ((called = true), { text: "{}" }) } as never);
-    const r = await svc.recommend("hold_steady", { prompt: "", genres: ["polka"], minStreams: null, maxStreams: null });
+    const r = await svc.recommend("hold_steady", { prompt: "", genres: ["polka"], artists: [], includeFeatures: false, minStreams: null, maxStreams: null });
     expect(called).toBe(false);
     expect("recommendation" in r && r.recommendation.validationErrors[0]).toMatch(/No songs in the library match “polka”/);
   });
@@ -161,7 +161,7 @@ describe("Find a song from lyrics, and Surprise me", () => {
     const seen: { input: { count: number } }[] = [];
     const rows = Array.from({ length: 30 }, (_, i) => row(i === 2 ? "Made Up 2" : `Song ${i}`, 10_000_000 + i));
     const r = await findSongs(model(rows, seen), spotify, { text: "2000s pop punk", count: 20 });
-    expect(seen[0].input.count).toBe(25); // asks for a few extra
+    expect(seen[0].input.count).toBe(30); // asks for extra: some get dropped
     const found = r.songs.filter((x) => x.spotify);
     expect(found).toHaveLength(20);
     expect(r.songs.at(-1)?.title).toBe("Made Up 2"); // not on Spotify: listed last
@@ -195,5 +195,109 @@ describe("Find a song from lyrics, and Surprise me", () => {
     const surprise = await post({ surprise: true, genres: ["house"] });
     expect(surprise.status).toBe(200);
     expect(surprise.body.note).toMatch(/Gemini isn't configured/);
+  });
+});
+
+describe("artist filter", () => {
+  it("matches the main artist, or any credit with include features", async () => {
+    const { artistMatches } = await import("@crowdpulse/shared");
+    expect(artistMatches("Calvin Harris", "Summer", ["calvin harris"], false)).toBe(true);
+    expect(artistMatches("Calvin Harris, Rihanna", "This Is What You Came For", ["Rihanna"], false)).toBe(false);
+    expect(artistMatches("Calvin Harris, Rihanna", "This Is What You Came For", ["Rihanna"], true)).toBe(true);
+    expect(artistMatches("David Guetta", "Titanium (feat. Sia)", ["sia"], true)).toBe(true);
+    expect(artistMatches("Beyoncé", "Halo", ["beyonce"], false)).toBe(true); // accents don't matter
+    expect(artistMatches("Anyone", "Song", [], false)).toBe(true); // no filter
+  });
+
+  it("limits recommendations to the chosen artists", async () => {
+    const { buildSummary } = await import("../src/recommendation.js");
+    const store = new SessionStore("demo", "Demo");
+    const s = buildSummary(store.getState(), 0, "hold_steady", [], [], { prompt: "", genres: [], artists: ["DJ Hydra"], includeFeatures: false, minStreams: null, maxStreams: null });
+    expect(s.eligible_tracks.map((t) => t.track_id)).toEqual(["track_07"]);
+  });
+
+  it("Find drops songs by other artists (Gemini can drift)", async () => {
+    const { findSongs } = await import("../src/songFinder.js");
+    const rows = [
+      { title: "Summer", artist: "Calvin Harris", why: "x", streams: 1e9, confidence: 1 },
+      { title: "Lean On", artist: "Major Lazer", why: "x", streams: 1e9, confidence: 1 },
+      { title: "We Found Love", artist: "Rihanna feat. Calvin Harris", why: "x", streams: 1e9, confidence: 1 },
+    ];
+    const model = { model: "fake", generate: async () => ({ text: JSON.stringify(rows), responseId: "r", modelVersion: "v", latencyMs: 1, usage: null }) } as never;
+    const only = await findSongs(model, undefined, { text: "summer hits", artists: ["Calvin Harris"], includeFeatures: false });
+    expect(only.songs.map((x) => x.title)).toEqual(["Summer"]);
+    const withFeatures = await findSongs(model, undefined, { text: "summer hits", artists: ["Calvin Harris"], includeFeatures: true });
+    expect(withFeatures.songs.map((x) => x.title)).toEqual(["Summer", "We Found Love"]);
+  });
+});
+
+describe("free-text artist condition and 'not enough songs'", () => {
+  it("passes the typed artist condition to Gemini (Find and recommendations)", async () => {
+    const { findSongs } = await import("../src/songFinder.js");
+    const { buildSummary } = await import("../src/recommendation.js");
+    let sent: Record<string, unknown> = {};
+    const model = { model: "fake", generate: async (i: { user: string }) => ((sent = JSON.parse(i.user)), { text: "[]", responseId: "r", modelVersion: "v", latencyMs: 1, usage: null }) } as never;
+    await findSongs(model, undefined, { text: "party", artistHint: "artists like Daft Punk" });
+    expect(sent.artist_condition).toBe("artists like Daft Punk");
+    const store = new SessionStore("demo", "Demo");
+    const s = buildSummary(store.getState(), 0, "hold_steady", [], [], { prompt: "", genres: [], artists: [], includeFeatures: false, artistHint: "90s boy bands", minStreams: null, maxStreams: null });
+    expect(s.host_request).toMatchObject({ artist_condition: "90s boy bands" });
+  });
+
+  it("says when it couldn't find as many songs as asked for, and returns what it found", async () => {
+    const { findSongs } = await import("../src/songFinder.js");
+    const rows = Array.from({ length: 4 }, (_, i) => ({ title: `S${i}`, artist: "A", why: "x", streams: 1e7, confidence: 1 }));
+    const model = { model: "fake", generate: async () => ({ text: JSON.stringify(rows), responseId: "r", modelVersion: "v", latencyMs: 1, usage: null }) } as never;
+    const r = await findSongs(model, undefined, { text: "obscure polka", count: 20, genres: ["polka"] });
+    expect(r.songs).toHaveLength(4);
+    expect(r.note).toBe("Only found 4 of the 20 songs you asked for that fit your filters.");
+    const enough = await findSongs(model, undefined, { text: "obscure polka", count: 4 });
+    expect(enough.note).not.toMatch(/Only found/);
+  });
+
+  it("the request schema accepts the artist condition as plain text only", async () => {
+    const { app } = setup();
+    const post = (artistHint: string) =>
+      requestApp(app).post("/api/host/sessions/demo/find-songs").set("x-host-key", "k").send({ text: "x y", genres: [], minStreams: null, maxStreams: null, artistHint });
+    expect((await post("artists like Daft Punk")).status).toBe(200);
+    expect((await post("<script>")).status).toBe(400);
+  });
+});
+
+describe("Spotify confirmation checks it's really the song", () => {
+  it("rejects a loose-search hit by a different artist (the 'I Don't Care' bug)", async () => {
+    const { findSongs, sameSong } = await import("../src/songFinder.js");
+    const rows = [
+      { title: "I Don't Care", artist: "Saba", why: "x", streams: 6e7, confidence: 0.5 },
+      { title: "LOGOUT", artist: "Saba, Chance the Rapper", why: "x", streams: 6e7, confidence: 0.9 },
+    ];
+    const model = { model: "fake", generate: async () => ({ text: JSON.stringify(rows), responseId: "r", modelVersion: "v", latencyMs: 1, usage: null }) } as never;
+    const hit = (title: string, artist: string, n: number) => ({ id: `${n}`, title, artist, album: "", spotifyUri: `spotify:track:${String(n).padStart(22, "Z")}`, durationMs: 1, popularity: 1, imageUrl: null, coverUrl: null });
+    const spotify = {
+      configured: true,
+      cover: async () => null,
+      // Exact searches find nothing for the made-up song; the loose search returns someone else's song.
+      search: async (q: string) =>
+        q.startsWith("track:") ? (q.includes("LOGOUT") ? [hit("LOGOUT", "Saba, Chance the Rapper", 2)] : []) : [hit("I Don't Care", "Survive Said The Prophet", 1)],
+    };
+    const r = await findSongs(model, spotify, { text: "", artists: ["Saba"], includeFeatures: false, count: 2 });
+    expect(r.songs.find((x) => x.title === "I Don't Care")?.spotify).toBeNull();
+    expect(r.songs.find((x) => x.title === "LOGOUT")?.spotify?.artist).toBe("Saba, Chance the Rapper");
+
+    expect(sameSong({ title: "Titanium (feat. Sia)", artist: "David Guetta, Sia" }, { title: "Titanium", artist: "David Guetta" })).toBe(true);
+    expect(sameSong({ title: "One More Time - Radio Edit", artist: "Daft Punk" }, { title: "One More Time", artist: "Daft Punk" })).toBe(true);
+    // Gemini swapped title and artist: still the same song.
+    expect(sameSong({ title: "Music Sounds Better With You", artist: "Stardust" }, { title: "Stardust", artist: "Music Sounds Better With You" })).toBe(true);
+    expect(sameSong({ title: "I Don't Care", artist: "Survive Said The Prophet" }, { title: "I Don't Care", artist: "Saba" })).toBe(false);
+  });
+
+  it("Find works with only an artist (no text)", async () => {
+    const { app } = setup();
+    const post = (body: object) =>
+      requestApp(app).post("/api/host/sessions/demo/find-songs").set("x-host-key", "k").send({ genres: [], minStreams: null, maxStreams: null, ...body });
+    expect((await post({ artists: ["Saba"] })).status).toBe(200);
+    expect((await post({ artistHint: "90s boy bands" })).status).toBe(200);
+    expect((await post({ genres: ["house"] })).status).toBe(200);
+    expect((await post({})).status).toBe(400);
   });
 });

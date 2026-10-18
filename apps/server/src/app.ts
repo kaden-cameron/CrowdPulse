@@ -738,11 +738,6 @@ export function createApp(options: AppOptions) {
   // --- AI DJ (Doc 04): Gemini proposes, server validates, host approves/rejects ---
   // Shared by recommendations and Find / Surprise me: genre + popularity (all-time Spotify streams).
   const streams = z.number().int().min(0).max(SONG_REQUEST_LIMITS.maxStreams).nullable();
-  const filters = {
-    genres: z.array(z.string().trim().toLowerCase().regex(GENRE_PATTERN)).max(SONG_REQUEST_LIMITS.maxGenres),
-    minStreams: streams,
-    maxStreams: streams,
-  };
   const plainText = (max: number) =>
     z
       .string()
@@ -750,6 +745,17 @@ export function createApp(options: AppOptions) {
       .max(max)
       // Plain text only: no control characters, links or markup.
       .refine((s) => !/[\u0000-\u0008\u000b-\u001f<>]|https?:\/\//i.test(s), "plain text only");
+  const filters = {
+    genres: z.array(z.string().trim().toLowerCase().regex(GENRE_PATTERN)).max(SONG_REQUEST_LIMITS.maxGenres),
+    artists: z
+      .array(z.string().trim().min(1).max(80).refine((a) => !/[\u0000-\u001f<>]|https?:\/\//i.test(a), "plain text only"))
+      .max(SONG_REQUEST_LIMITS.maxArtists)
+      .default([]),
+    includeFeatures: z.boolean().default(false),
+    artistHint: plainText(120).optional(),
+    minStreams: streams,
+    maxStreams: streams,
+  };
   const rangeOk = (r: { minStreams: number | null; maxStreams: number | null }) =>
     r.minStreams == null || r.maxStreams == null || r.minStreams <= r.maxStreams;
   const RequestSchema = z
@@ -771,7 +777,11 @@ export function createApp(options: AppOptions) {
     })
     .strict()
     .refine(rangeOk, "minStreams must be ≤ maxStreams")
-    .refine((f) => f.surprise || (f.text ?? "").length >= 2, "Type at least 2 characters");
+    // Something to go on: text, or at least an artist / artist description / genre.
+    .refine(
+      (f) => f.surprise || (f.text ?? "").length >= 2 || f.artists.length > 0 || !!f.artistHint?.trim() || f.genres.length > 0,
+      "Type something, or pick an artist or genre",
+    );
   app.post("/api/host/sessions/:id/find-songs", ...requireHost, hostSession, async (req, res) => {
     const parsed = FindSchema.safeParse(req.body ?? {});
     if (!parsed.success) {

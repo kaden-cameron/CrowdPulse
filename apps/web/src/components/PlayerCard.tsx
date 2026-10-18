@@ -78,7 +78,7 @@ export function PlayerCard({
     }
   }
   const setMode = (m: PlaybackMode) =>
-    run(m === "auto" ? "Auto play on" : "DJ picks on", async () => hostPlaybackMode(sessionCode, await getHeaders(), m));
+    run(m === "auto" ? "Auto play on" : "Host picks on", async () => hostPlaybackMode(sessionCode, await getHeaders(), m));
   const skip = () => run("Skipped to the next song", async () => hostSkip(sessionCode, await getHeaders()));
   const back = () => run("Went back", async () => hostPrevious(sessionCode, await getHeaders()));
   const paused = pb?.status === "paused";
@@ -115,55 +115,39 @@ export function PlayerCard({
         </div>
         <div className="now-meta">
           <p className="metric-label">
-            {pb?.mode === "auto" ? "Auto play" : "DJ picks"}
+            {pb?.mode === "auto" ? "Auto play" : "Host picks"}
             {playedBy && ` · ${playedBy}`}
           </p>
           <p className="player-title">{np ? np.title : "Nothing playing"}</p>
           <p className="host-sub">
             {np ? `${np.artist} · ${STATUS_TEXT[pb?.status ?? "idle"]}` : "Pick a song, or switch on auto play."}
           </p>
-          {dur > 0 && (
-            <div className="player-progress">
-              <input
-                type="range"
-                className="seek-slider"
-                min={0}
-                max={Math.round(dur)}
-                step={1000}
-                value={Math.round(drag ?? pos)}
-                disabled={!canSeek}
-                aria-label="Song position"
-                aria-valuetext={`${fmt(drag ?? pos)} of ${fmt(dur)}`}
-                style={{ ["--fill" as string]: `${((drag ?? pos) / Math.max(1, dur)) * 100}%` }}
-                onChange={(e) => setDrag(Number(e.target.value))}
-                onPointerUp={commitSeek}
-                onKeyUp={commitSeek}
-                onBlur={commitSeek}
-              />
-              <span>
-                {fmt(drag ?? pos)} / {fmt(dur)}
-              </span>
-            </div>
-          )}
+          {/* Always shown (empty when nothing's playing) so the window doesn't jump around. */}
+          <div className="player-progress">
+            <input
+              type="range"
+              className="seek-slider"
+              min={0}
+              max={Math.max(1, Math.round(dur))}
+              step={1000}
+              value={Math.round(drag ?? pos)}
+              disabled={!canSeek}
+              aria-label="Song position"
+              aria-valuetext={dur > 0 ? `${fmt(drag ?? pos)} of ${fmt(dur)}` : "Nothing playing"}
+              style={{ ["--fill" as string]: `${dur > 0 ? ((drag ?? pos) / dur) * 100 : 0}%` }}
+              onChange={(e) => setDrag(Number(e.target.value))}
+              onPointerUp={commitSeek}
+              onKeyUp={commitSeek}
+              onBlur={commitSeek}
+            />
+            <span>
+              {fmt(drag ?? pos)} / {fmt(dur)}
+            </span>
+          </div>
         </div>
       </div>
       {pb?.status === "error" && pb.message && <p className="feedback feedback-rejected">{pb.message}</p>}
 
-      <div className="target-row two">
-        {(["auto", "dj"] as const).map((m) => (
-          <button
-            key={m}
-            type="button"
-            className={`mood-chip ${pb?.mode === m ? "selected" : ""}`}
-            aria-pressed={pb?.mode === m}
-            disabled={busy || !ready}
-            onClick={() => void setMode(m)}
-          >
-            <span className="mood-label">{m === "auto" ? "Auto play" : "DJ picks"}</span>
-            <span className="mood-hint">{m === "auto" ? "Next song starts when one ends" : "Host starts every song"}</span>
-          </button>
-        ))}
-      </div>
       <div className="cta-row transport">
         <button
           type="button"
@@ -187,7 +171,7 @@ export function PlayerCard({
         </button>
         <button
           type="button"
-          className="btn primary"
+          className="btn"
           disabled={busy || !ready || (state?.tracks.length ?? 0) < 1}
           onClick={() => void skip()}
           aria-label="Skip to the next song"
@@ -208,6 +192,21 @@ export function PlayerCard({
         >
           <RepeatIcon />
         </button>
+      </div>
+      <div className="target-row two">
+        {(["auto", "dj"] as const).map((m) => (
+          <button
+            key={m}
+            type="button"
+            className={`mood-chip ${pb?.mode === m ? "selected" : ""}`}
+            aria-pressed={pb?.mode === m}
+            disabled={busy || !ready}
+            onClick={() => void setMode(m)}
+          >
+            <span className="mood-label">{m === "auto" ? "Auto play" : "Host picks"}</span>
+            <span className="mood-hint">{m === "auto" ? "Next song starts when one ends" : "Host starts every song"}</span>
+          </button>
+        ))}
       </div>
       <div role="status" aria-live="polite">
         {msg && <p className={`feedback feedback-${msg.kind}`}>{msg.text}</p>}

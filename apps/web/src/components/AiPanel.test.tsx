@@ -114,7 +114,7 @@ describe("AiPanel", () => {
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toEqual({
       hostTarget: "raise_energy",
-      request: { prompt: "slow jam for the end of the night", genres: ["r&b", "soul"], minStreams: 1_000_000, maxStreams: 500_000_000 },
+      request: { prompt: "slow jam for the end of the night", genres: ["r&b", "soul"], artists: [], includeFeatures: false, minStreams: 1_000_000, maxStreams: 500_000_000 },
     });
   });
 
@@ -145,7 +145,7 @@ describe("AiPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show results" }));
     expect(calls[0]).toEqual({
       url: "/api/host/sessions/demo/find-songs",
-      body: { text: "is this the real life, is this just fantasy", count: 10, genres: [], minStreams: null, maxStreams: null },
+      body: { text: "is this the real life, is this just fantasy", count: 10, genres: [], artists: [], includeFeatures: false, minStreams: null, maxStreams: null },
     });
     await userEvent.click(screen.getByRole("button", { name: "Play Bohemian Rhapsody now" }));
     await waitFor(() => expect(onState).toHaveBeenCalled());
@@ -170,7 +170,7 @@ describe("AiPanel", () => {
     await waitFor(() => expect(surprise).toBeEnabled());
     await userEvent.click(surprise);
     expect(await screen.findByText("One More Time")).toBeInTheDocument();
-    expect(calls[0].body).toEqual({ surprise: true, genres: ["house"], minStreams: null, maxStreams: null });
+    expect(calls[0].body).toEqual({ surprise: true, genres: ["house"], artists: [], includeFeatures: false, minStreams: null, maxStreams: null });
   });
 
   it("formats stream counts", async () => {
@@ -207,5 +207,81 @@ describe("AiPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add selected (3)" }));
     expect(await screen.findByText(/Added 3 songs to the library/)).toBeInTheDocument();
     expect((calls.find((c) => c.url.endsWith("/library"))!.body as { tracks: unknown[] }).tracks).toHaveLength(3);
+  });
+
+  it("artists: pick from suggestions (library + Spotify), include features, sent with the request", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") calls.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.startsWith("/api/spotify/search")) {
+          return Response.json({ tracks: [{ id: "1", title: "Summer", artist: "Calvin Harris", album: "", spotifyUri: "spotify:track:1", durationMs: 1, popularity: 1, imageUrl: null, coverUrl: null }] });
+        }
+        if (url.endsWith("/find-songs")) return Response.json({ songs: [], note: null });
+        return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendations: [] });
+      }),
+    );
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Search an artist" }), "calv");
+    await userEvent.click(await screen.findByRole("button", { name: "Calvin Harris" }));
+    // A library artist matches instantly too.
+    await userEvent.type(screen.getByRole("textbox", { name: "Search an artist" }), "hydra");
+    await userEvent.click(await screen.findByRole("button", { name: "DJ Hydra" }));
+    expect(screen.getByRole("button", { name: "Remove Calvin Harris" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Include features" }));
+    await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "summer");
+    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    await waitFor(() => expect(find).toBeEnabled());
+    await userEvent.click(find);
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/find-songs"))).toBe(true));
+    expect(calls.find((c) => c.url.endsWith("/find-songs"))!.body).toMatchObject({ artists: ["Calvin Harris", "DJ Hydra"], includeFeatures: true });
+  });
+
+  it("text left in the artist box goes to Gemini as a free-form condition", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") calls.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.startsWith("/api/spotify/search")) return Response.json({ tracks: [] });
+        if (url.endsWith("/find-songs")) return Response.json({ songs: [], note: null });
+        return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendations: [] });
+      }),
+    );
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    await userEvent.type(screen.getByRole("textbox", { name: "Search an artist" }), "artists like Daft Punk");
+    await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "dance floor");
+    expect(screen.getByText(/Gemini will look for artists matching “artists like Daft Punk”/)).toBeInTheDocument();
+    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    await waitFor(() => expect(find).toBeEnabled());
+    await userEvent.click(find);
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/find-songs"))).toBe(true));
+    expect(calls.find((c) => c.url.endsWith("/find-songs"))!.body).toMatchObject({ artists: [], artistHint: "artists like Daft Punk" });
+  });
+
+  it("Find songs works with only an artist picked (no text)", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") calls.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.startsWith("/api/spotify/search")) return Response.json({ tracks: [] });
+        if (url.endsWith("/find-songs")) return Response.json({ songs: [], note: null });
+        return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendations: [] });
+      }),
+    );
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    await waitFor(() => expect(screen.getByRole("button", { name: "🎲 Surprise me" })).toBeEnabled());
+    expect(find).toBeDisabled(); // nothing to go on yet
+    await userEvent.type(screen.getByRole("textbox", { name: "Search an artist" }), "hydra");
+    await userEvent.click(await screen.findByRole("button", { name: "DJ Hydra" }));
+    expect(find).toBeEnabled();
+    await userEvent.click(find);
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/find-songs"))).toBe(true));
+    const body = calls.find((c) => c.url.endsWith("/find-songs"))!.body as Record<string, unknown>;
+    expect(body.artists).toEqual(["DJ Hydra"]);
+    expect(body.text).toBeUndefined();
   });
 });

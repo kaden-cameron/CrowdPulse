@@ -266,6 +266,15 @@ export interface SongRequest {
   prompt: string;
   /** Any of these genres (lowercase); empty = any genre. */
   genres: string[];
+  /** Only songs by these artists; empty = any artist. */
+  artists: string[];
+  /** With artists: also songs where they're featured ("feat."), not just their own. */
+  includeFeatures: boolean;
+  /**
+   * Free-text artist condition for Gemini ("artists like Daft Punk", "90s boy bands"). Unlike
+   * `artists`, it can't be checked exactly, so it guides Gemini rather than filtering.
+   */
+  artistHint?: string;
   minStreams: number | null;
   maxStreams: number | null;
 }
@@ -293,7 +302,25 @@ export interface FoundSong {
   } | null;
 }
 
-export const SONG_REQUEST_LIMITS = { promptMax: 200, maxStreams: 100_000_000_000, maxGenres: 10, maxFind: 50 } as const;
+export const SONG_REQUEST_LIMITS = { promptMax: 200, maxStreams: 100_000_000_000, maxGenres: 10, maxArtists: 10, maxFind: 50 } as const;
+
+const norm = (s: string) => s.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim();
+
+/**
+ * Does a song fit the host's artist filter? Without features, the song's main (first-listed)
+ * artist must be one of them; with features, any credit counts — including "feat." in the title.
+ */
+export function artistMatches(artistField: string, title: string, wanted: string[], includeFeatures: boolean): boolean {
+  if (!wanted.length) return true;
+  const want = wanted.map(norm).filter(Boolean);
+  const credits = norm(artistField);
+  if (includeFeatures) {
+    const all = `${credits} ${norm(title)}`;
+    return want.some((w) => all.includes(w));
+  }
+  const main = credits.split(/\s*(?:,|&|\bx\b|\bwith\b|\bfeat\.?|\bft\.?|\bfeaturing\b)\s*/)[0] ?? credits;
+  return want.some((w) => main === w);
+}
 
 /** "How many" choices for Find songs. */
 export const FIND_COUNTS = [5, 10, 20, 30, 50] as const;
