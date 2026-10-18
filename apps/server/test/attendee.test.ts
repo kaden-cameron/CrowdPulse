@@ -301,3 +301,11 @@ describe("Spotify confirmation checks it's really the song", () => {
     expect((await post({})).status).toBe(400);
   });
 });
+
+describe("host-only analytics", () => {
+  it("the metrics endpoint needs a signed-in host", async () => {
+    const { app } = setup();
+    expect((await requestApp(app).get("/api/sessions/demo/metrics")).status).toBe(401);
+    expect((await requestApp(app).get("/api/sessions/demo/metrics").set("x-host-key", "k")).status).toBe(200);
+  });
+});

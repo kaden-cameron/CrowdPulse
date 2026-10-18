@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SessionState } from "@crowdpulse/shared";
 import { PlayerCard } from "./PlayerCard";
@@ -10,7 +11,7 @@ function stateWith(track: Record<string, unknown>, playback: Record<string, unkn
   return {
     nowPlaying: { trackId: "sp_1", title: "Song One", artist: "Artist", votes: 0, boosts: 0 },
     tracks: [{ id: "sp_1", title: "Song One", artist: "Artist", genre: "pop", bpm: 100, energy: 0.5, votes: 0, boosts: 0, round: 1, status: "playing", ...track }],
-    playback: { status: "playing", trackId: "sp_1", round: 1, startedAt: new Date(Date.now() - 30_000).toISOString(), durationMs: 180_000, source: "spotify", message: null, mode: "auto", playerOnline: true, ...playback },
+    playback: { status: "playing", trackId: "sp_1", round: 1, startedAt: new Date(Date.now() - 30_000).toISOString(), durationMs: 180_000, source: "spotify", message: null, mode: "auto", playerOnline: true, repeat: false, highlights: { enabled: false, clipSec: 45, part: "auto", transition: "fade" }, clipStartMs: null, clipEndMs: null, ...playback },
   } as unknown as SessionState;
 }
 
@@ -60,5 +61,28 @@ describe("PlayerCard (host page Now playing)", () => {
     expect(await screen.findByRole("button", { name: "Connect Spotify first" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: /This laptop/ })).not.toBeInTheDocument();
     expect(await screen.findByRole("button", { name: /Connect Spotify \(Premium account\)/ })).toBeInTheDocument();
+  });
+
+  it("Highlights mode: turning it on sends the settings; while a clip plays, ±10s nudges are offered", async () => {
+    const posts: { url: string; body: unknown }[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url === "/api/public-config") return Response.json({ publicUrl: null, lanIp: null, spotifyClientId: "cid" });
+        if (init?.method === "POST" || init?.method === "PUT") posts.push({ url, body: JSON.parse(String(init.body)) });
+        return Response.json({ status: "accepted", state: stateWith({}) });
+      }),
+    );
+    const { rerender } = render(<PlayerCard {...props} state={stateWith({})} />);
+    await userEvent.click(screen.getByRole("checkbox", { name: "Highlights mode" }));
+    await waitFor(() => expect(posts.find((p) => p.url.endsWith("/playback/highlights"))?.body).toEqual({ enabled: true, clipSec: 45, part: "auto", transition: "fade" }));
+
+    const on = { highlights: { enabled: true, clipSec: 45, part: "auto", transition: "fade" }, clipStartMs: 60_000, clipEndMs: 105_000 };
+    rerender(<PlayerCard {...props} state={stateWith({}, on)} />);
+    expect(screen.getByText("Highlight 1:00–1:45")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start the highlight 10 seconds later" }));
+    await waitFor(() => expect(posts.some((p) => p.url.endsWith("/highlight/sp_1"))).toBe(true));
+    expect(posts.find((p) => p.url.endsWith("/highlight/sp_1"))!.body).toEqual({ part: "auto", startMs: 70_000, endMs: 115_000 });
+    await waitFor(() => expect(posts.find((p) => p.url.endsWith("/playback/seek"))?.body).toEqual({ positionMs: 70_000 }));
   });
 });

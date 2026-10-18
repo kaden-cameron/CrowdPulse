@@ -3,19 +3,23 @@ import type { SessionMetrics } from "@crowdpulse/shared";
 
 const POLL_MS = 3000;
 
-/** Polls the TigerData-backed metrics endpoint. Keeps the last good result when a poll fails. */
-export function useMetrics(sessionId: string) {
+/**
+ * Polls the TigerData-backed metrics endpoint (host-only). Waits until the host is signed in, and
+ * keeps the last good result when a poll fails.
+ */
+export function useMetrics(sessionId: string, ready: boolean, getHeaders: () => Promise<Record<string, string>>) {
   const [metrics, setMetrics] = useState<SessionMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
 
   useEffect(() => {
+    if (!ready) return;
     let cancelled = false;
     let timer: number | undefined;
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/metrics`);
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/metrics`, { headers: await getHeaders() });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error ?? `Metrics request failed (${res.status})`);
         if (cancelled) return;
@@ -34,7 +38,8 @@ export function useMetrics(sessionId: string) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [sessionId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- getHeaders is read on each poll
+  }, [sessionId, ready]);
 
   return { metrics, error, fetchedAt };
 }

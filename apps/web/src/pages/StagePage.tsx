@@ -193,14 +193,19 @@ function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionSt
         : pb.status === "playing" && pb.startedAt
           ? now - Date.parse(pb.startedAt)
           : 0;
-  const pos = dur ? Math.min(Math.max(0, elapsed), dur) : 0;
+  // Highlights mode: the bar and timer cover just the clip being played.
+  const clip = pb && pb.clipStartMs != null && pb.clipEndMs != null && pb.clipEndMs > pb.clipStartMs ? { start: pb.clipStartMs, end: pb.clipEndMs } : null;
+  const full = dur ? Math.min(Math.max(0, elapsed), dur) : 0;
+  const length = clip ? clip.end - clip.start : dur;
+  const pos = clip ? Math.min(Math.max(0, full - clip.start), length) : full;
   return (
     <div className="stage-progress">
       <div className="song-progress" aria-hidden>
-        <div style={{ width: `${dur ? (pos / dur) * 100 : 0}%` }} />
+        <div style={{ width: `${length ? (pos / length) * 100 : 0}%` }} />
       </div>
-      <span className="stage-timer" aria-label={dur ? `${fmtClock(pos)} of ${fmtClock(dur)}` : "Nothing playing"}>
-        {fmtClock(pos)} / {fmtClock(dur)}
+      <span className="stage-timer" aria-label={length ? `${fmtClock(pos)} of ${fmtClock(length)}${clip ? " (highlight)" : ""}` : "Nothing playing"}>
+        {fmtClock(pos)} / {fmtClock(length)}
+        {clip && <em> · highlight</em>}
         {pb?.status === "paused" && <em> · paused</em>}
       </span>
     </div>

@@ -167,11 +167,12 @@ await check("FAULT", "Duplicate eventId counts once; invalid event rejected", as
 });
 
 await check("E2E-04/05", "Event persists to TigerData and metrics advance", async () => {
-  const m0 = (await http("GET", `/api/sessions/${SESSION}/metrics`)).json;
+  if (!hostHeaders) return { skip: "metrics are host-only — pass --host-key or --host-token" };
+  const m0 = (await http("GET", `/api/sessions/${SESSION}/metrics`, null, hostHeaders)).json;
   if (m0?.persistence !== "tigerdata") return { skip: "server is running in memory (DATABASE_URL not set)" };
   const r = await vote(freeTrack());
   assert(r.json.status === "accepted", "vote not accepted");
-  const m1 = (await http("GET", `/api/sessions/${SESSION}/metrics`)).json;
+  const m1 = (await http("GET", `/api/sessions/${SESSION}/metrics`, null, hostHeaders)).json;
   assert(m1.totalEvents > m0.totalEvents, `totalEvents did not increase (${m0.totalEvents} → ${m1.totalEvents})`);
   assert(Date.parse(m1.latestEventAt) >= Date.parse(m0.latestEventAt ?? 0), "latestEventAt did not advance");
   evidence["tigerdata/metrics-after-vote.json"] = JSON.stringify(m1, null, 2);

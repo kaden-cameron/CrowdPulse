@@ -78,6 +78,16 @@ The **Songs** window on `/host/demo` builds the session's song list straight fro
 - **Auto play never loops through broken songs.** If the player itself can't play (Spotify disconnected, not Premium), that device stops and asks the host to press Start audio again; nothing is skipped. If 3 songs in a row fail, auto play pauses and the host page shows the error.
 - **Gemini avoids repeats.** It's never offered the last 4 songs played or its own last 3 suggestions (unless the library is too small), and it sees how often it has suggested each song.
 
+### Highlights mode
+
+Tick **Highlights mode** in Now playing to play only each song's best bit, then move on (in auto play, the queue keeps going).
+
+- **Options:** a rough clip length (~30 / 45 / 60 / 90 s — each clip follows the song's best section, so it can run shorter or longer), which part (**Best moment**, **Chorus** or **Drop**), and **Fade** (a quick volume dip between clips) or **Cut**. Songs never overlap — that keeps it within Spotify's rules.
+- **How the highlight is found** (once per song, then saved): the server looks up time-synced lyrics on LRCLIB (free, public), and Gemini (the larger Flash model, `GEMINI_HIGHLIGHT_MODEL`) names the words where the section starts and ends; those lines' timestamps place it. Gemini also decides, per song, whether to start a little early so a build-up lands (typically 6–16 s before a drop; little or none when a song hits straight away). For drops and instrumentals, Gemini estimates the time. If neither works, the clip starts about 30% in. The next song's highlight is worked out in the background so switching is quick.
+- **Fix one live:** while a clip plays, **−10s / +10s** moves its start; the change is saved for next time.
+- The projector's bar and timer show progress through the clip ("· highlight").
+- Accuracy: right for most songs with lyrics in tests (Mr. Brightside, Uptown Funk, Blinding Lights, Titanium); drop estimates for instrumentals are rougher — that's what the nudge is for.
+
 ### Attendees: votes, genre, one voter per device
 
 - **Joining:** attendees pick a mood and **what they want to hear** (a genre from the library, or "Anything"). The host page shows the genre tally under *Genres people want*, and Gemini sees it as `crowd_genres`.

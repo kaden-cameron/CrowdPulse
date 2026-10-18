@@ -1,6 +1,16 @@
 import { useState } from "react";
-import type { PlaybackMode, SessionState } from "@crowdpulse/shared";
-import { hostPause, hostPlaybackMode, hostPrevious, hostResume, hostSeek, hostSetRepeat, hostSkip } from "../lib/host";
+import { HIGHLIGHT_CLIP_SECONDS, type HighlightPart, type HighlightSettings, type PlaybackMode, type SessionState } from "@crowdpulse/shared";
+import {
+  hostPause,
+  hostPlaybackMode,
+  hostPrevious,
+  hostResume,
+  hostSaveHighlight,
+  hostSeek,
+  hostSetHighlights,
+  hostSetRepeat,
+  hostSkip,
+} from "../lib/host";
 import { usePlayerEngine } from "../lib/player/usePlayerEngine";
 import { RepeatIcon } from "./Icons";
 import { useAutoHide } from "../hooks/useAutoHide";
@@ -82,6 +92,22 @@ export function PlayerCard({
   const setMode = (m: PlaybackMode) =>
     run(m === "auto" ? "Auto play on" : "Host picks on", async () => hostPlaybackMode(sessionCode, await getHeaders(), m));
   const skip = () => run("Skipped to the next song", async () => hostSkip(sessionCode, await getHeaders()));
+  const hl = pb?.highlights;
+  const setHighlights = (next: HighlightSettings) =>
+    run(next.enabled ? `Highlights mode: ~${next.clipSec}s ${next.part === "auto" ? "best moments" : next.part === "chorus" ? "choruses" : "drops"}` : "Highlights mode off", async () =>
+      hostSetHighlights(sessionCode, await getHeaders(), next),
+    );
+  /** Move this song's highlight start by ±10 s, save it for next time, and jump there. */
+  const nudge = (by: number) =>
+    run(by < 0 ? "Highlight starts 10s earlier (saved)" : "Highlight starts 10s later (saved)", async () => {
+      if (!np || !hl || pb?.clipStartMs == null) throw new Error("No highlight playing");
+      const to = Math.max(0, pb.clipStartMs + by);
+      const headers = await getHeaders();
+      // The whole section shifts: same length, starting earlier / later.
+      const end = pb.clipEndMs != null ? pb.clipEndMs + (to - pb.clipStartMs) : undefined;
+      await hostSaveHighlight(sessionCode, headers, np.trackId, hl.part, to, end);
+      return hostSeek(sessionCode, headers, to);
+    });
   const back = () => run("Went back", async () => hostPrevious(sessionCode, await getHeaders()));
   const paused = pb?.status === "paused";
   const togglePause = () =>
@@ -211,6 +237,71 @@ export function PlayerCard({
           </button>
         ))}
       </div>
+
+      {/* Highlights mode: each song plays only its best section. */}
+      <div className="highlights-row">
+        <label className="highlights-toggle">
+          <input
+            type="checkbox"
+            checked={!!hl?.enabled}
+            disabled={busy || !ready || !hl}
+            onChange={(e) => hl && void setHighlights({ ...hl, enabled: e.target.checked })}
+          />
+          Highlights mode
+        </label>
+        {hl?.enabled ? (
+          <span className="highlights-options">
+            <select
+              value={hl.clipSec}
+              disabled={busy || !ready}
+              aria-label="Clip length"
+              onChange={(e) => void setHighlights({ ...hl, clipSec: Number(e.target.value) as HighlightSettings["clipSec"] })}
+            >
+              {HIGHLIGHT_CLIP_SECONDS.map((n) => (
+                <option key={n} value={n}>
+                  ~{n}s clips
+                </option>
+              ))}
+            </select>
+            <select
+              value={hl.part}
+              disabled={busy || !ready}
+              aria-label="Which part of each song"
+              onChange={(e) => void setHighlights({ ...hl, part: e.target.value as HighlightPart })}
+            >
+              <option value="auto">Best moment</option>
+              <option value="chorus">Chorus</option>
+              <option value="drop">Drop</option>
+            </select>
+            <select
+              value={hl.transition}
+              disabled={busy || !ready}
+              aria-label="Transition between clips"
+              onChange={(e) => void setHighlights({ ...hl, transition: e.target.value as HighlightSettings["transition"] })}
+            >
+              <option value="fade">Fade</option>
+              <option value="cut">Cut</option>
+            </select>
+          </span>
+        ) : (
+          <span className="host-sub">Play only each song&apos;s best bit.</span>
+        )}
+      </div>
+      {hl?.enabled && np && pb?.clipStartMs != null && pb.clipEndMs != null && (
+        <div className="clip-row">
+          <span>
+            Highlight {fmt(pb.clipStartMs)}–{fmt(pb.clipEndMs)}
+          </span>
+          <span className="clip-nudge">
+            <button type="button" className="btn ghost compact" disabled={busy || !ready} onClick={() => void nudge(-10_000)} aria-label="Start the highlight 10 seconds earlier">
+              −10s
+            </button>
+            <button type="button" className="btn ghost compact" disabled={busy || !ready} onClick={() => void nudge(10_000)} aria-label="Start the highlight 10 seconds later">
+              +10s
+            </button>
+          </span>
+        </div>
+      )}
       <div role="status" aria-live="polite">
         {msg && <p className={`feedback feedback-${msg.kind}`}>{msg.text}</p>}
       </div>

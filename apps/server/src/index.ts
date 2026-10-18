@@ -141,6 +141,11 @@ const trackEstimator = process.env.GEMINI_API_KEY
 const songFinder = process.env.GEMINI_API_KEY
   ? new GeminiClient(process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL || DEFAULT_GEMINI_MODEL, 40_000, 8_192)
   : undefined;
+// And one for Highlights mode: the larger Flash model is much better at telling a chorus from a verse.
+// Falls back to the everyday model when it's busy.
+const highlightModel = process.env.GEMINI_API_KEY
+  ? new GeminiClient(process.env.GEMINI_API_KEY, process.env.GEMINI_HIGHLIGHT_MODEL || "gemini-3.5-flash", 30_000, 2_048)
+  : undefined;
 const recommenders = new Map([...sessions].map(([id, s]) => [id, new RecommendationService(s, gemini)]));
 
 const { app, handleEvent, isOriginAllowed } = createApp({
@@ -152,6 +157,7 @@ const { app, handleEvent, isOriginAllowed } = createApp({
   boosts,
   trackEstimator,
   songFinder,
+  highlightModel,
   ipLimitPerMinute: Number(process.env.RATE_LIMIT_IP_PER_MIN || 6000),
   publicUrl: joinPublicUrl ? new URL(joinPublicUrl).origin : undefined,
   spotifyClientId,

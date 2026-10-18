@@ -6,6 +6,11 @@ import {
   HOST_TARGETS,
   MAX_CATALOG_TRACKS,
   MAX_TRACKS_PER_ADD,
+  HIGHLIGHT_CLIP_SECONDS,
+  HIGHLIGHT_PARTS,
+  type Highlight,
+  type HighlightPart,
+  type HighlightSettings,
   GENRE_PATTERN,
   SONG_REQUEST_LIMITS,
   SPOTIFY_IMAGE_URL,
@@ -31,6 +36,7 @@ import type { RecommendationModel } from "./gemini.js";
 import type { RecommendationService } from "./recommendation.js";
 import { estimateSongs } from "./trackEstimator.js";
 import { findSongs } from "./songFinder.js";
+import { fetchSyncedLyrics, findHighlight, type SongInfo } from "./highlightFinder.js";
 import { httpStatusFor, type BoostVerifier } from "./solana.js";
 import type { EventOutcome, SessionStore } from "./session.js";
 import { catalogTrackFromSpotify, type SpotifySearchClient } from "./spotify.js";
@@ -102,6 +108,10 @@ export interface AppOptions {
   trackEstimator?: RecommendationModel;
   /** Gemini client for Find songs / Surprise me (needs room for up to 50 songs). */
   songFinder?: RecommendationModel;
+  /** Gemini client for Highlights mode (a stronger model: finding a chorus takes real judgment). */
+  highlightModel?: RecommendationModel;
+  /** Time-synced lyrics lookup for Highlights mode (LRCLIB by default; tests pass a fake). */
+  lyrics?: (title: string, artist: string) => Promise<SongInfo | null>;
   /** Solana devnet boost verifier; omitted means boosts are disabled. */
   boosts?: BoostVerifier;
   /** Browser origins allowed to call the API (and open WebSockets). Empty = any (development). */
@@ -343,7 +353,8 @@ export function createApp(options: AppOptions) {
     res.json({ ok: true, service: "crowdpulse-server", database, gemini, time: new Date().toISOString() });
   });
 
-  app.get("/api/sessions/:id/metrics", async (req, res) => {
+  // Host-only: the analytics are for the signed-in host, not the public.
+  app.get("/api/sessions/:id/metrics", ...hostAuth.require, async (req: express.Request<{ id: string }>, res: express.Response) => {
     if (!sessions.has(req.params.id)) {
       res.status(404).json({ error: "Unknown session" });
       return;
@@ -458,6 +469,8 @@ export function createApp(options: AppOptions) {
       source: z.enum(["file", "generated", "spotify"]).optional(),
       message: z.string().max(200).optional(),
       playerId: z.string().regex(/^[A-Za-z0-9_-]{6,40}$/).optional(),
+      clipStartMs: z.number().min(0).max(24 * 3_600_000).optional(),
+      clipEndMs: z.number().min(0).max(24 * 3_600_000).optional(),
     })
     .strict();
 
@@ -674,6 +687,82 @@ export function createApp(options: AppOptions) {
   app.post("/api/host/sessions/:id/playback/pause", ...requireHost, hostSession, playbackAction("pause"));
   app.post("/api/host/sessions/:id/playback/resume", ...requireHost, hostSession, playbackAction("resume"));
   app.post("/api/host/sessions/:id/previous", ...requireHost, hostSession, playbackAction("previous"));
+  // --- Highlights mode: play only each song's best bit ---
+  const HighlightSettingsSchema = z
+    .object({
+      enabled: z.boolean(),
+      clipSec: z.number().refine((n) => (HIGHLIGHT_CLIP_SECONDS as readonly number[]).includes(n), "clip length must be 30, 45, 60 or 90"),
+      part: z.enum(HIGHLIGHT_PARTS as [HighlightPart, ...HighlightPart[]]),
+      transition: z.enum(["cut", "fade"]),
+    })
+    .strict();
+  app.post("/api/host/sessions/:id/playback/highlights", ...requireHost, hostSession, async (req, res) => {
+    const parsed = HighlightSettingsSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid highlights settings" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.setHighlights(parsed.data as HighlightSettings);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    res.json(outcome);
+  });
+
+  // Where a song's highlight starts (found once, then saved). The player asks right before playing.
+  const highlightJobs = new Map<string, Promise<Highlight>>();
+  app.get("/api/host/sessions/:id/highlight/:trackId", ...requireHost, hostSession, async (req: express.Request<{ id: string; trackId: string }>, res: express.Response) => {
+    const session = sessions.get(req.params.id)!;
+    const part = HIGHLIGHT_PARTS.includes(req.query.part as HighlightPart) ? (req.query.part as HighlightPart) : "auto";
+    const track = session.catalogTracks().find((t) => t.id === req.params.trackId);
+    if (!track) {
+      res.status(404).json({ error: "Unknown track" });
+      return;
+    }
+    const known = session.getHighlight(track.id, part);
+    if (known) {
+      res.json(known);
+      return;
+    }
+    const key = `${req.params.id}|${track.id}|${part}`;
+    let job = highlightJobs.get(key);
+    if (!job) {
+      job = (async () => {
+        const lyrics = await (options.lyrics ?? fetchSyncedLyrics)(track.title, track.artist);
+        const everyday = options.songFinder ?? trackEstimator;
+        const found = await findHighlight(options.highlightModel ?? everyday, track, part, lyrics, everyday);
+        if (found.source !== "default") await session.saveHighlight(track.id, part, found);
+        return found;
+      })().finally(() => highlightJobs.delete(key));
+      highlightJobs.set(key, job);
+    }
+    res.json(await job);
+  });
+
+  // The host nudged a highlight (±10 s): remember it for next time.
+  const NudgeSchema = z
+    .object({
+      part: z.enum(HIGHLIGHT_PARTS as [HighlightPart, ...HighlightPart[]]),
+      startMs: z.number().int().min(0).max(3_600_000),
+      endMs: z.number().int().min(0).max(3_600_000).optional(),
+    })
+    .strict();
+  app.put("/api/host/sessions/:id/highlight/:trackId", ...requireHost, hostSession, async (req: express.Request<{ id: string; trackId: string }>, res: express.Response) => {
+    const parsed = NudgeSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid highlight" });
+      return;
+    }
+    const highlight = { startMs: parsed.data.startMs, endMs: parsed.data.endMs ?? null, source: "host" as const };
+    const ok = await sessions.get(req.params.id)!.saveHighlight(req.params.trackId, parsed.data.part, highlight);
+    if (!ok) {
+      res.status(404).json({ error: "Unknown track" });
+      return;
+    }
+    res.json(highlight);
+  });
+
   const RepeatSchema = z.object({ repeat: z.boolean() }).strict();
   app.post("/api/host/sessions/:id/playback/repeat", ...requireHost, hostSession, async (req, res) => {
     const parsed = RepeatSchema.safeParse(req.body ?? {});

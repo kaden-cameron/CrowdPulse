@@ -3,6 +3,12 @@ import {
   BOOST_VOTE_WEIGHT,
   MAX_CATALOG_TRACKS,
   MAX_VOTES_PER_PERSON,
+  DEFAULT_HIGHLIGHTS,
+  HIGHLIGHT_CLIP_SECONDS,
+  HIGHLIGHT_PARTS,
+  type Highlight,
+  type HighlightPart,
+  type HighlightSettings,
   GENRE_PATTERN,
   type ParticipantState,
   DEMO_TRACKS,
@@ -94,6 +100,17 @@ const PRESET_LABEL: Record<string, string> = { sky: "Blue", flamingo: "Pink", mi
 /** ⏮ restarts the current song if it's further in than this; otherwise goes to the previous one. */
 const RESTART_THRESHOLD_MS = 5_000;
 
+/** Keep only valid highlight settings (unknown values fall back to the defaults). */
+export function sanitizeHighlights(raw: unknown): HighlightSettings {
+  const r = (raw ?? {}) as Partial<HighlightSettings>;
+  return {
+    enabled: r.enabled === true,
+    clipSec: (HIGHLIGHT_CLIP_SECONDS as readonly number[]).includes(r.clipSec as number) ? (r.clipSec as HighlightSettings["clipSec"]) : DEFAULT_HIGHLIGHTS.clipSec,
+    part: HIGHLIGHT_PARTS.includes(r.part as HighlightPart) ? (r.part as HighlightPart) : DEFAULT_HIGHLIGHTS.part,
+    transition: r.transition === "cut" ? "cut" : "fade",
+  };
+}
+
 export class SessionStore {
   readonly sessionId: string;
   readonly sessionName: string;
@@ -128,8 +145,11 @@ export class SessionStore {
   private energyHistory: { at: number; score: number }[] = [];
   private playbackMode: PlaybackMode = "dj";
   private repeat = false;
+  private highlightSettings: HighlightSettings = { ...DEFAULT_HIGHLIGHTS };
+  /** Each song's highlight start, per part ("trackId|part"). Saved and replayed. */
+  private highlightCache = new Map<string, Highlight>();
   private appearance: Appearance = DEFAULT_APPEARANCE;
-  private playback: Omit<PlaybackState, "mode" | "repeat" | "playerOnline"> = {
+  private playback: Omit<PlaybackState, "mode" | "repeat" | "highlights" | "playerOnline"> = {
     status: "idle",
     trackId: null,
     round: 0,
@@ -140,6 +160,8 @@ export class SessionStore {
     seekSeq: 0,
     playerId: null,
     pausedPositionMs: null,
+    clipStartMs: null,
+    clipEndMs: null,
   };
   private playerLastSeen = 0;
   /** Songs played before the current one (newest last), for ⏮ Previous. Rebuilt on replay. */
@@ -211,7 +233,7 @@ export class SessionStore {
         intensity: intensityForEnergy(this.energyScore),
       },
       visualMode: this.hostVisual ? "host" : "auto",
-      playback: { ...this.playback, mode: this.playbackMode, repeat: this.repeat, playerOnline: this.playerOnline() },
+      playback: { ...this.playback, mode: this.playbackMode, repeat: this.repeat, highlights: { ...this.highlightSettings }, playerOnline: this.playerOnline() },
       appearance: { ...this.appearance },
       crowdQuest: {
         label: `Quest ${this.questLevel}: send ${this.questGoal()} hype taps`,
@@ -562,6 +584,39 @@ export class SessionStore {
     });
   }
 
+  /** Host action: Highlights mode on/off and its options. Saved and replayed. */
+  setHighlights(settings: HighlightSettings): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const next = sanitizeHighlights(settings);
+      const saved = await this.persistHostAction("playback_mode", { mode: this.playbackMode, repeat: this.repeat, highlights: next });
+      if (saved) return saved;
+      this.highlightSettings = next;
+      this.change({
+        type: "playback.highlights",
+        message: next.enabled ? `Highlights mode on — ${next.clipSec}s of each song` : "Highlights mode off — full songs",
+      });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  highlightSettingsNow(): HighlightSettings {
+    return { ...this.highlightSettings };
+  }
+
+  /** A song's saved highlight for a part, if worked out before. */
+  getHighlight(trackId: string, part: HighlightPart): Highlight | undefined {
+    return this.highlightCache.get(`${trackId}|${part}`);
+  }
+
+  /** Save a song's highlight (found from lyrics / Gemini, or nudged by the host). */
+  async saveHighlight(trackId: string, part: HighlightPart, highlight: Highlight): Promise<boolean> {
+    if (!this.catalog.some((t) => t.id === trackId)) return false;
+    const saved = await this.persistHostAction("highlight", { trackId, part, highlight });
+    if (saved) return false;
+    this.highlightCache.set(`${trackId}|${part}`, { ...highlight });
+    return true;
+  }
+
   /** Host action 🔁: when a song finishes, play it again. Saved and replayed. */
   setRepeat(repeat: boolean): Promise<EventOutcome> {
     return this.exclusive(async () => {
@@ -601,6 +656,8 @@ export class SessionStore {
     source?: string;
     message?: string;
     playerId?: string;
+    clipStartMs?: number;
+    clipEndMs?: number;
   }): Promise<EventOutcome> {
     this.playerLastSeen = this.now();
     // One speaker at a time: the tab that last started a song is the player. Reports from any
@@ -637,6 +694,9 @@ export class SessionStore {
           startedAt:
             wasPlaying && (drift < 2_000 || this.now() - this.seekedAt < SEEK_GRACE_MS) ? this.playback.startedAt : startedAt,
           durationMs: input.durationMs ?? this.playback.durationMs,
+          // Highlights mode: the part of the song being played (null = the whole song).
+          clipStartMs: input.clipStartMs ?? (input.event === "started" ? null : this.playback.clipStartMs),
+          clipEndMs: input.clipEndMs ?? (input.event === "started" ? null : this.playback.clipEndMs),
           source: input.source ?? this.playback.source,
           message: null,
         };
@@ -892,6 +952,19 @@ export class SessionStore {
         case "playback_mode":
           if (meta.mode === "auto" || meta.mode === "dj") this.playbackMode = meta.mode;
           if (typeof meta.repeat === "boolean") this.repeat = meta.repeat;
+          if (meta.highlights && typeof meta.highlights === "object") this.highlightSettings = sanitizeHighlights(meta.highlights);
+          break;
+        case "highlight":
+          if (typeof meta.trackId === "string" && HIGHLIGHT_PARTS.includes(meta.part as HighlightPart)) {
+            const h = meta.highlight as Highlight | undefined;
+            if (h && (h.startMs === null || (typeof h.startMs === "number" && h.startMs >= 0))) {
+              this.highlightCache.set(`${meta.trackId}|${meta.part}`, {
+                startMs: h.startMs,
+                endMs: typeof h.endMs === "number" ? h.endMs : null,
+                source: h.source,
+              });
+            }
+          }
           break;
         case "session_reset":
           this.clearRunState();
@@ -1039,7 +1112,8 @@ export class SessionStore {
       | "catalog_add"
       | "catalog_remove"
       | "catalog_clear"
-      | "host_queue",
+      | "host_queue"
+      | "highlight",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {
@@ -1091,6 +1165,7 @@ export class SessionStore {
 
   private applyRemove(trackId: string) {
     this.catalog = this.catalog.filter((t) => t.id !== trackId);
+    for (const part of HIGHLIGHT_PARTS) this.highlightCache.delete(`${trackId}|${part}`);
     this.hostQueue = this.hostQueue.filter((id) => id !== trackId);
     this.votes.delete(trackId);
     this.boosts.delete(trackId);
@@ -1151,6 +1226,8 @@ export class SessionStore {
       seekSeq: this.playback.seekSeq,
       playerId: this.playback.playerId,
       pausedPositionMs: null,
+      clipStartMs: null,
+      clipEndMs: null,
     };
     return track.title;
   }
@@ -1171,7 +1248,7 @@ export class SessionStore {
     this.questLevel = 1;
     this.questProgress = 0;
     this.hostVisual = null;
-    this.playback = { status: "idle", trackId: null, round: 0, startedAt: null, durationMs: null, source: null, message: null, seekSeq: this.playback.seekSeq, playerId: this.playback.playerId, pausedPositionMs: null };
+    this.playback = { status: "idle", trackId: null, round: 0, startedAt: null, durationMs: null, source: null, message: null, seekSeq: this.playback.seekSeq, playerId: this.playback.playerId, pausedPositionMs: null, clipStartMs: null, clipEndMs: null };
     this.playHistory = [];
     this.hostQueue = [];
   }

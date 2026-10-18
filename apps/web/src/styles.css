@@ -3065,3 +3065,78 @@ button.menubar-tab.menubar-action {
   color: var(--ink);
   font: 16px var(--font-ui); /* 16px stops iOS zooming in on focus */
 }
+
+/* Host page before sign-in: just a sign-in card. */
+.signin-screen {
+  display: grid;
+  place-items: center;
+  min-height: calc(100dvh - 160px);
+  padding: 20px 16px;
+}
+
+.signin-card {
+  width: min(460px, 100%);
+}
+
+.signin-lead {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+  margin: 0.2rem 0 0.9rem;
+  font-size: 16px;
+}
+
+.signin-lead svg {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* Highlights mode controls (Now playing). */
+.highlights-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+  align-items: center;
+  margin: 0.6rem 0 0.2rem;
+}
+
+.highlights-toggle {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-weight: 700;
+}
+
+.highlights-options {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.highlights-options select {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px var(--font-ui);
+}
+
+.clip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0.3rem 0 0;
+  padding: 0.35rem 0.6rem;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+  font-family: var(--font-num);
+  font-size: 18px;
+}
+
+.clip-nudge {
+  display: inline-flex;
+  gap: 0.3rem;
+}

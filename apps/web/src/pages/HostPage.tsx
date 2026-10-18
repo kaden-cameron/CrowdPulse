@@ -32,8 +32,8 @@ export function HostPage() {
     "host",
   );
   useSessionAppearance(sessionCode, state?.appearance);
-  const { metrics, error: metricsError } = useMetrics(sessionCode);
   const access = useHostAccess();
+  const { metrics, error: metricsError } = useMetrics(sessionCode, access.ready, access.getHeaders);
   const [theme, setTheme] = useState<VisualTheme>("calm_waves");
   const [intensity, setIntensity] = useState(0.5);
   const [busy, setBusy] = useState(false);
@@ -66,6 +66,28 @@ export function HostPage() {
   }
 
   const totalMoods = state ? MOODS.reduce((n, m) => n + state.moods[m], 0) : 0;
+
+  // Nothing about the session (songs, queue, Gemini, numbers) is shown until a host signs in.
+  if (!access.ready) {
+    return (
+      <main className="host-page host-locked">
+        <MenuBar title="Host" status={status} lastMessageAt={lastMessageAt} />
+        <section className="signin-screen">
+          <div className="host-block signin-card">
+            <h1>Host sign in</h1>
+            <p className="signin-lead">
+              <ProfileIcon size={22} />
+              <span>
+                Sign in to run <strong>{state?.sessionName ?? "the session"}</strong>: music, the queue, the stage and Gemini.
+              </span>
+            </p>
+            <HostSignIn />
+            <p className="host-sub">Only hosts can see this page. Attendees vote at the join link on the big screen.</p>
+          </div>
+        </section>
+      </main>
+    );
+  }
 
   return (
     <main className="host-page">
@@ -226,14 +248,6 @@ export function HostPage() {
       </SettingsPanel>
 
       <section className="host-grid">
-        {!access.ready && (
-          <div className="signin-banner" role="note">
-            <span>You&apos;re not signed in as host — the controls below are locked.</span>
-            <button type="button" className="btn primary compact" onClick={() => setProfileOpen(true)}>
-              <ProfileIcon /> Sign in
-            </button>
-          </div>
-        )}
 
         {/* Now playing, with the Gemini DJ beside it */}
         <PlayerCard

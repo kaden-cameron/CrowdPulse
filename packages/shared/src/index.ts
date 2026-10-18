@@ -220,10 +220,15 @@ export interface PlaybackState {
   mode: PlaybackMode;
   /** 🔁 on: a song that finishes starts again instead of moving on. */
   repeat: boolean;
+  /** Highlights mode: play only each song's best bit (club mode). */
+  highlights: HighlightSettings;
   /** loading = chosen, waiting for the player to start it; ended = finished, waiting for the host (DJ mode). */
   status: "idle" | "loading" | "playing" | "paused" | "ended" | "error";
   /** Where the song was when the host paused it (ms); null unless paused. */
   pausedPositionMs: number | null;
+  /** In highlights mode: the part of the current song being played (ms into the song). */
+  clipStartMs: number | null;
+  clipEndMs: number | null;
   trackId: string | null;
   /** The track's round when it was chosen; reports for an older round are ignored. */
   round: number;
@@ -242,6 +247,62 @@ export interface PlaybackState {
 }
 
 export type PlaybackReportEvent = "started" | "progress" | "ended" | "error";
+
+// --- Highlights mode: each song plays only its biggest moment ---
+export type HighlightPart = "auto" | "chorus" | "drop";
+export const HIGHLIGHT_PARTS: HighlightPart[] = ["auto", "chorus", "drop"];
+export const HIGHLIGHT_CLIP_SECONDS = [30, 45, 60, 90] as const;
+export type HighlightClipSeconds = (typeof HIGHLIGHT_CLIP_SECONDS)[number];
+
+export interface HighlightSettings {
+  enabled: boolean;
+  /**
+   * Rough clip length. The clip follows the song's best section (start to end), so it can run from
+   * about half to one-and-a-half times this.
+   */
+  clipSec: HighlightClipSeconds;
+  /** auto = the most recognizable / high-energy moment; chorus = the first big chorus; drop = the beat drop. */
+  part: HighlightPart;
+  /** cut = jump straight to the next clip; fade = quick volume fade out / in (never overlapping). */
+  transition: "cut" | "fade";
+}
+export const DEFAULT_HIGHLIGHTS: HighlightSettings = { enabled: false, clipSec: 45, part: "auto", transition: "fade" };
+
+/**
+ * A song's best section. `startMs` null = unknown (the player uses ~30% into the song). `startMs`
+ * already includes any lead-in (e.g. the build-up before a drop). `endMs` null = unknown (the clip
+ * plays the target length).
+ * source: lyrics = from time-synced lyrics (accurate), gemini = Gemini's estimate, host = nudged by
+ * the host, default = no idea.
+ */
+export interface Highlight {
+  startMs: number | null;
+  endMs?: number | null;
+  source: "lyrics" | "gemini" | "host" | "default";
+}
+
+/**
+ * Where a clip plays from and to. It follows the song's best section when its end is known, kept
+ * between about half and one-and-a-half times the target length; otherwise it plays the target
+ * length. Unknown starts begin ~30% in; nothing runs past the end of the song.
+ */
+export function clipWindow(
+  h: { startMs: number | null; endMs?: number | null },
+  durationMs: number,
+  clipSec: number,
+): { start: number; end: number } {
+  const target = clipSec * 1000;
+  const min = target * 0.5;
+  const max = target * 1.5;
+  let start = Math.max(0, h.startMs ?? Math.round(durationMs * 0.3));
+  let len = h.endMs != null && h.endMs > start ? Math.min(max, Math.max(min, h.endMs - start)) : target;
+  // A start too close to the end (bad estimate): move it back so the clip fits.
+  if (durationMs > 0 && start + len > durationMs) {
+    start = Math.max(0, durationMs - len - 1_000);
+    len = Math.min(len, durationMs - 500 - start);
+  }
+  return { start, end: start + len };
+}
 
 /** What the host is aiming for; sent to Gemini as context. */
 export type HostTarget = "raise_energy" | "hold_steady" | "cool_down";

@@ -33,7 +33,8 @@ export type PersistedEventType =
   | "catalog_remove"
   | "catalog_clear"
   | "host_queue"
-  | "unvote";
+  | "unvote"
+  | "highlight";
 
 export type PersistResult = "stored" | "duplicate";
 

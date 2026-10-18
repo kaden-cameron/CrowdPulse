@@ -10,6 +10,9 @@ import type {
   SessionState,
   SongRequest,
   FoundSong,
+  Highlight,
+  HighlightPart,
+  HighlightSettings,
   VisualState,
 } from "@crowdpulse/shared";
 
@@ -56,6 +59,27 @@ export const hostPrevious = (sessionId: string, auth: HostHeaders) =>
 /** 🔁: replay songs when they finish. */
 export const hostSetRepeat = (sessionId: string, auth: HostHeaders, repeat: boolean) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/repeat`, auth, { repeat });
+
+/** Where a song's highlight starts (worked out once by the server, then saved). */
+export async function fetchHighlight(sessionId: string, auth: HostHeaders, trackId: string, part: HighlightPart): Promise<Highlight> {
+  const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/highlight/${encodeURIComponent(trackId)}?part=${part}`, { headers: auth });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? `Highlight lookup failed (${res.status})`);
+  return data as Highlight;
+}
+
+/** The host nudged a song's highlight start: save it for next time. */
+export const hostSaveHighlight = (sessionId: string, auth: HostHeaders, trackId: string, part: HighlightPart, startMs: number, endMs?: number) =>
+  fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/highlight/${encodeURIComponent(trackId)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json", ...auth },
+    body: JSON.stringify({ part, startMs: Math.round(startMs), ...(endMs != null ? { endMs: Math.round(endMs) } : {}) }),
+  }).then(async (res) => {
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `Couldn't save (${res.status})`);
+  });
+
+export const hostSetHighlights = (sessionId: string, auth: HostHeaders, settings: HighlightSettings) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/highlights`, auth, settings);
 
 export const hostSeek = (sessionId: string, auth: HostHeaders, positionMs: number) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/seek`, auth, { positionMs: Math.round(positionMs) });
@@ -139,6 +163,9 @@ export interface PlaybackReport {
   message?: string;
   /** This tab's player id (one speaker at a time). */
   playerId?: string;
+  /** Highlights mode: the part of the song being played. */
+  clipStartMs?: number;
+  clipEndMs?: number;
 }
 
 /** From the player page. 409 just means the server has moved on to another track. */
