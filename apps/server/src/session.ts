@@ -21,13 +21,6 @@ import {
   APPEARANCE_PRESETS,
   DEFAULT_APPEARANCE,
   DEFAULT_STAGE_VIEW,
-  DEFAULT_MIX,
-  MIX_BARS,
-  MIX_STYLES,
-  mixCompatibility,
-  type MixSettings,
-  type MixStyle,
-  type TrackAnalysis,
   type StageView,
   type Appearance,
   type LatestEvent,
@@ -125,36 +118,6 @@ export function sanitizeHighlights(raw: unknown): HighlightSettings {
   };
 }
 
-export function sanitizeMix(raw: unknown): MixSettings {
-  const r = (raw ?? {}) as Partial<MixSettings>;
-  return {
-    enabled: r.enabled === true,
-    style: r.style === "auto" || MIX_STYLES.includes(r.style as MixStyle) ? (r.style as MixSettings["style"]) : DEFAULT_MIX.style,
-    bars: (MIX_BARS as readonly number[]).includes(r.bars as number) ? (r.bars as MixSettings["bars"]) : DEFAULT_MIX.bars,
-  };
-}
-
-/** A song analysis from the speaker (or replay), or null if it doesn't make sense. */
-export function sanitizeAnalysis(raw: unknown): TrackAnalysis | null {
-  const a = (raw ?? {}) as Partial<TrackAnalysis>;
-  const num = (v: unknown, lo: number, hi: number) => typeof v === "number" && Number.isFinite(v) && v >= lo && v <= hi;
-  if (!num(a.bpm, 40, 250) || !num(a.durationMs, 1_000, 3_600_000)) return null;
-  const dur = a.durationMs as number;
-  if (!num(a.beatMs, 0, dur) || !num(a.mixInMs, 0, dur) || !num(a.mixOutMs, 0, dur) || !num(a.gainDb, -24, 24)) return null;
-  return {
-    bpm: Math.round((a.bpm as number) * 100) / 100,
-    beatMs: Math.round(a.beatMs as number),
-    key: typeof a.key === "string" && /^(?:[1-9]|1[0-2])[AB]$/.test(a.key) ? a.key : null,
-    gainDb: Math.round((a.gainDb as number) * 10) / 10,
-    mixInMs: Math.round(a.mixInMs as number),
-    mixOutMs: Math.round(a.mixOutMs as number),
-    durationMs: Math.round(dur),
-  };
-}
-
-/** AI DJ: how far down the least-recently-played list auto play looks for a song that mixes well. */
-const MIX_PICK_WINDOW = 6;
-
 /** How many "auto" entries to show when the queue is empty. */
 const AUTO_NEXT_SIZE = 5;
 
@@ -195,14 +158,13 @@ export class SessionStore {
   private playbackMode: PlaybackMode = "dj";
   private repeat = false;
   private highlightSettings: HighlightSettings = { ...DEFAULT_HIGHLIGHTS };
-  private mix: MixSettings = { ...DEFAULT_MIX };
   /** Each song's highlight start, per part ("trackId|part"). Saved and replayed. */
   private highlightCache = new Map<string, Highlight>();
   /** The host's saved playlists (survive new runs and restarts). */
   private playlists = new Map<string, Playlist>();
   private appearance: Appearance = DEFAULT_APPEARANCE;
   private stageView: StageView = { ...DEFAULT_STAGE_VIEW };
-  private playback: Omit<PlaybackState, "mode" | "repeat" | "highlights" | "playerOnline" | "mix"> = {
+  private playback: Omit<PlaybackState, "mode" | "repeat" | "highlights" | "playerOnline"> = {
     status: "idle",
     trackId: null,
     round: 0,
@@ -288,7 +250,7 @@ export class SessionStore {
         intensity: intensityForEnergy(this.energyScore),
       },
       visualMode: this.hostVisual ? "host" : "auto",
-      playback: { ...this.playback, mode: this.playbackMode, repeat: this.repeat, highlights: { ...this.highlightSettings }, mix: { ...this.mix }, playerOnline: this.playerOnline() },
+      playback: { ...this.playback, mode: this.playbackMode, repeat: this.repeat, highlights: { ...this.highlightSettings }, playerOnline: this.playerOnline() },
       appearance: { ...this.appearance },
       stageView: { ...this.stageView },
       crowdQuest: {
@@ -849,38 +811,6 @@ export class SessionStore {
     return true;
   }
 
-  /** Host action: AI DJ mixing on/off, style and length. Saved and replayed. */
-  setMix(settings: MixSettings): Promise<EventOutcome> {
-    return this.exclusive(async () => {
-      const next = sanitizeMix(settings);
-      const saved = await this.persistHostAction("playback_mode", { mix: next });
-      if (saved) return saved;
-      this.mix = next;
-      this.change({
-        type: "playback.mix",
-        message: next.enabled ? "AI DJ on — local songs mix into each other" : "AI DJ off — songs play one after another",
-      });
-      return { status: "accepted", state: this.getState() };
-    });
-  }
-
-  /** The speaker measured a local song (tempo, key, beat grid, mix points). Saved and replayed. */
-  saveAnalysis(trackId: string, analysis: TrackAnalysis): Promise<boolean> {
-    return this.exclusive(async () => {
-      const clean = sanitizeAnalysis(analysis);
-      if (!clean || !this.catalog.some((t) => t.id === trackId)) return false;
-      const saved = await this.persistHostAction("track_analysis", { trackId, analysis: clean });
-      if (saved) return false;
-      this.applyAnalysis(trackId, clean);
-      this.bump();
-      return true;
-    });
-  }
-
-  private applyAnalysis(trackId: string, analysis: TrackAnalysis) {
-    this.catalog = this.catalog.map((t) => (t.id === trackId ? { ...t, analysis, bpm: Math.round(analysis.bpm) } : t));
-  }
-
   /** Host action 🔁: when a song finishes, play it again. Saved and replayed. */
   setRepeat(repeat: boolean): Promise<EventOutcome> {
     return this.exclusive(async () => {
@@ -922,8 +852,6 @@ export class SessionStore {
     playerId?: string;
     clipStartMs?: number;
     clipEndMs?: number;
-    /** AI DJ: the player already started mixing into this song as the current one ends. */
-    nextTrackId?: string;
   }): Promise<EventOutcome> {
     this.playerLastSeen = this.now();
     // One speaker at a time: the tab that last started a song is the player. Reports from any
@@ -983,14 +911,6 @@ export class SessionStore {
           this.playback = { ...this.playback, status: "loading", startedAt: null, pausedPositionMs: null, message: null };
           this.change({ type: "playback.repeat", message: `Repeating ${current.title}` });
           return { status: "accepted", state: this.getState() };
-        }
-        // AI DJ: the speaker is already mixing into the next song — make that the one playing.
-        if (input.event === "ended" && input.nextTrackId && this.mix.enabled && input.nextTrackId !== current.id) {
-          const mixed = await this.advance(input.nextTrackId);
-          if (mixed.status === "accepted") {
-            this.autoFailures = 0;
-            return mixed;
-          }
         }
         const failed = input.event === "error";
         this.autoFailures = failed ? this.autoFailures + 1 : 0;
@@ -1242,18 +1162,13 @@ export class SessionStore {
           if (meta.mode === "auto" || meta.mode === "dj") this.playbackMode = meta.mode;
           if (typeof meta.repeat === "boolean") this.repeat = meta.repeat;
           if (meta.highlights && typeof meta.highlights === "object") this.highlightSettings = sanitizeHighlights(meta.highlights);
-          if (meta.mix && typeof meta.mix === "object") this.mix = sanitizeMix(meta.mix);
           break;
         case "track_rename":
           if (typeof meta.trackId === "string" && typeof meta.title === "string" && typeof meta.artist === "string") {
             this.applyRename(meta.trackId, meta.title.slice(0, 120), meta.artist.slice(0, 120));
           }
           break;
-        case "track_analysis": {
-          const a = sanitizeAnalysis(meta.analysis);
-          if (typeof meta.trackId === "string" && a) this.applyAnalysis(meta.trackId, a);
-          break;
-        }
+
         case "highlight":
           if (typeof meta.trackId === "string" && HIGHLIGHT_PARTS.includes(meta.part as HighlightPart)) {
             const h = meta.highlight as Highlight | undefined;
@@ -1407,7 +1322,6 @@ export class SessionStore {
       | "track_advance"
       | "track_add"
       | "session_reset"
-      | "track_analysis"
       | "track_rename"
       | "playback_mode"
       | "appearance"
@@ -1676,26 +1590,12 @@ export class SessionStore {
    */
   private upcomingAuto(n: number, skip: Set<string> = new Set()): QueueItem[] {
     if (n <= 0) return [];
-    const order = this.catalog
+    return this.catalog
       .map((t, idx) => ({ t, idx, played: this.lastPlayedAt.get(t.id) ?? 0 }))
       .filter(({ t }) => t.id !== this.nowPlaying?.id && !skip.has(t.id))
       .sort((a, b) => a.played - b.played || a.idx - b.idx)
-      .map(({ t }) => t);
-    if (!this.mix.enabled) return order.slice(0, n).map((t) => this.toQueueItem(t));
-    // AI DJ: among the few songs that haven't played for longest, take the one that mixes best
-    // (tempo, then key) with the song before it — so auto play flows instead of jumping around.
-    const picked: CatalogTrack[] = [];
-    let prev: CatalogTrack | null = this.nowPlaying;
-    const left = [...order];
-    while (picked.length < n && left.length) {
-      let best = 0;
-      for (let i = 1; i < Math.min(MIX_PICK_WINDOW, left.length); i++) {
-        if (mixCompatibility(prev?.analysis, left[i].analysis) > mixCompatibility(prev?.analysis, left[best].analysis)) best = i;
-      }
-      prev = left.splice(best, 1)[0];
-      picked.push(prev);
-    }
-    return picked.map((t) => this.toQueueItem(t));
+      .slice(0, n)
+      .map(({ t }) => this.toQueueItem(t));
   }
 
   private voteCount(trackId: string): number {

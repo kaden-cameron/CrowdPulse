@@ -68,29 +68,6 @@ describe("PlayerCard (host page Now playing)", () => {
     expect(screen.getByRole("button", { name: "▶ Start audio on this device" })).toBeEnabled();
   });
 
-  it("AI DJ: turning it on sends the settings, and it explains what it needs", async () => {
-    const posts: { url: string; body: unknown }[] = [];
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (url: string, init?: RequestInit) => {
-        if (url === "/api/public-config") return Response.json({ publicUrl: null, lanIp: null, spotifyClientId: "cid" });
-        if (init?.method === "POST") posts.push({ url, body: JSON.parse(String(init.body)) });
-        return Response.json({ status: "accepted", state: stateWith({}) });
-      }),
-    );
-    const { rerender } = render(<PlayerCard {...props} state={stateWith({})} />);
-    await userEvent.click(screen.getByRole("checkbox", { name: "AI DJ mix" }));
-    await waitFor(() => expect(posts.find((p) => p.url.endsWith("/playback/mix"))?.body).toEqual({ enabled: true, style: "auto", bars: 16 }));
-
-    const mix = { enabled: true, style: "auto", bars: 16 };
-    rerender(<PlayerCard {...props} state={stateWith({}, { mix, mode: "dj" })} />);
-    expect(screen.getByText("Switch to Auto play to mix.")).toBeInTheDocument();
-    rerender(<PlayerCard {...props} state={stateWith({}, { mix })} />);
-    expect(screen.getByRole("combobox", { name: "Mix style" })).toHaveValue("auto");
-    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Mix length" }), "32");
-    await waitFor(() => expect(posts.at(-1)?.body).toEqual({ enabled: true, style: "auto", bars: 32 }));
-  });
-
   it("Highlights mode: turning it on sends the settings; while a clip plays, ±10s nudges are offered", async () => {
     const posts: { url: string; body: unknown }[] = [];
     vi.stubGlobal(

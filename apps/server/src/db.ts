@@ -17,7 +17,6 @@ export interface EventRecord {
 
 export type PersistedEventType =
   | "vote"
-  | "track_analysis"
   | "track_rename"
   | "mood"
   | "tap"

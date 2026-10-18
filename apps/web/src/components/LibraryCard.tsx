@@ -490,15 +490,7 @@ export function LibraryCard({
                           {hasLocalFile(t.id) ? "local" : "local · not linked"}
                         </span>
                       )}
-                      {t.artist} · {t.genre} ·{" "}
-                      {t.analysis ? (
-                        <span title="Measured from the audio">
-                          {t.analysis.bpm.toFixed(1)} BPM{t.analysis.key ? ` · ${t.analysis.key}` : ""}
-                        </span>
-                      ) : (
-                        `${t.bpm} BPM`
-                      )}{" "}
-                      · energy {t.energy.toFixed(2)}
+                      {t.artist} · {t.genre} · {t.bpm} BPM · energy {t.energy.toFixed(2)}
                       {t.metaSource && SOURCE_LABEL[t.metaSource] && (
                         <span className={`meta-${t.metaSource}`}> · {SOURCE_LABEL[t.metaSource]}</span>
                       )}

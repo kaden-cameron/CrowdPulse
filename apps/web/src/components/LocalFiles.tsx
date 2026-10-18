@@ -1,12 +1,10 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { LOCAL_AUDIO_EXTENSIONS, MAX_TRACKS_PER_ADD, type SessionState } from "@crowdpulse/shared";
-import { hostAddLocalTracks, hostSaveAnalysis } from "../lib/host";
-import { analyzeFile } from "../lib/local/analyze";
+import { hostAddLocalTracks } from "../lib/host";
 import { useAutoHide } from "../hooks/useAutoHide";
 import {
   canRememberFolder,
   hasLocalFile,
-  localFile,
   pickFolder,
   registerFiles,
   relinkSavedFolder,
@@ -15,8 +13,7 @@ import {
 } from "../lib/local/files";
 
 // Songs window, "Local files": add audio files from this laptop (a folder or single files). They stay
-// on this laptop — the library only gets their details, and this tab plays them. Each new song is
-// then measured here (tempo, beats, key) for the AI DJ, one at a time in the background.
+// on this laptop — the library only gets their details, and this tab plays them.
 
 type Msg = { kind: "accepted" | "rejected" | "pending"; text: string } | null;
 const ACCEPT = ["audio/*", ...LOCAL_AUDIO_EXTENSIONS.map((e) => `.${e}`)].join(",");
@@ -37,46 +34,15 @@ export function LocalFiles({
   const [msg, setMsg] = useState<Msg>(null);
   useAutoHide(msg, () => setMsg(null));
   const [folder, setFolder] = useState<string | null>(null);
-  const [analyzing, setAnalyzing] = useState<{ title: string; left: number } | null>(null);
-  const [round, setRound] = useState(0);
-  const running = useRef(false);
-  const failed = useRef(new Set<string>());
   const filesInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
 
   const local = (state?.tracks ?? []).filter((t) => t.source === "local");
   const unlinked = local.filter((t) => !hasLocalFile(t.id));
-  const toAnalyze = local.filter((t) => !t.analysis && hasLocalFile(t.id) && !failed.current.has(t.id));
 
   useEffect(() => {
     void savedFolderName().then(setFolder);
   }, []);
-
-  // Measure new local songs, one at a time (decoding a song takes a moment and a fair bit of memory).
-  useEffect(() => {
-    if (!ready || running.current || !toAnalyze.length) {
-      if (!toAnalyze.length) setAnalyzing(null);
-      return;
-    }
-    const t = toAnalyze[0];
-    const file = localFile(t.id);
-    if (!file) return;
-    running.current = true;
-    setAnalyzing({ title: t.title, left: toAnalyze.length });
-    void (async () => {
-      try {
-        const analysis = await analyzeFile(file);
-        await hostSaveAnalysis(sessionCode, await getHeaders(), t.id, analysis);
-      } catch (err) {
-        failed.current.add(t.id);
-        setMsg({ kind: "rejected", text: `Couldn't measure “${t.title}”: ${(err as Error).message}. It still plays, but won't be mixed.` });
-      } finally {
-        running.current = false;
-        setRound((n) => n + 1);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ready, state, round]);
 
   async function add(files: File[]) {
     if (!files.length) {
@@ -170,11 +136,6 @@ export function LocalFiles({
         <p className="host-sub local-unlinked">
           {unlinked.length} local song{unlinked.length === 1 ? " isn't" : "s aren't"} linked on this device — add{" "}
           {folder ? "or re-link" : ""} their folder to play {unlinked.length === 1 ? "it" : "them"} here.
-        </p>
-      )}
-      {analyzing && (
-        <p className="host-sub" role="status">
-          Measuring tempo &amp; key for the AI DJ: “{analyzing.title}”{analyzing.left > 1 ? ` (+${analyzing.left - 1} more)` : ""}…
         </p>
       )}
       <div role="status" aria-live="polite">

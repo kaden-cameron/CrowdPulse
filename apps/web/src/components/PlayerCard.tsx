@@ -1,12 +1,7 @@
 import { useState } from "react";
 import {
-  DEFAULT_MIX,
   HIGHLIGHT_CLIP_SECONDS,
-  MIX_BARS,
-  camelotName,
   type HighlightSettings,
-  type MixSettings,
-  type MixStyle,
   type PlaybackMode,
   type SessionState,
 } from "@crowdpulse/shared";
@@ -18,7 +13,6 @@ import {
   hostSaveHighlight,
   hostSeek,
   hostSetHighlights,
-  hostSetMix,
   hostSetRepeat,
   hostSkip,
 } from "../lib/host";
@@ -47,14 +41,6 @@ const STATUS_TEXT: Record<string, string> = {
   error: "Couldn't play",
 };
 const SOURCE_TEXT: Record<string, string> = { spotify: "Spotify", file: "Local file" };
-const MIX_STYLE_TEXT: Record<MixStyle | "auto", string> = {
-  auto: "AI picks",
-  blend: "Blend",
-  filter: "Filter sweep",
-  echo: "Echo out",
-  cut: "Cut",
-};
-
 export function PlayerCard({
   sessionCode,
   state,
@@ -127,28 +113,7 @@ export function PlayerCard({
       await hostSaveHighlight(sessionCode, headers, np.trackId, hl.part, to, end);
       return hostSeek(sessionCode, headers, to);
     });
-  const mix = pb?.mix ?? DEFAULT_MIX;
-  const setMix = (next: MixSettings) =>
-    run(next.enabled ? `AI DJ: ${MIX_STYLE_TEXT[next.style]}${next.style === "blend" || next.style === "filter" || next.style === "auto" ? `, ${next.bars} bars` : ""}` : "AI DJ off", async () =>
-      hostSetMix(sessionCode, await getHeaders(), next),
-    );
   const hasLocal = (state?.tracks ?? []).some((t) => t.source === "local");
-  const mp = engine.mixPlan;
-  const mixStatus = !mix.enabled
-    ? null
-    : pb?.mode !== "auto"
-      ? "Switch to Auto play to mix."
-      : hl?.enabled
-        ? "Turn off Highlights mode to mix."
-        : pb?.repeat
-          ? "Turn off Repeat to mix."
-          : mp?.running
-            ? `Mixing into “${mp.title}” — ${MIX_STYLE_TEXT[mp.plan.style]}${mp.plan.bars ? `, ${mp.plan.bars} bars` : ""}.`
-            : mp
-              ? `Next: ${MIX_STYLE_TEXT[mp.plan.style].toLowerCase()}${mp.plan.bars > 2 ? ` ${mp.plan.bars} bars` : ""} into “${mp.title}” at ${fmt(mp.plan.outAtMs)}${mp.plan.reason ? ` — ${mp.plan.reason}` : ""}${mp.by === "gemini" ? " (Gemini)" : ""}`
-              : engine.unlocked
-                ? "Mixes when a measured local song is followed by another."
-                : "Mixing happens on the speaker tab.";
   const back = () => run("Went back", async () => hostPrevious(sessionCode, await getHeaders()));
   const paused = pb?.status === "paused";
   const togglePause = () =>
@@ -327,60 +292,6 @@ export function PlayerCard({
           <span className="host-sub">Play only each song&apos;s best bit.</span>
         )}
       </div>
-      {/* AI DJ: local songs blend into each other, beat-matched. */}
-      <div className="highlights-row">
-        <label className="highlights-toggle">
-          <input
-            type="checkbox"
-            checked={mix.enabled}
-            disabled={busy || !ready || !pb}
-            onChange={(e) => void setMix({ ...mix, enabled: e.target.checked })}
-          />
-          AI DJ mix
-        </label>
-        <InfoTip label="AI DJ mix">
-          Mixes local songs into each other like a DJ. This laptop measures each song&apos;s tempo, beats and key, then
-          starts the next song on a bar line with the beats matched and blends them — a bass swap, a filter sweep, an echo
-          out or a cut. With &ldquo;AI picks&rdquo;, Gemini chooses the style for each pair; auto play also favors songs that
-          mix well. Works between local files in Auto play. Spotify songs can&apos;t be mixed (Spotify doesn&apos;t allow it),
-          so they just change over.
-        </InfoTip>
-        {mix.enabled ? (
-          <span className="highlights-options">
-            <select
-              value={mix.style}
-              disabled={busy || !ready}
-              aria-label="Mix style"
-              onChange={(e) => void setMix({ ...mix, style: e.target.value as MixSettings["style"] })}
-            >
-              {(Object.keys(MIX_STYLE_TEXT) as (MixStyle | "auto")[]).map((k) => (
-                <option key={k} value={k}>
-                  {MIX_STYLE_TEXT[k]}
-                </option>
-              ))}
-            </select>
-            <select
-              value={mix.bars}
-              disabled={busy || !ready}
-              aria-label="Mix length"
-              onChange={(e) => void setMix({ ...mix, bars: Number(e.target.value) as MixSettings["bars"] })}
-            >
-              {MIX_BARS.map((n) => (
-                <option key={n} value={n}>
-                  {n} bars
-                </option>
-              ))}
-            </select>
-          </span>
-        ) : (
-          <span className="host-sub">Blend local songs like a DJ.</span>
-        )}
-      </div>
-      {mixStatus && (
-        <p className="host-sub mix-status" title={mp?.plan && track?.analysis?.key ? camelotName(track.analysis.key) : undefined}>
-          {mixStatus}
-        </p>
-      )}
       {hl?.enabled && np && pb?.clipStartMs != null && pb.clipEndMs != null && (
         <div className="clip-row">
           <span>

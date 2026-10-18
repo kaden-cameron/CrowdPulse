@@ -24,7 +24,7 @@ votes · boosts · Gemini · host ──▶ server: nowPlaying + playback state 
 Two sources, and one library can mix both:
 
 - **Spotify.** The speaker tab becomes a Spotify Connect device ("CrowdPulse") and plays each song in full. It needs `SPOTIFY_CLIENT_ID` on the server and a Spotify Premium login on the speaker laptop.
-- **Local files** (mp3, m4a, wav, flac, ogg…) on the speaker laptop. See *Local files and the AI DJ* below. No Spotify needed.
+- **Local files** (mp3, m4a, wav, flac, ogg…) on the speaker laptop. See *Local files* below. No Spotify needed.
 
 ## Rules the server enforces
 
@@ -100,9 +100,9 @@ Tick **Highlights mode** in Now playing to play only each song's best bit, then 
 - The projector's bar and timer show progress through the clip ("· highlight").
 - Accuracy: right for most songs with lyrics in tests (Mr. Brightside, Uptown Funk, Blinding Lights, Titanium); drop estimates for instrumentals are rougher — that's what the nudge is for.
 
-### Local files and the AI DJ
+### Local files
 
-**Adding local songs.** In **Songs → Local files**, use **📁 Add music folder** (subfolders included) or **Add files**. The files never leave the laptop: the library gets only each song's title, artist, genre and BPM, read from its tags (or from a file name like `Artist - Title.mp3`). Gemini fills in genre and energy if the tags don't have them. Local songs can be voted on, queued and saved in playlists like any other song, and they show a **local** tag.
+**Adding local songs.** In **Songs → Local files**, use **📁 Add music folder** (subfolders included) or **Add files**. The files never leave the laptop: the library gets only each song's title, artist, genre and BPM, read from its tags (or from a file name like `Artist - Title.mp3`). Gemini fills in genre, BPM and energy if the tags don't have them. Local songs can be voted on, queued and saved in playlists like any other song, and they show a **local** tag.
 
 - A song's id comes from its file name and size, so the same file is recognized again later.
 - **✎ Rename** on a local song changes its title and artist in the library, for everyone and on the projector. The file on the laptop isn't renamed (browsers can't do that), and the song still links. API: `PATCH /api/host/sessions/:id/library/:trackId {title, artist}`.
@@ -110,40 +110,7 @@ Tick **Highlights mode** in Now playing to play only each song's best bit, then 
 - Local songs only play on the device that has the files: the speaker laptop.
 - **▶ Start audio** works without Spotify when the library has local songs.
 
-**Measuring.** After a song is added, the laptop measures it in the background, one song at a time (a few seconds each). The library then shows the measured tempo and key, e.g. `124.0 BPM · 8A` (Camelot notation; 8A = A minor). The measurements are saved on the server, so they're taken only once. What's measured:
-- tempo and beat grid, from onsets folded at each candidate beat length;
-- the first downbeat, from the kick drum;
-- the key, from a chromagram matched to key profiles;
-- loudness, so every song plays at a common level;
-- where the music starts, and where the outro begins (the mix-out point).
-
-**AI DJ mix** (Now playing → tick **AI DJ mix**). In **Auto play**, a measured local song mixes into the next measured local song instead of stopping. The next song starts on a bar line before the outro, stretched to the same tempo with its pitch kept. A sync loop keeps the beats together; browser tests measure a median of about 3 ms apart. After the mix, the new song eases back to its own tempo over about 10 s.
-
-Styles:
-- **Blend:** brings the new song in without its bass, swaps the basslines halfway, then fades the old song out.
-- **Filter sweep:** the old song is swept away with a rising high-pass filter.
-- **Echo out:** the old song's last beat echoes, and the new song starts on the next bar.
-- **Cut:** a hard cut on the downbeat.
-- **AI picks:** Gemini chooses the style for each pair, from the styles that can work. Simple rules take over without Gemini: blend when tempo and key fit, filter when only the tempo fits, echo out when the tempos are more than 8% apart.
-
-**Length:** 8, 16 or 32 bars, for blends and sweeps.
-
-Auto play also favors songs that mix well. Among the few songs that haven't played for longest, it picks the one closest in tempo and key to the song playing. The queue still plays first, in its order.
-
-**Not mixed:**
-- Spotify songs. Spotify's terms forbid mixing or overlapping its songs, and its player gives no access to the audio. Mixed libraries change over normally at a Spotify song.
-- Songs that aren't measured yet.
-- Songs in Host picks mode, with Repeat on, or with Highlights mode on.
-
-The Now playing window always shows what's next ("Next: blend 16 bars into “…” at 3:12 — 124 → 126 BPM, 8A → 9A") or what's happening ("Mixing into “…”").
-
-API:
-- `POST /api/host/sessions/:id/local-tracks {tracks: [{id: "lf_…", title, artist, genre?, bpm?}]}`
-- `PUT /api/host/sessions/:id/analysis/:trackId {bpm, beatMs, key, gainDb, mixInMs, mixOutMs, durationMs}`
-- `POST /api/host/sessions/:id/playback/mix {enabled, style: "auto"|"blend"|"filter"|"echo"|"cut", bars: 8|16|32}`
-- `POST /api/host/sessions/:id/transition {fromId, toId}` returns the style Gemini or the rules picked.
-
-When a mix starts, the speaker sends `ended` with `nextTrackId`, and the server makes that song "now playing" right away. All of this is saved and replayed after a restart.
+Songs change over with a short fade. API: `POST /api/host/sessions/:id/local-tracks {tracks: [{id: "lf_…", title, artist, genre?, bpm?}]}`.
 
 ### Attendees: votes, genre, one voter per device
 

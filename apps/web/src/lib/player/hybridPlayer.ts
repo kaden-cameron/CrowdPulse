@@ -1,8 +1,8 @@
-import type { LocalMixer } from "./localMixer";
+import type { LocalPlayer } from "./localPlayer";
 import type { PlayableTrack, PlayerAdapter, StartedInfo } from "./types";
 
-// The speaker output: local songs play through the mixer on this laptop, Spotify songs through
-// Spotify. Only one of them makes sound at a time (Spotify songs can't be mixed — Spotify forbids it).
+// The speaker output: local songs play from files on this laptop, Spotify songs through
+// Spotify. Only one of them makes sound at a time.
 // Spotify is optional: with local files only, Start audio works without connecting Spotify.
 
 export class HybridPlayer implements PlayerAdapter {
@@ -12,10 +12,10 @@ export class HybridPlayer implements PlayerAdapter {
   spotifyProblem: string | null = null;
 
   private spotify: PlayerAdapter;
-  readonly local: LocalMixer;
+  readonly local: LocalPlayer;
   private spotifyConnected: () => boolean;
 
-  constructor(spotify: PlayerAdapter, local: LocalMixer, spotifyConnected: () => boolean) {
+  constructor(spotify: PlayerAdapter, local: LocalPlayer, spotifyConnected: () => boolean) {
     this.spotify = spotify;
     this.local = local;
     this.spotifyConnected = spotifyConnected;

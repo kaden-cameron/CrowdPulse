@@ -3431,7 +3431,7 @@ button.menubar-tab.menubar-action {
   margin-right: 0.2rem;
 }
 
-/* Local files (Songs window) and the AI DJ status (Now playing) */
+/* Local files (Songs window) */
 .local-files {
   margin: 0.4rem 0 0.2rem;
   padding: 0.4rem 0 0.1rem;
@@ -3457,10 +3457,6 @@ button.menubar-tab.menubar-action {
 }
 .library-list li.unlinked .library-meta {
   opacity: 0.55;
-}
-.mix-status {
-  margin: 0.2rem 0 0;
-  font-size: 0.82rem;
 }
 .track-rename {
   display: flex;
