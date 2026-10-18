@@ -33,6 +33,10 @@ async function hostPost(path: string, auth: HostHeaders, body: object = {}, meth
 export const hostSetVisual = (sessionId: string, auth: HostHeaders, visual: VisualState | null) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/visual`, auth, { visual });
 
+/** Reset just the crowd mood (moods, picked genres, energy). Votes, queue and library stay. */
+export const hostResetCrowd = (sessionId: string, auth: HostHeaders) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/crowd/reset`, auth);
+
 export const hostReset = (sessionId: string, auth: HostHeaders) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/reset`, auth);
 

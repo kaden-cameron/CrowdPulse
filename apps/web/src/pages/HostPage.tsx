@@ -20,7 +20,7 @@ import { QueueCard } from "../components/QueueCard";
 import { PlaylistsCard } from "../components/PlaylistsCard";
 import { SettingsPanel } from "../components/SettingsPanel";
 import { ProfileIcon } from "../components/Icons";
-import { hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
+import { hostReset, hostResetCrowd, hostSetAppearance, hostSetVisual } from "../lib/host";
 import { presetLabel } from "../lib/theme";
 import { PlayerCard } from "../components/PlayerCard";
 import { useAutoHide } from "../hooks/useAutoHide";
@@ -47,6 +47,8 @@ export function HostPage() {
     text: string;
   } | null>(null);
   useAutoHide(message, () => setMessage(null));
+  const [crowdMsg, setCrowdMsg] = useState<{ kind: "accepted" | "rejected"; text: string } | null>(null);
+  useAutoHide(crowdMsg, () => setCrowdMsg(null));
 
 
   async function run(label: string, action: () => Promise<{ state: SessionState }>) {
@@ -328,8 +330,30 @@ export function HostPage() {
           </div>
         </div>
 
-        <div className="host-block">
-          <h2>Crowd mood</h2>
+        <div className="host-block crowd-card">
+          <div className="analytics-head">
+            <h2>Crowd mood</h2>
+            <button
+              type="button"
+              className="btn ghost compact"
+              disabled={busy || !access.ready}
+              onClick={() => {
+                if (window.confirm("Reset the crowd mood? Clears the mood tally, the genres people picked and the crowd energy. Votes, the queue and the library stay.")) {
+                  void (async () => {
+                    try {
+                      applyState((await hostResetCrowd(sessionCode, await access.getHeaders())).state);
+                      setCrowdMsg({ kind: "accepted", text: "Crowd mood reset." });
+                    } catch (err) {
+                      setCrowdMsg({ kind: "rejected", text: (err as Error).message });
+                    }
+                  })();
+                }
+              }}
+              title="Clear moods, picked genres and crowd energy (votes, queue and library stay)"
+            >
+              Reset mood ↺
+            </button>
+          </div>
           <ul className="mood-bars">
             {MOODS.map((m) => {
               const n = state?.moods[m] ?? 0;
@@ -345,6 +369,7 @@ export function HostPage() {
               );
             })}
           </ul>
+          {crowdMsg && <p className={`feedback feedback-${crowdMsg.kind}`}>{crowdMsg.text}</p>}
           <h3 className="metric-label">Genres people want</h3>
           <ul className="genre-tally">
             {Object.entries(state?.genres ?? {})

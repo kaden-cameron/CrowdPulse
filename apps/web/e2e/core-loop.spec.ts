@@ -313,3 +313,21 @@ test("Playlists: save the library under a name, clear it, load it back", async (
   await expect(host.locator(".library-card").getByText("Library · 7 songs")).toBeVisible();
   await host.screenshot({ path: evidence("playlists.png"), fullPage: true });
 });
+
+test("The host can reset the crowd mood (votes stay)", async ({ browser, request }) => {
+  const phone = await openPhone(browser); // joins as Wild
+  await phone.getByRole("button", { name: "Vote: Stage Lightning" }).click();
+  const host = await (await browser.newContext({ viewport: { width: 1300, height: 1400 } })).newPage();
+  host.on("dialog", (d) => void d.accept());
+  await host.goto("/host/demo");
+  await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  const crowd = host.locator(".crowd-card");
+  await expect(crowd.locator(".mood-bars li", { hasText: "wild" })).toContainText("1");
+  await crowd.getByRole("button", { name: /Reset mood/ }).click();
+  await expect(crowd.getByText("Crowd mood reset.")).toBeVisible();
+  await expect(crowd.locator(".mood-bars li", { hasText: "wild" })).toContainText("0");
+  const state = await (await request.get("/api/sessions/demo/state")).json();
+  expect(state.tracks.find((t: { id: string }) => t.id === "track_07").votes).toBe(1);
+  // The phone stays on the vote screen.
+  await expect(phone.getByRole("heading", { name: "Shape the queue" })).toBeVisible();
+});

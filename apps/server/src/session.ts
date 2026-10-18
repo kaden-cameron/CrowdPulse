@@ -129,6 +129,8 @@ export class SessionStore {
   private nowPlaying: CatalogTrack | null = null;
   private moods = new Map<string, Mood>(); // participantId -> latest mood
   private genres = new Map<string, string>(); // participantId -> genre picked when joining
+  /** Phones that joined this run (kept when the host resets the crowd mood, so nobody is sent back). */
+  private joined = new Set<string>();
   private participants = new Set<string>();
   private seenEventIds = new Set<string>();
   /** Events being saved right now, so a retry can wait for the real result. */
@@ -309,7 +311,7 @@ export class SessionStore {
   participantState(participantId: string): ParticipantState {
     return {
       run: this.run,
-      joined: this.moods.has(participantId),
+      joined: this.joined.has(participantId),
       mood: this.moods.get(participantId) ?? null,
       genre: this.genres.get(participantId) ?? null,
       votes: this.catalog.filter((t) => this.votes.get(t.id)?.has(participantId)).map((t) => t.id),
@@ -326,6 +328,7 @@ export class SessionStore {
       record: { eventType: "mood", value: null, metadata: { mood: input.mood, ...(input.genre ? { genre: input.genre } : {}) } },
       commit: () => {
         this.moods.set(input.participantId, input.mood);
+        this.joined.add(input.participantId);
         if (input.genre) this.genres.set(input.participantId, input.genre);
         else this.genres.delete(input.participantId);
         return {
@@ -586,6 +589,28 @@ export class SessionStore {
   recentlyPlayed(n: number): string[] {
     const past = [...this.lastPlayedAt.entries()].sort((a, b) => b[1] - a[1]).map(([id]) => id);
     return [...(this.nowPlaying ? [this.nowPlaying.id] : []), ...past.filter((id) => id !== this.nowPlaying?.id)].slice(0, n);
+  }
+
+  /**
+   * Host action: reset the crowd mood — the mood tally, the genres people picked and the crowd
+   * energy (back to neutral). Votes, queue, library and playback stay; phones stay joined.
+   */
+  resetCrowd(): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const saved = await this.persistHostAction("crowd_reset", {});
+      if (saved) return saved;
+      this.applyCrowdReset();
+      this.change({ type: "crowd.reset", message: "Crowd mood reset — waiting for fresh vibes" });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  private applyCrowdReset() {
+    this.moods.clear();
+    this.genres.clear();
+    this.activity = [];
+    this.energyHistory = [];
+    this.recomputeEnergy();
   }
 
   // --- Saved playlists ---
@@ -1023,6 +1048,7 @@ export class SessionStore {
         case "mood":
           if (r.participantId && MOODS.includes(meta.mood as Mood)) {
             this.moods.set(r.participantId, meta.mood as Mood);
+            this.joined.add(r.participantId);
             if (typeof meta.genre === "string" && GENRE_PATTERN.test(meta.genre)) this.genres.set(r.participantId, meta.genre);
             else this.genres.delete(r.participantId);
             this.activity.push({ at, weight: ACTIVITY_WEIGHT.mood });
@@ -1081,6 +1107,9 @@ export class SessionStore {
           if (pl && typeof pl.id === "string" && typeof pl.name === "string" && Array.isArray(pl.tracks)) this.playlists.set(pl.id, pl);
           break;
         }
+        case "crowd_reset":
+          this.applyCrowdReset();
+          break;
         case "playlist_delete":
           if (typeof meta.id === "string") this.playlists.delete(meta.id);
           break;
@@ -1250,7 +1279,8 @@ export class SessionStore {
       | "host_queue"
       | "highlight"
       | "playlist_save"
-      | "playlist_delete",
+      | "playlist_delete"
+      | "crowd_reset",
     metadata: Record<string, unknown>,
   ): Promise<Rejection | null> {
     try {
@@ -1393,6 +1423,7 @@ export class SessionStore {
     this.nowPlaying = null;
     this.moods.clear();
     this.genres.clear();
+    this.joined.clear();
     this.participants.clear();
     this.activity = [];
     this.energyHistory = [];

@@ -689,6 +689,16 @@ export function createApp(options: AppOptions) {
   app.post("/api/host/sessions/:id/playback/pause", ...requireHost, hostSession, playbackAction("pause"));
   app.post("/api/host/sessions/:id/playback/resume", ...requireHost, hostSession, playbackAction("resume"));
   app.post("/api/host/sessions/:id/previous", ...requireHost, hostSession, playbackAction("previous"));
+  app.post("/api/host/sessions/:id/crowd/reset", ...requireHost, hostSession, async (req, res) => {
+    const outcome = await sessions.get(req.params.id)!.resetCrowd();
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    log({ kind: "host.crowd_reset", sessionId: req.params.id });
+    res.json(outcome);
+  });
+
   // --- Saved playlists (host-only): name, store, load back into the library ---
   const PlaylistName = z
     .string()
