@@ -44,3 +44,16 @@ describe("player follow logic", () => {
     expect(decide(base({ status: "idle" }, null), { trackId: "track_03", round: 1 }, NOW)).toEqual({ type: "stop" });
   });
 });
+
+describe("decide while paused", () => {
+  it("doesn't start a song while the host has paused", async () => {
+    const { decide } = await import("./follow");
+    const s = {
+      nowPlaying: { trackId: "t1" },
+      tracks: [{ id: "t1", round: 1 }],
+      playback: { status: "paused", trackId: "t1", round: 1, startedAt: null, pausedPositionMs: 30_000 },
+    } as never;
+    expect(decide(s, null)).toEqual({ type: "none" });
+    expect(decide(s, { trackId: "t1", round: 1 })).toEqual({ type: "none" });
+  });
+});

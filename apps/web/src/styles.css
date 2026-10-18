@@ -178,14 +178,7 @@ code {
   padding-block: 0.3rem;
 }
 
-.menubar-clock {
-  font-family: var(--font-num);
-  font-size: 18px;
-  letter-spacing: 0;
-}
-
 @media (max-width: 640px) {
-  .menubar-date,
   .menubar-brand {
     display: none;
   }
@@ -488,14 +481,132 @@ ul.library-list li:last-child {
   box-shadow: inset 1px 1px 0 var(--shade);
 }
 
-.ai-genre {
-  width: 100%;
+/* Multi-genre picker: a dropdown of checkboxes plus removable chips. */
+.genre-dropdown {
+  position: relative;
+}
+
+.genre-dropdown summary {
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--line);
   border-radius: 3px;
   background: var(--paper);
+  cursor: pointer;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.genre-options {
+  /* Floats over the page instead of pushing everything down. */
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  box-shadow: var(--shadow), 3px 3px 0 var(--line);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 130px), 1fr));
+  gap: 0.15rem 0.6rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  margin-top: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+}
+
+.genre-options label {
+  display: flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 14px;
+}
+
+.genre-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+}
+
+.genre-chip {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--pool);
   color: var(--ink);
-  font: 15px var(--font-ui);
+  font: 13px var(--font-ui);
+  cursor: pointer;
+}
+
+.genre-chip.clear {
+  background: var(--paper);
+}
+
+.find-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.find-count {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 14px;
+}
+
+.find-count select {
+  padding: 0.3rem 0.4rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px var(--font-ui);
+}
+
+/* Song checklist (search results, playlist import, Gemini finds). */
+.song-picker {
+  margin: 0.5rem 0;
+}
+
+.picker-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.picker-all {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 14px;
+}
+
+.song-picker .picker-list {
+  /* Long result lists scroll inside a box instead of pushing the page down. */
+  max-height: min(18rem, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.picker-list li > input[type="checkbox"] {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.picker-list li.picked {
+  background: color-mix(in srgb, var(--pool) 35%, transparent);
+}
+
+.picker-list li.unavailable {
+  opacity: 0.6;
 }
 
 /* Two-handle popularity range: two overlapping range inputs; only their thumbs take clicks. */
@@ -2255,7 +2366,309 @@ input[type="range"] {
 }
 
 .ai-found .library-results {
+  margin: 0.4rem 0 0;
+}
+
+/* ---------- Host settings: ⚙︎ in the menu bar opens a compact panel ---------- */
+button.menubar-tab {
+  cursor: pointer;
+  font: inherit;
+  font-family: var(--font-caps);
+}
+
+button.menubar-tab.menubar-action {
+  font-family: var(--font-ui);
+  font-size: 20px;
+  line-height: 1;
+  padding-inline: 0.8rem;
+}
+
+.menubar-action[aria-expanded="true"] {
+  background: var(--pool);
+}
+
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.settings-panel {
+  position: fixed;
+  top: 44px;
+  right: 12px;
+  z-index: 41;
+  width: min(380px, calc(100vw - 24px));
+  max-height: calc(100dvh - 60px);
+  overflow-y: auto;
+  background: var(--cream);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow), 4px 4px 0 var(--line);
+}
+
+.settings-panel:focus {
+  outline: none;
+}
+
+.settings-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.3rem 0.4rem 0.3rem 0.8rem;
+  border-bottom: 1px solid var(--line);
+  background: var(--cream);
+}
+
+.settings-head h2 {
   margin: 0;
-  padding: 0;
-  max-height: none;
+  font-family: var(--font-caps);
+  font-size: 13px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.settings-section {
+  padding: 0.7rem 0.8rem;
+  border-bottom: 1px dotted var(--ink);
+}
+
+.settings-section:last-child {
+  border-bottom: 0;
+}
+
+.settings-section h3 {
+  margin: 0 0 0.45rem;
+  font-family: var(--font-caps);
+  font-size: 11px;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.settings-section .host-sub {
+  margin: 0.2rem 0 0.45rem;
+  font-size: 13px;
+}
+
+.settings-section .cta-row {
+  margin-top: 0.45rem;
+  gap: 0.4rem;
+}
+
+.settings-section .btn {
+  padding: 0.35rem 0.6rem;
+  font-size: 14px;
+}
+
+.settings-section .host-auth {
+  gap: 0.5rem;
+  font-size: 14px;
+}
+
+/* Compact appearance: five color dots in a row, light/dark side by side. */
+.appearance-card.compact .theme-field {
+  margin-bottom: 0.5rem;
+}
+
+.appearance-card.compact .theme-field legend {
+  display: none;
+}
+
+.appearance-card.compact .theme-swatches {
+  grid-template-columns: repeat(5, 1fr);
+  gap: 0.3rem;
+}
+
+.appearance-card.compact .theme-swatch {
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.35rem 0.1rem;
+  font-size: 12px;
+  text-align: center;
+}
+
+.appearance-card.compact .theme-mode {
+  padding: 0.3rem;
+  font-size: 13px;
+}
+
+/* Compact stage controls */
+.settings-section .mood-field {
+  margin: 0 0 0.4rem;
+}
+
+.settings-section .mood-field legend {
+  display: none;
+}
+
+.settings-section .mood-grid {
+  grid-template-columns: 1fr 1fr;
+  gap: 0.3rem;
+}
+
+.settings-section .mood-chip {
+  padding: 0.35rem 0.5rem;
+  min-height: 0;
+}
+
+.settings-section .mood-label {
+  font-size: 14px;
+}
+
+/* ---------- Transport (⏮ ⏸ ⏭), library sort, attendee search + pages ---------- */
+.transport {
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.transport .btn {
+  min-width: 2.6rem;
+  font-family: var(--font-ui);
+  font-size: 17px;
+}
+
+.energy-toggle {
+  display: flex;
+  gap: 0.45rem;
+  align-items: center;
+  margin-top: 0.3rem;
+  font-size: 14px;
+}
+
+.library-sort {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  font-size: 13px;
+}
+
+.library-sort select,
+.vote-search input {
+  padding: 0.3rem 0.45rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px var(--font-ui);
+}
+
+.vote-search {
+  display: block;
+  margin: 0.6rem 0 0;
+}
+
+.vote-search input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.5rem 0.65rem;
+  font-size: 16px; /* 16px stops iOS zooming in on focus */
+}
+
+.vote-pages {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.6rem;
+  font-family: var(--font-caps);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.metrics-grid {
+  padding-top: 0;
+}
+
+/* Gemini results inside the Gemini window, behind a Hide / Show bar. */
+.ai-results-section {
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--line);
+}
+
+.ai-results-toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  margin: 0;
+  padding: 0.5rem 0.1rem;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font-family: var(--font-caps);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ai-results-toggle:hover {
+  text-decoration: underline;
+}
+
+.ai-results {
+  display: grid;
+  gap: 0.6rem;
+}
+
+/* Host: 👤 profile (sign-in) next to ⚙︎ settings; a slim banner while signed out. */
+.menubar-profile {
+  gap: 0.4rem;
+}
+
+.menubar-profile-label {
+  font-family: var(--font-caps);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.menubar-profile.signed-in {
+  background: var(--mint);
+}
+
+.transport .btn svg {
+  display: block;
+}
+
+.transport .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.signin-banner {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--butter);
+  font-size: 15px;
+}
+
+.signin-banner .btn {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
 }

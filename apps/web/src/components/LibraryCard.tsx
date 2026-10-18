@@ -12,6 +12,7 @@ import {
 } from "../lib/spotify/auth";
 import { fetchPlaylistTracks, parsePlaylistId, type FoundTrack } from "../lib/spotify/library";
 import { searchSpotifyTracks } from "../lib/spotify/search";
+import { SongPicker } from "./SongPicker";
 
 // Host-page window: pick songs. Search Spotify (no login needed when the server has the client
 // secret) or import one of your playlists, then build the queue from the library: + Queue,
@@ -25,6 +26,45 @@ const SOURCE_LABEL: Record<NonNullable<Track["metaSource"]>, string> = {
   gemini: "≈ Gemini estimate",
   default: "default values",
 };
+
+export type LibrarySort = "added" | "newest" | "title" | "artist" | "votes" | "genre" | "bpm" | "energy";
+const SORT_LABELS: Record<LibrarySort, string> = {
+  added: "Order added",
+  newest: "Newest first",
+  title: "Title A–Z",
+  artist: "Artist A–Z",
+  votes: "Most votes",
+  genre: "Genre",
+  bpm: "BPM (fast first)",
+  energy: "Energy (high first)",
+};
+
+/** The library in the host's chosen order (display only; the library itself doesn't change). */
+export function sortLibrary<T extends { title: string; artist: string; genre: string; votes: number; bpm: number; energy: number }>(
+  tracks: T[],
+  sort: LibrarySort,
+): T[] {
+  const az = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: "base" });
+  const list = [...tracks];
+  switch (sort) {
+    case "newest":
+      return list.reverse();
+    case "title":
+      return list.sort((a, b) => az(a.title, b.title));
+    case "artist":
+      return list.sort((a, b) => az(a.artist, b.artist) || az(a.title, b.title));
+    case "votes":
+      return list.sort((a, b) => b.votes - a.votes);
+    case "genre":
+      return list.sort((a, b) => az(a.genre, b.genre) || az(a.title, b.title));
+    case "bpm":
+      return list.sort((a, b) => b.bpm - a.bpm);
+    case "energy":
+      return list.sort((a, b) => b.energy - a.energy);
+    default:
+      return list;
+  }
+}
 
 /** Fisher–Yates; exported for tests. */
 export function shuffled<T>(items: T[], rand: () => number = Math.random): T[] {
@@ -57,6 +97,7 @@ export function LibraryCard({
   const [preview, setPreview] = useState<{ tracks: FoundTrack[]; skipped: number; truncated: boolean } | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoundTrack[] | null>(null);
+  const [sort, setSort] = useState<LibrarySort>("added");
 
   const tracks = state?.tracks ?? [];
   const playingId = state?.nowPlaying?.trackId;
@@ -202,44 +243,37 @@ export function LibraryCard({
       {ready && config && !canSearch && (
         <p className="host-sub">Connect Spotify under &ldquo;Import a Spotify playlist&rdquo; to search, or set SPOTIFY_CLIENT_SECRET on the server.</p>
       )}
-      {results && (
-        <ul className="panel library-results">
-          {!results.length && <li className="host-sub">No songs found.</li>}
-          {results.map((t) => {
-            const already = inLibrary.has(t.spotifyUri);
+      {results && !results.length && <p className="host-sub">No songs found.</p>}
+      {results && results.length > 0 && (
+        <SongPicker
+          label="Spotify search results"
+          items={results.map((t) => ({
+            key: t.spotifyUri,
+            title: t.title,
+            artist: t.artist,
+            meta: [t.durationMs > 0 ? fmtDuration(t.durationMs) : "", t.explicit ? "explicit" : ""].filter(Boolean).join(" · ") || undefined,
+            imageUrl: t.imageUrl,
+            unavailable: inLibrary.has(t.spotifyUri) ? "In library" : undefined,
+          }))}
+          busy={busy !== null}
+          onAdd={(keys) =>
+            withBusy("add-search", async () => void (await add(results.filter((t) => keys.includes(t.spotifyUri)))))
+          }
+          rowAction={(item) => {
+            const t = results.find((r) => r.spotifyUri === item.key)!;
             return (
-              <li key={t.spotifyUri}>
-                {t.imageUrl ? <img src={t.imageUrl} alt="" width={40} height={40} /> : <span className="library-art" aria-hidden />}
-                <span className="library-meta">
-                  <strong>{t.title}</strong>
-                  <em>
-                    {t.artist}
-                    {t.durationMs > 0 && ` · ${fmtDuration(t.durationMs)}`}
-                    {t.explicit && " · explicit"}
-                  </em>
-                </span>
-                <button
-                  type="button"
-                  className="btn compact"
-                  disabled={already || busy !== null}
-                  onClick={() => void withBusy(`add:${t.spotifyUri}`, async () => void (await add([t])))}
-                  aria-label={already ? `${t.title} is in the library` : `Add ${t.title} to the library`}
-                >
-                  {already ? "In library" : busy === `add:${t.spotifyUri}` ? "Adding…" : "Add"}
-                </button>
-                <button
-                  type="button"
-                  className="btn primary compact"
-                  disabled={busy !== null || isPlaying(t.spotifyUri)}
-                  onClick={() => void playNow(t)}
-                  aria-label={`Play ${t.title} now`}
-                >
-                  {busy === `play:${t.spotifyUri}` ? "…" : "Play now"}
-                </button>
-              </li>
+              <button
+                type="button"
+                className="btn primary compact"
+                disabled={busy !== null || isPlaying(t.spotifyUri)}
+                onClick={() => void playNow(t)}
+                aria-label={`Play ${t.title} now`}
+              >
+                {busy === `play:${t.spotifyUri}` ? "…" : "Play now"}
+              </button>
             );
-          })}
-        </ul>
+          }}
+        />
       )}
 
       <div role="status" aria-live="polite">
@@ -250,6 +284,16 @@ export function LibraryCard({
         <span className="metric-label">
           Library · {tracks.length} song{tracks.length === 1 ? "" : "s"}
         </span>
+        <label className="library-sort">
+          <span>Sort</span>
+          <select value={sort} onChange={(e) => setSort(e.target.value as LibrarySort)} aria-label="Sort the library">
+            {(Object.keys(SORT_LABELS) as LibrarySort[]).map((k) => (
+              <option key={k} value={k}>
+                {SORT_LABELS[k]}
+              </option>
+            ))}
+          </select>
+        </label>
         <span className="cta-row">
           <button type="button" className="btn compact" disabled={!ready || busy !== null || tracks.length < 2} onClick={() => void shuffle()}>
             {busy === "shuffle" ? "Shuffling…" : "🔀 Shuffle"}
@@ -266,7 +310,7 @@ export function LibraryCard({
       </div>
       <ul className="panel library-list">
         {!tracks.length && <li className="host-sub">No songs yet — search above or import a playlist.</li>}
-        {tracks.map((t) => {
+        {sortLibrary(tracks, sort).map((t) => {
           const pos = hostQueue.indexOf(t.id);
           return (
             <li key={t.id}>
@@ -349,33 +393,35 @@ export function LibraryCard({
           </label>
         </form>
         {preview && (
-          <div className="panel library-preview">
-            <p>
-              <strong>{preview.tracks.length}</strong> song{preview.tracks.length === 1 ? "" : "s"} found
-              {preview.tracks.filter((t) => inLibrary.has(t.spotifyUri)).length > 0 &&
-                ` (${preview.tracks.filter((t) => inLibrary.has(t.spotifyUri)).length} already in the library)`}
+          <div className="library-preview">
+            <p className="host-sub">
+              <strong>{preview.tracks.length}</strong> song{preview.tracks.length === 1 ? "" : "s"} in the playlist
               {preview.skipped > 0 && ` · ${preview.skipped} skipped (local files, podcasts, unavailable)`}
-              {preview.truncated && " · only the first 100 are imported"}
+              {preview.truncated && " · only the first 100 are shown"} — pick the ones to add.
             </p>
-            <div className="cta-row">
-              <button
-                type="button"
-                className="btn primary"
-                disabled={busy !== null || !preview.tracks.length}
-                onClick={() =>
-                  void withBusy("add-playlist", async () => {
-                    await add(preview.tracks);
-                    setPreview(null);
-                    setPlaylistInput("");
-                  })
-                }
-              >
-                {busy === "add-playlist" ? "Adding…" : "Add to library"}
-              </button>
-              <button type="button" className="btn ghost" onClick={() => setPreview(null)} disabled={busy !== null}>
-                Cancel
-              </button>
-            </div>
+            <SongPicker
+              label="Songs in the playlist"
+              selectAllInitially
+              items={preview.tracks.map((t) => ({
+                key: t.spotifyUri,
+                title: t.title,
+                artist: t.artist,
+                meta: t.durationMs > 0 ? fmtDuration(t.durationMs) : undefined,
+                imageUrl: t.imageUrl,
+                unavailable: inLibrary.has(t.spotifyUri) ? "In library" : undefined,
+              }))}
+              busy={busy !== null}
+              onAdd={(keys) =>
+                withBusy("add-playlist", async () => {
+                  await add(preview.tracks.filter((t) => keys.includes(t.spotifyUri)));
+                  setPreview(null);
+                  setPlaylistInput("");
+                })
+              }
+            />
+            <button type="button" className="btn ghost compact" onClick={() => setPreview(null)} disabled={busy !== null}>
+              Cancel
+            </button>
           </div>
         )}
       </details>

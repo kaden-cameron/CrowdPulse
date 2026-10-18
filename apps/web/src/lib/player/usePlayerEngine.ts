@@ -35,19 +35,35 @@ export function usePlayerEngine({
   const [, tick] = useState(0); // re-render for the progress bar
   const [followSeq, setFollowSeq] = useState(0); // re-run the follower after a play finishes
   const playing = useRef<Playing>(null);
+  // One speaker at a time: this tab's id, and the player the server named when we last looked.
+  const playerId = useRef(`pl_${Math.random().toString(36).slice(2, 12)}`);
+  const knownOwner = useRef<string | null>(null);
   const seekSeen = useRef(0);
+  const held = useRef(false); // this tab paused its song because the host pressed ⏸
   const busy = useRef(false);
 
   // Always use the latest sign-in (callbacks registered earlier would otherwise keep stale headers).
   const send = async (report: PlaybackReport) => {
     try {
-      await reportPlayback(sessionCode, await getHeaders(), report);
+      await reportPlayback(sessionCode, await getHeaders(), { ...report, playerId: playerId.current });
     } catch (err) {
       setError(`Couldn't reach the server: ${(err as Error).message}`);
     }
   };
   const sendRef = useRef(send);
   sendRef.current = send;
+
+  // Song stopped early by itself (it never really played): report it as a failed song so the host
+  // sees why. Auto mode moves on, and pauses after 3 failures in a row.
+  useEffect(() => {
+    player.onProblem?.((message) => {
+      const p = playing.current;
+      playing.current = null;
+      setInfo(null);
+      setError(message);
+      if (p) void sendRef.current({ event: "error", trackId: p.trackId, round: p.round, message });
+    });
+  }, [player]);
 
   // Song finished on its own → tell the server (it starts the next one in auto mode).
   useEffect(() => {
@@ -79,6 +95,7 @@ export function usePlayerEngine({
     if (!track) return;
     busy.current = true;
     playing.current = { trackId: action.trackId, round: action.round };
+    held.current = false;
     seekSeen.current = state!.playback.seekSeq; // startAtMs already includes any earlier seek
     player
       .play(track, { startAtMs: action.startAtMs })
@@ -114,6 +131,34 @@ export function usePlayerEngine({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state, unlocked, ready, player, followSeq]);
 
+  // Another tab or device pressed Start audio and took over as the speaker: stop here, so the two
+  // don't fight over the Spotify account (each pausing the other = a second of sound, then quiet).
+  useEffect(() => {
+    const owner = state?.playback.playerId ?? null;
+    const changed = owner !== knownOwner.current;
+    knownOwner.current = owner;
+    if (!unlocked || !changed || !owner || owner === playerId.current) return;
+    player.stop();
+    playing.current = null;
+    setInfo(null);
+    setUnlocked(false);
+    setError("Another tab or device is now the speaker, so this one stopped. Press Start audio here to take it back.");
+  }, [state, unlocked, player]);
+
+  // ⏸ / ▶ from the host: hold the song here, or carry on.
+  useEffect(() => {
+    const pb = state?.playback;
+    const p = playing.current;
+    if (!unlocked || !pb || !p || pb.trackId !== p.trackId || pb.round !== p.round) return;
+    if (pb.status === "paused" && !held.current) {
+      held.current = true;
+      player.hold().catch((err: Error) => setError(`Couldn't pause: ${err.message}`));
+    } else if (pb.status === "playing" && held.current) {
+      held.current = false;
+      player.unhold().catch((err: Error) => setError(`Couldn't resume: ${err.message}`));
+    }
+  }, [state, unlocked, player]);
+
   // The host moved the song position: jump to where the server now says the song is.
   useEffect(() => {
     const pb = state?.playback;
@@ -135,7 +180,7 @@ export function usePlayerEngine({
     if (!unlocked) return;
     const t = window.setInterval(() => {
       const p = playing.current;
-      if (p && ready && !busy.current) {
+      if (p && ready && !busy.current && !held.current) {
         void sendRef.current({ event: "progress", trackId: p.trackId, round: p.round, positionMs: player.positionMs(), durationMs: info?.durationMs, source: info?.source });
       }
     }, PROGRESS_EVERY_MS);
@@ -153,6 +198,8 @@ export function usePlayerEngine({
   useEffect(() => player.setVolume(volume), [player, volume, unlocked]);
 
   const start = async () => {
+    // Taking over from whoever is the player now isn't a "change" to react to.
+    knownOwner.current = state?.playback.playerId ?? null;
     try {
       await player.unlock();
       player.setVolume(volume);

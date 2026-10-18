@@ -17,6 +17,8 @@ export function decide(state: SessionState | null, playing: Playing, now = Date.
   const np = state.nowPlaying;
   const pb = state.playback;
   if (!np) return playing ? { type: "stop" } : { type: "none" };
+  // Paused by the host: keep what's loaded, and don't start anything new until ▶.
+  if (pb.status === "paused" && (!playing || playing.trackId !== np.trackId)) return playing ? { type: "stop" } : { type: "none" };
 
   const round = pb.trackId === np.trackId ? pb.round : (state.tracks.find((t) => t.id === np.trackId)?.round ?? 0);
   if (playing && playing.trackId === np.trackId && playing.round === round) {

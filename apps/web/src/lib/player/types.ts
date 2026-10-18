@@ -33,10 +33,15 @@ export interface PlayerAdapter {
   stop(): void;
   /** Jump within the current song (the host moved the position). */
   seek(ms: number): Promise<void>;
+  /** Host pressed ⏸ / ▶: hold the current song, then carry on. */
+  hold(): Promise<void>;
+  unhold(): Promise<void>;
   setVolume(v: number): void;
   positionMs(): number;
   /** Called once when the current track finishes on its own (not when stopped or replaced). */
   onEnded(cb: () => void): void;
+  /** Called when the current track stops early by itself (it didn't really play). */
+  onProblem?(cb: (message: string) => void): void;
 }
 
 /**

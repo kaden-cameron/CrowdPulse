@@ -9,6 +9,8 @@ const SDK_URL = "https://sdk.scdn.co/spotify-player.js";
 const API = "https://api.spotify.com/v1";
 const READY_TIMEOUT_MS = 12_000;
 const START_TIMEOUT_MS = 10_000;
+/** A stop within this much of the song's end counts as the song finishing. */
+const END_SLACK_MS = 5_000;
 
 /* Minimal typings for the parts of the Web Playback SDK we use. */
 interface SdkTrack {
@@ -21,6 +23,8 @@ export interface SdkState {
   paused: boolean;
   position: number;
   duration: number;
+  /** True while Spotify is still loading the track (its other fields aren't meaningful yet). */
+  loading?: boolean;
   track_window: { current_track: SdkTrack | null; previous_tracks: SdkTrack[] };
 }
 interface SdkPlayer {
@@ -28,6 +32,7 @@ interface SdkPlayer {
   disconnect(): void;
   addListener(event: string, cb: (arg: never) => void): void;
   pause(): Promise<void>;
+  resume?(): Promise<void>;
   setVolume(v: number): Promise<void>;
   activateElement?(): Promise<void>;
 }
@@ -73,7 +78,12 @@ export class SpotifyPlayer implements PlayerAdapter {
   private deviceId: string | null = null;
   private volume = 0.8;
   private endedCb: () => void = () => {};
-  private current: { uri: string; confirmed: boolean } | null = null;
+  /**
+   * The song we started. `reached` is how far into it playback got (ms), so a stop near the end
+   * counts as "finished" and a stop at 0:01 doesn't. `retried`: one resume after an early stop.
+   */
+  private current: { uri: string; title: string; confirmed: boolean; reached: number; duration: number; retried: boolean; held: boolean } | null = null;
+  private problemCb: (message: string) => void = () => {};
   private last: { position: number; paused: boolean; at: number } | null = null;
   private uriCache = new Map<string, string>();
   private stateWaiters: ((s: SdkState) => void)[] = [];
@@ -169,6 +179,16 @@ export class SpotifyPlayer implements PlayerAdapter {
     });
   }
 
+  async hold() {
+    if (this.current) this.current.held = true;
+    await this.player?.pause();
+  }
+
+  async unhold() {
+    if (this.current) this.current.held = false;
+    await this.player?.resume?.();
+  }
+
   async seek(ms: number) {
     if (!this.player || !this.deviceId || !this.current) return;
     const pos = Math.max(0, Math.round(ms));
@@ -200,7 +220,7 @@ export class SpotifyPlayer implements PlayerAdapter {
     // The device may be reconnecting after an idle drop; wait a little rather than failing the song.
     const deviceId = this.deviceId ?? (await this.waitForDevice(6_000));
     const uri = await this.resolveUri(track);
-    this.current = { uri, confirmed: false };
+    this.current = { uri, title: track.title, confirmed: false, reached: Math.max(0, startAtMs), duration: 0, retried: false, held: false };
     const started = this.waitForState((s) => sameTrack(s.track_window.current_track, uri) && !s.paused);
     const res = await this.call(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
       method: "PUT",
@@ -269,27 +289,57 @@ export class SpotifyPlayer implements PlayerAdapter {
   }
 
   /** Exposed for tests: feeds a Web Playback SDK state change through the player. */
+  /** Spotify stopped a song early and resuming didn't help (e.g. no audio on this device). */
+  onProblem(cb: (message: string) => void) {
+    this.problemCb = cb;
+  }
+
+  /** Exposed for tests: feeds a Web Playback SDK state change through the player. */
   onState(state: SdkState | null) {
     if (!state) return;
+    // Where playback had got to just before this change (position + time since, if playing).
+    const before = this.positionMs();
     this.last = { position: state.position, paused: state.paused, at: Date.now() };
     for (const w of [...this.stateWaiters]) w(state);
     const cur = this.current;
-    if (!cur) return;
+    // Held (host pressed ⏸): Spotify's "paused" is expected, not the song ending.
+    if (!cur || state.loading || cur.held) return;
     const now = state.track_window.current_track;
-    if (sameTrack(now, cur.uri) && !state.paused) {
+    const ours = sameTrack(now, cur.uri);
+    if (ours && !state.paused) {
       cur.confirmed = true;
+      cur.reached = Math.max(cur.reached, state.position);
+      cur.duration = state.duration || now?.duration_ms || cur.duration;
       return;
     }
     if (!cur.confirmed) return;
-    // Our track finished: Spotify parks at position 0 with it in "previous", or has already moved
-    // on to something else (autoplay/radio). Either way it's over — pause so nothing else plays.
-    const finished =
-      (state.paused && state.position === 0 && (sameTrack(now, cur.uri) || state.track_window.previous_tracks.some((t) => sameTrack(t, cur.uri)))) ||
-      !sameTrack(now, cur.uri);
-    if (finished) {
+    cur.reached = Math.max(cur.reached, before);
+
+    // Stopped (parked at 0:00) or Spotify moved to another track. A pause mid-song is left alone.
+    const stopped = (state.paused && state.position === 0) || !ours;
+    if (!stopped) return;
+
+    // Only a stop near the real end means the song finished. Spotify also reports "paused at 0:00"
+    // for a moment while loading, or when no audio can play — that must not skip the song.
+    const nearEnd = cur.duration > 0 && cur.reached >= cur.duration - END_SLACK_MS;
+    if (nearEnd) {
       this.current = null;
       void this.player?.pause().catch(() => {});
       this.endedCb();
+      return;
     }
+    if (!cur.retried && ours && this.player?.resume) {
+      cur.retried = true;
+      void this.player.resume().catch(() => {});
+      return;
+    }
+    // Stopped early twice (or switched away): report it instead of pretending it finished.
+    this.current = null;
+    void this.player?.pause().catch(() => {});
+    const at = Math.round(cur.reached / 1000);
+    this.problemCb(
+      `Spotify stopped “${cur.title}” after ${at}s instead of playing it. If no sound came out, check that this ` +
+        "device's audio works and try Chrome or Edge (Safari can block Spotify's player)",
+    );
   }
 }

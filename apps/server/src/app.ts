@@ -100,6 +100,8 @@ export interface AppOptions {
   recommenders?: Map<string, RecommendationService>;
   /** Gemini model used to estimate genre/BPM/energy for imported songs; omitted → neutral defaults. */
   trackEstimator?: RecommendationModel;
+  /** Gemini client for Find songs / Surprise me (needs room for up to 50 songs). */
+  songFinder?: RecommendationModel;
   /** Solana devnet boost verifier; omitted means boosts are disabled. */
   boosts?: BoostVerifier;
   /** Browser origins allowed to call the API (and open WebSockets). Empty = any (development). */
@@ -455,6 +457,7 @@ export function createApp(options: AppOptions) {
       durationMs: z.number().min(0).max(24 * 3_600_000).optional(),
       source: z.enum(["file", "generated", "spotify"]).optional(),
       message: z.string().max(200).optional(),
+      playerId: z.string().regex(/^[A-Za-z0-9_-]{6,40}$/).optional(),
     })
     .strict();
 
@@ -586,6 +589,7 @@ export function createApp(options: AppOptions) {
     .object({
       preset: z.enum(APPEARANCE_PRESETS as unknown as [AppearancePreset, ...AppearancePreset[]]),
       mode: z.enum(["light", "dark"]),
+      showEnergy: z.boolean().optional(),
     })
     .strict();
 
@@ -655,6 +659,36 @@ export function createApp(options: AppOptions) {
     res.json(outcome);
   });
 
+  // ⏸ / ▶ / ⏮ — the player (wherever it is) follows the session state.
+  const playbackAction =
+    (name: "pause" | "resume" | "previous"): express.RequestHandler<{ id: string }> =>
+    async (req, res) => {
+      const outcome = await sessions.get(req.params.id)![name]();
+      if (outcome.status === "rejected") {
+        res.status(outcome.httpStatus).json({ error: outcome.reason });
+        return;
+      }
+      log({ kind: `host.${name}`, sessionId: req.params.id });
+      res.json(outcome);
+    };
+  app.post("/api/host/sessions/:id/playback/pause", ...requireHost, hostSession, playbackAction("pause"));
+  app.post("/api/host/sessions/:id/playback/resume", ...requireHost, hostSession, playbackAction("resume"));
+  app.post("/api/host/sessions/:id/previous", ...requireHost, hostSession, playbackAction("previous"));
+  const RepeatSchema = z.object({ repeat: z.boolean() }).strict();
+  app.post("/api/host/sessions/:id/playback/repeat", ...requireHost, hostSession, async (req, res) => {
+    const parsed = RepeatSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid repeat setting" });
+      return;
+    }
+    const outcome = await sessions.get(req.params.id)!.setRepeat(parsed.data.repeat);
+    if (outcome.status === "rejected") {
+      res.status(outcome.httpStatus).json({ error: outcome.reason });
+      return;
+    }
+    res.json(outcome);
+  });
+
   // --- Solana devnet boosts (Doc 05): optional, verified server-side before any effect ---
   const IntentSchema = z.object({ trackId: z.string().max(64), participantId }).strict();
   const VerifySchema = z
@@ -705,7 +739,7 @@ export function createApp(options: AppOptions) {
   // Shared by recommendations and Find / Surprise me: genre + popularity (all-time Spotify streams).
   const streams = z.number().int().min(0).max(SONG_REQUEST_LIMITS.maxStreams).nullable();
   const filters = {
-    genre: z.string().trim().toLowerCase().regex(GENRE_PATTERN).nullable(),
+    genres: z.array(z.string().trim().toLowerCase().regex(GENRE_PATTERN)).max(SONG_REQUEST_LIMITS.maxGenres),
     minStreams: streams,
     maxStreams: streams,
   };
@@ -729,7 +763,12 @@ export function createApp(options: AppOptions) {
   // Songs from outside the library: Find (lyrics / a description) or Surprise me (random in a
   // genre + popularity range, favoring popular songs). Gemini names them; Spotify confirms them.
   const FindSchema = z
-    .object({ text: plainText(300).optional(), surprise: z.boolean().optional(), ...filters })
+    .object({
+      text: plainText(300).optional(),
+      surprise: z.boolean().optional(),
+      count: z.number().int().min(1).max(SONG_REQUEST_LIMITS.maxFind).optional(),
+      ...filters,
+    })
     .strict()
     .refine(rangeOk, "minStreams must be ≤ maxStreams")
     .refine((f) => f.surprise || (f.text ?? "").length >= 2, "Type at least 2 characters");
@@ -742,7 +781,7 @@ export function createApp(options: AppOptions) {
     const library = sessions.get(req.params.id)!.catalogTracks();
     try {
       res.json(
-        await findSongs(trackEstimator, spotifySearch, {
+        await findSongs(options.songFinder ?? trackEstimator, spotifySearch, {
           ...parsed.data,
           // A surprise should be something new: skip what's already in the library.
           exclude: parsed.data.surprise ? library.map((t) => `${t.title} — ${t.artist}`) : [],

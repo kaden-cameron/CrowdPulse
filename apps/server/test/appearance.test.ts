@@ -17,7 +17,7 @@ describe("session appearance (set on the host page, followed by stage + phones)"
   };
 
   it("defaults to sky / light and is part of the broadcast state", () => {
-    expect(setup().store.getState().appearance).toEqual({ preset: "sky", mode: "light" });
+    expect(setup().store.getState().appearance).toEqual({ preset: "sky", mode: "light", showEnergy: true });
   });
 
   it("the host can change it; it shows up in state for every client", async () => {
@@ -25,7 +25,7 @@ describe("session appearance (set on the host page, followed by stage + phones)"
     let broadcasts = 0;
     store.onChange(() => broadcasts++);
     expect((await set({ preset: "mint", mode: "dark" }, "k")).status).toBe(200);
-    expect(store.getState().appearance).toEqual({ preset: "mint", mode: "dark" });
+    expect(store.getState().appearance).toEqual({ preset: "mint", mode: "dark", showEnergy: true });
     expect(broadcasts).toBe(1);
   });
 
@@ -34,7 +34,7 @@ describe("session appearance (set on the host page, followed by stage + phones)"
     expect((await set({ preset: "mint", mode: "dark" })).status).toBe(401);
     expect((await set({ preset: "neon", mode: "dark" }, "k")).status).toBe(400);
     expect((await set({ preset: "mint", mode: "auto" }, "k")).status).toBe(400);
-    expect(store.getState().appearance).toEqual({ preset: "sky", mode: "light" });
+    expect(store.getState().appearance).toEqual({ preset: "sky", mode: "light", showEnergy: true });
   });
 
   it("survives a restart and a new run", async () => {
@@ -45,9 +45,9 @@ describe("session appearance (set on the host page, followed by stage + phones)"
     });
     await store.setAppearance({ preset: "lavender", mode: "dark" });
     await store.reset();
-    expect(store.getState().appearance).toEqual({ preset: "lavender", mode: "dark" });
+    expect(store.getState().appearance).toEqual({ preset: "lavender", mode: "dark", showEnergy: true });
     const restored = new SessionStore("demo", "Demo");
     restored.replay(saved);
-    expect(restored.getState().appearance).toEqual({ preset: "lavender", mode: "dark" });
+    expect(restored.getState().appearance).toEqual({ preset: "lavender", mode: "dark", showEnergy: true });
   });
 });

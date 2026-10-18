@@ -98,8 +98,8 @@ describe("Gemini song request (genre + popularity)", () => {
     const { app } = setup();
     const post = (body: object) =>
       requestApp(app).post("/api/host/sessions/demo/recommendations").set("x-host-key", "k").send({ hostTarget: "cool_down", request: body });
-    const ok = { prompt: "slow jam", genre: "r&b", minStreams: 1_000_000, maxStreams: 500_000_000 };
-    expect((await post({ ...ok, genre: "<b>rock</b>" })).status).toBe(400);
+    const ok = { prompt: "slow jam", genres: ["r&b"], minStreams: 1_000_000, maxStreams: 500_000_000 };
+    expect((await post({ ...ok, genres: ["<b>rock</b>"] })).status).toBe(400);
     expect((await post({ ...ok, minStreams: 10, maxStreams: 5 })).status).toBe(400);
     expect((await post({ ...ok, prompt: "see https://x.y" })).status).toBe(400);
     expect((await post({ ...ok, energy: 50 })).status).toBe(400); // old sliders are gone
@@ -109,9 +109,9 @@ describe("Gemini song request (genre + popularity)", () => {
     const { buildSummary } = await import("../src/recommendation.js");
     const { store, app } = setup();
     await requestApp(app).post("/api/sessions/demo/moods").send({ sessionId: "demo", eventId: randomUUID(), participantId: "participant_g1", mood: "hyped", genre: "techno" });
-    const s = buildSummary(store.getState(), 0, "hold_steady", [], [], { prompt: "", genre: "house", minStreams: 1_000_000, maxStreams: null });
-    expect(s.eligible_tracks.map((t) => t.track_id)).toEqual(["track_01"]); // the only house song
-    expect(s.host_request).toEqual({ description: null, genre: "house", min_streams: 1_000_000, max_streams: null });
+    const s = buildSummary(store.getState(), 0, "hold_steady", [], [], { prompt: "", genres: ["house", "techno"], minStreams: 1_000_000, maxStreams: null });
+    expect(s.eligible_tracks.map((t) => t.track_id)).toEqual(["track_01", "track_03"]); // the house and techno songs
+    expect(s.host_request).toEqual({ description: null, genres: ["house", "techno"], min_streams: 1_000_000, max_streams: null });
     expect(s.crowd_genres).toEqual({ techno: 1 });
   });
 
@@ -120,7 +120,7 @@ describe("Gemini song request (genre + popularity)", () => {
     const { store } = setup();
     let called = false;
     const svc = new RecommendationService(store, { model: "fake", generate: async () => ((called = true), { text: "{}" }) } as never);
-    const r = await svc.recommend("hold_steady", { prompt: "", genre: "polka", minStreams: null, maxStreams: null });
+    const r = await svc.recommend("hold_steady", { prompt: "", genres: ["polka"], minStreams: null, maxStreams: null });
     expect(called).toBe(false);
     expect("recommendation" in r && r.recommendation.validationErrors[0]).toMatch(/No songs in the library match “polka”/);
   });
@@ -156,18 +156,29 @@ describe("Find a song from lyrics, and Surprise me", () => {
     ]);
   });
 
+  it("Find returns as many songs as asked for, Spotify-confirmed first", async () => {
+    const { findSongs } = await import("../src/songFinder.js");
+    const seen: { input: { count: number } }[] = [];
+    const rows = Array.from({ length: 30 }, (_, i) => row(i === 2 ? "Made Up 2" : `Song ${i}`, 10_000_000 + i));
+    const r = await findSongs(model(rows, seen), spotify, { text: "2000s pop punk", count: 20 });
+    expect(seen[0].input.count).toBe(25); // asks for a few extra
+    const found = r.songs.filter((x) => x.spotify);
+    expect(found).toHaveLength(20);
+    expect(r.songs.at(-1)?.title).toBe("Made Up 2"); // not on Spotify: listed last
+  });
+
   it("Surprise me picks one song at random, favoring more-streamed songs, in the genre", async () => {
     const { findSongs, weightedPick } = await import("../src/songFinder.js");
-    const seen: { input: { genre: string; exclude: string[] }; surprise: boolean }[] = [];
+    const seen: { input: { genres: string[]; exclude: string[] }; surprise: boolean }[] = [];
     const r = await findSongs(model([row("Big Hit", 1_000_000_000), row("Small", 100)], seen), spotify, {
       surprise: true,
-      genre: "house",
+      genres: ["house"],
       exclude: ["Old — A"],
       random: () => 0.5,
     });
     expect(r.songs).toHaveLength(1);
     expect(r.songs[0].title).toBe("Big Hit");
-    expect(seen[0]).toMatchObject({ surprise: true, input: { genre: "house", exclude: ["Old — A"] } });
+    expect(seen[0]).toMatchObject({ surprise: true, input: { genres: ["house"], exclude: ["Old — A"] } });
     // Weighting: over many draws the popular song wins far more often, but not always.
     const items = [{ streams: 1_000_000_000 }, { streams: 1_000_000 }];
     let big = 0;
@@ -178,10 +189,10 @@ describe("Find a song from lyrics, and Surprise me", () => {
 
   it("the endpoint is host-only and needs text unless it's a surprise", async () => {
     const { app } = setup();
-    expect((await requestApp(app).post("/api/host/sessions/demo/find-songs").send({ text: "hello there", genre: null, minStreams: null, maxStreams: null })).status).toBe(401);
-    const post = (body: object) => requestApp(app).post("/api/host/sessions/demo/find-songs").set("x-host-key", "k").send({ genre: null, minStreams: null, maxStreams: null, ...body });
+    expect((await requestApp(app).post("/api/host/sessions/demo/find-songs").send({ text: "hello there", genres: [], minStreams: null, maxStreams: null })).status).toBe(401);
+    const post = (body: object) => requestApp(app).post("/api/host/sessions/demo/find-songs").set("x-host-key", "k").send({ genres: [], minStreams: null, maxStreams: null, ...body });
     expect((await post({ text: "x" })).status).toBe(400);
-    const surprise = await post({ surprise: true, genre: "house" });
+    const surprise = await post({ surprise: true, genres: ["house"] });
     expect(surprise.status).toBe(200);
     expect(surprise.body.note).toMatch(/Gemini isn't configured/);
   });

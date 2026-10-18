@@ -195,3 +195,131 @@ describe("host queue, skip, seek, clear", () => {
     expect(pb.message).toMatch(/Auto play paused: 3 songs in a row/);
   });
 });
+
+describe("one speaker at a time", () => {
+  it("the tab that last started the song is the player; the other tab's reports are ignored", async () => {
+    const { store, report } = setup();
+    await store.advance("track_03");
+    await report({ event: "started", trackId: "track_03", round: 1, durationMs: 200_000, playerId: "pl_tabA" });
+    expect(store.getState().playback.playerId).toBe("pl_tabA");
+    // A second tab presses Start audio: it takes over.
+    await report({ event: "started", trackId: "track_03", round: 1, durationMs: 200_000, playerId: "pl_tabB" });
+    expect(store.getState().playback.playerId).toBe("pl_tabB");
+    // The old tab's "ended"/"error" can no longer skip the song.
+    expect((await report({ event: "ended", trackId: "track_03", round: 1, playerId: "pl_tabA" })).status).toBe(409);
+    expect(store.getState().playback.status).toBe("playing");
+    expect((await report({ event: "ended", trackId: "track_03", round: 1, playerId: "pl_tabB" })).status).toBe(200);
+  });
+});
+
+describe("⏸ pause, ▶ resume, ⏮ previous", () => {
+  it("pause holds the position; progress reports don't undo it; resume carries on from there", async () => {
+    let t = Date.now();
+    const { store, app, report } = setup(() => t);
+    await store.advance("track_03");
+    await report({ event: "started", trackId: "track_03", round: 1, durationMs: 200_000, positionMs: 0 });
+    t += 30_000;
+    expect((await request(app).post("/api/host/sessions/demo/playback/pause").set(HOST)).status).toBe(200);
+    expect(store.getState().playback).toMatchObject({ status: "paused", pausedPositionMs: 30_000 });
+    t += 60_000; // a minute paused
+    await report({ event: "progress", trackId: "track_03", round: 1, positionMs: 30_000 });
+    expect((await report({ event: "ended", trackId: "track_03", round: 1 })).body.status).toBe("duplicate"); // ignored while paused
+    expect(store.getState().playback.status).toBe("paused");
+    const seq = store.getState().playback.seekSeq;
+    expect((await request(app).post("/api/host/sessions/demo/playback/resume").set(HOST)).status).toBe(200);
+    const pb = store.getState().playback;
+    expect(pb).toMatchObject({ status: "playing", pausedPositionMs: null, seekSeq: seq + 1 });
+    expect(t - Date.parse(pb.startedAt!)).toBe(30_000);
+    expect((await request(app).post("/api/host/sessions/demo/playback/resume").set(HOST)).status).toBe(409);
+  });
+
+  it("previous: early in a song goes back a song, and Skip returns to the one we left", async () => {
+    let t = Date.now();
+    const { store, app, report } = setup(() => t);
+    await store.advance("track_01");
+    await store.advance("track_02");
+    await report({ event: "started", trackId: "track_02", round: 1, durationMs: 200_000, positionMs: 0 });
+    t += 2_000;
+    expect((await request(app).post("/api/host/sessions/demo/previous").set(HOST)).status).toBe(200);
+    expect(store.getState().nowPlaying?.trackId).toBe("track_01");
+    expect(store.getState().queue[0]).toMatchObject({ trackId: "track_02", hostPick: true });
+    await store.advance(); // ⏭
+    expect(store.getState().nowPlaying?.trackId).toBe("track_02");
+  });
+
+  it("previous: more than 5 s in restarts the song", async () => {
+    let t = Date.now();
+    const { store, app, report } = setup(() => t);
+    await store.advance("track_01");
+    await store.advance("track_02");
+    await report({ event: "started", trackId: "track_02", round: 1, durationMs: 200_000, positionMs: 0 });
+    t += 40_000;
+    await request(app).post("/api/host/sessions/demo/previous").set(HOST);
+    expect(store.getState().nowPlaying?.trackId).toBe("track_02");
+    expect(Date.parse(store.getState().playback.startedAt!)).toBe(t);
+  });
+
+  it("previous survives a restart (replay)", async () => {
+    const saved: Required<EventRecord>[] = [];
+    let n = Date.now();
+    const store = new SessionStore("demo", "Demo", {
+      persist: async (r) => (saved.push({ ...r, time: new Date((n += 10)) } as Required<EventRecord>), "stored"),
+    });
+    await store.advance("track_01");
+    await store.advance("track_02");
+    await store.previous();
+    const restored = new SessionStore("demo", "Demo");
+    restored.replay(saved);
+    expect(restored.getState().nowPlaying?.trackId).toBe("track_01");
+    expect(restored.getState().queue[0]?.trackId).toBe("track_02");
+  });
+
+  it("the host can hide crowd energy for everyone, and it survives a restart", async () => {
+    const saved: Required<EventRecord>[] = [];
+    let n = Date.now();
+    const store = new SessionStore("demo", "Demo", {
+      persist: async (r) => (saved.push({ ...r, time: new Date((n += 10)) } as Required<EventRecord>), "stored"),
+    });
+    const { app } = createApp({ sessions: new Map([["demo", store]]), hostKey: "k" });
+    expect(store.getState().appearance.showEnergy).toBe(true);
+    await request(app).post("/api/host/sessions/demo/appearance").set(HOST).send({ preset: "mint", mode: "dark", showEnergy: false });
+    expect(store.getState().appearance).toEqual({ preset: "mint", mode: "dark", showEnergy: false });
+    const restored = new SessionStore("demo", "Demo");
+    restored.replay(saved);
+    expect(restored.getState().appearance.showEnergy).toBe(false);
+  });
+});
+
+describe("🔁 repeat", () => {
+  it("a finished song starts again (same song, same round); off again moves on", async () => {
+    const { store, app, report, mode } = setup();
+    await mode("auto");
+    await vote(store, "track_05");
+    await store.advance("track_03");
+    expect((await request(app).post("/api/host/sessions/demo/playback/repeat").set(HOST).send({ repeat: true })).status).toBe(200);
+    expect(store.getState().playback.repeat).toBe(true);
+    await report({ event: "started", trackId: "track_03", round: 1, durationMs: 200_000 });
+    await report({ event: "ended", trackId: "track_03", round: 1 });
+    expect(store.getState().nowPlaying?.trackId).toBe("track_03");
+    expect(store.getState().playback).toMatchObject({ status: "loading", trackId: "track_03", round: 1 });
+    await report({ event: "started", trackId: "track_03", round: 1, durationMs: 200_000 });
+    await request(app).post("/api/host/sessions/demo/playback/repeat").set(HOST).send({ repeat: false });
+    await report({ event: "ended", trackId: "track_03", round: 1 });
+    expect(store.getState().nowPlaying?.trackId).toBe("track_05");
+  });
+
+  it("repeat is host-only, validated, and survives a restart", async () => {
+    const saved: Required<EventRecord>[] = [];
+    let n = Date.now();
+    const store = new SessionStore("demo", "Demo", {
+      persist: async (r) => (saved.push({ ...r, time: new Date((n += 10)) } as Required<EventRecord>), "stored"),
+    });
+    const { app } = createApp({ sessions: new Map([["demo", store]]), hostKey: "k" });
+    expect((await request(app).post("/api/host/sessions/demo/playback/repeat").send({ repeat: true })).status).toBe(401);
+    expect((await request(app).post("/api/host/sessions/demo/playback/repeat").set(HOST).send({ repeat: "yes" })).status).toBe(400);
+    await request(app).post("/api/host/sessions/demo/playback/repeat").set(HOST).send({ repeat: true });
+    const restored = new SessionStore("demo", "Demo");
+    restored.replay(saved);
+    expect(restored.getState().playback.repeat).toBe(true);
+  });
+});

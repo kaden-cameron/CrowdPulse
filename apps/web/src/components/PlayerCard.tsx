@@ -1,7 +1,8 @@
 import { useState } from "react";
 import type { PlaybackMode, SessionState } from "@crowdpulse/shared";
-import { hostPlaybackMode, hostSeek, hostSkip } from "../lib/host";
+import { hostPause, hostPlaybackMode, hostPrevious, hostResume, hostSeek, hostSetRepeat, hostSkip } from "../lib/host";
 import { usePlayerEngine } from "../lib/player/usePlayerEngine";
+import { RepeatIcon } from "./Icons";
 import { usePublicConfig } from "../lib/publicConfig";
 import { useSpotifyCover } from "../lib/spotify/cover";
 import { disconnectSpotify, redirectProblem, startSpotifyLogin, useSpotifyConnected } from "../lib/spotify/auth";
@@ -19,6 +20,7 @@ const STATUS_TEXT: Record<string, string> = {
   loading: "Starting…",
   playing: "Playing",
   ended: "Finished — pick the next song",
+  paused: "Paused",
   error: "Couldn't play",
 };
 const SOURCE_TEXT: Record<string, string> = { spotify: "Spotify" };
@@ -53,6 +55,9 @@ export function PlayerCard({
   if (here) {
     dur = here.durationMs;
     pos = Math.min(engine.positionMs(), dur);
+  } else if (pb?.status === "paused" && pb.durationMs) {
+    dur = pb.durationMs;
+    pos = Math.min(pb.pausedPositionMs ?? 0, dur);
   } else if (pb?.status === "playing" && pb.startedAt && pb.durationMs) {
     dur = pb.durationMs;
     pos = Math.min(Date.now() - Date.parse(pb.startedAt), dur);
@@ -75,6 +80,12 @@ export function PlayerCard({
   const setMode = (m: PlaybackMode) =>
     run(m === "auto" ? "Auto play on" : "DJ picks on", async () => hostPlaybackMode(sessionCode, await getHeaders(), m));
   const skip = () => run("Skipped to the next song", async () => hostSkip(sessionCode, await getHeaders()));
+  const back = () => run("Went back", async () => hostPrevious(sessionCode, await getHeaders()));
+  const paused = pb?.status === "paused";
+  const togglePause = () =>
+    paused
+      ? run("Playing again", async () => hostResume(sessionCode, await getHeaders()))
+      : run("Paused", async () => hostPause(sessionCode, await getHeaders()));
   const commitSeek = () => {
     if (drag === null) return;
     const to = drag;
@@ -153,11 +164,50 @@ export function PlayerCard({
           </button>
         ))}
       </div>
-      <div className="cta-row">
-        <button type="button" className="btn primary" disabled={busy || !ready || (state?.tracks.length ?? 0) < 1} onClick={() => void skip()}>
-          Skip ⏭
+      <div className="cta-row transport">
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || !ready || !np}
+          onClick={() => void back()}
+          aria-label="Previous: restart this song, or go back to the one before"
+          title="Restart this song (or, in the first 5 seconds, go back to the one before)"
+        >
+          ⏮
         </button>
-        <span className="host-sub">Plays your queue first, then the top votes.</span>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy || !ready || !np || (!paused && pb?.status !== "playing" && pb?.status !== "loading")}
+          onClick={() => void togglePause()}
+          aria-label={paused ? "Resume" : "Pause"}
+          title={paused ? "Resume" : "Pause"}
+        >
+          {paused ? "▶" : "⏸"}
+        </button>
+        <button
+          type="button"
+          className="btn primary"
+          disabled={busy || !ready || (state?.tracks.length ?? 0) < 1}
+          onClick={() => void skip()}
+          aria-label="Skip to the next song"
+          title="Skip: plays your queue first, then the top votes"
+        >
+          ⏭
+        </button>
+        <button
+          type="button"
+          className={`btn${pb?.repeat ? " primary" : ""}`}
+          disabled={busy || !ready}
+          aria-pressed={!!pb?.repeat}
+          onClick={() =>
+            void run(pb?.repeat ? "Repeat off" : "Repeat on", async () => hostSetRepeat(sessionCode, await getHeaders(), !pb?.repeat))
+          }
+          aria-label="Repeat the song when it finishes"
+          title={pb?.repeat ? "Repeat is on: the song replays when it finishes" : "Repeat: replay the song when it finishes"}
+        >
+          <RepeatIcon />
+        </button>
       </div>
       <div role="status" aria-live="polite">
         {msg && <p className={`feedback feedback-${msg.kind}`}>{msg.text}</p>}

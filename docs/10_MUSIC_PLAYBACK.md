@@ -15,7 +15,7 @@ votes · boosts · Gemini · host ──▶ server: nowPlaying + playback state 
    - **Now playing** shows the album cover, the song, and a progress bar. Covers are saved when a song is added from Spotify. For songs added before that, the server looks the cover up on Spotify, which needs `SPOTIFY_CLIENT_SECRET`.
 2. On the host page, use the **Now playing** window:
    - **Auto play:** when a song ends, the top-voted track starts. If nothing has votes, it plays the least-recently-played track. Music never stops on its own.
-   - **DJ picks:** when a song ends, nothing else starts until the host taps **Skip ⏭** or approves a Gemini recommendation.
+   - **DJ picks:** when a song ends, nothing else starts until the host taps **⏭ Skip** or approves a Gemini recommendation.
    - The card shows whether the player is online (it reports every 5 s), what's playing, and any playback error.
 3. The stage shows a progress bar under **Now playing** while a song is actually playing.
 
@@ -61,9 +61,9 @@ The player page can play through **Spotify** instead of the laptop's own audio. 
 The **Songs** window on `/host/demo` builds the session's song list straight from Spotify, so no catalog file is needed:
 
 1. **Connect Spotify** in that window. It's the same login as the player, plus permission to read your playlists. If you connected before this feature existed, the window shows **Reconnect Spotify** once.
-2. **Import a playlist:** paste its link (Share → Copy link to playlist) → **Preview** → **Add to library**. Up to 100 songs per import, and 150 in the library. Local files, podcasts and unavailable songs are skipped, and songs already in the library aren't added twice.
+2. **Import a playlist:** paste its link (Share → Copy link to playlist) → **Preview** → untick any songs you don't want → **Add selected**. Up to 100 songs per import, and 150 in the library. Local files, podcasts and unavailable songs are skipped, and songs already in the library aren't added twice.
    - **Spotify only lets apps read playlists you own or collaborate on.** For someone else's playlist (even a public one), open it in Spotify, select the songs and add them to a playlist of your own, then import that.
-3. **Search:** type a song or artist → **Add** puts it in the library for attendees to vote on. **Play now** adds it if needed and starts it straight away. Search runs on the server (needs `SPOTIFY_CLIENT_SECRET`), so it works without connecting Spotify; only playlist import needs your Spotify login, which opens in a popup so the host sign-in is kept.
+3. **Search:** type a song or artist, tick results (or **Select all**) → **Add selected** puts them in the library for attendees to vote on. **Play now** adds it if needed and starts it straight away. Search runs on the server (needs `SPOTIFY_CLIENT_SECRET`), so it works without connecting Spotify; only playlist import needs your Spotify login, which opens in a popup so the host sign-in is kept.
 4. **Gemini estimates genre, BPM and energy** for new songs, in batches, using its general knowledge of each song. These are estimates, and the library list marks them "≈ Gemini estimate". Every value is checked before it's stored: plain-text genre, BPM 40–220, energy 0–1.
    - **If Gemini isn't configured or can't answer,** the song is still added with neutral values (110 BPM, energy 0.5), marked "default values".
 5. Remove songs with ✕ (not the one playing). The library is saved in TigerData and survives restarts and new runs, and Gemini isn't called again for songs already stored.
@@ -71,7 +71,8 @@ The **Songs** window on `/host/demo` builds the session's song list straight fro
 ### The queue, skipping and moving within a song
 
 - **The host's queue comes first.** **+ Queue** on a library song adds it to the end of the **Queue** window, and **🔀 Shuffle** puts the whole library there in random order. In the Queue window, ↑ / ↓ reorder, ✕ takes a song out, and **Clear queue** empties it. The crowd's top-voted songs play after the host's picks. Saved in TigerData.
-- **Skip ⏭** plays the next song in the queue now. If the queue is empty it plays the least recently played song, so it always works.
+- **⏮ Previous** restarts the song if it's more than 5 s in; otherwise it goes back to the song before (and Skip returns to the one you left). **⏸ Pause / ▶ Resume** hold the song on the speaker and carry on from the same spot; auto play waits while paused.
+- **⏭ Skip** plays the next song in the queue now. If the queue is empty it plays the least recently played song, so it always works.
 - **Drag the position slider** in Now playing to jump within the song. The player, wherever it is, jumps too, and the projector's progress bar follows.
 - **Clear library** removes every song except the one playing (after a confirmation).
 - **Auto play never loops through broken songs.** If the player itself can't play (Spotify disconnected, not Premium), that device stops and asks the host to press Start audio again; nothing is skipped. If 3 songs in a row fail, auto play pauses and the host page shows the error.
@@ -80,15 +81,20 @@ The **Songs** window on `/host/demo` builds the session's song list straight fro
 ### Attendees: votes, genre, one voter per device
 
 - **Joining:** attendees pick a mood and **what they want to hear** (a genre from the library, or "Anything"). The host page shows the genre tally under *Genres people want*, and Gemini sees it as `crowd_genres`.
+- **The vote list** shows the playing song, then the most-voted songs first, 15 per page, with a search box (title, artist or genre).
 - **Votes:** each attendee can have **3 votes at once**. Tapping **Voted ✓ · undo** takes a vote back and frees it. A song that plays uses its votes up.
 - **One voter per device:** every tab on a device shares the same anonymous id, and the server remembers it, so a reload or a new tab goes straight back to voting with the same votes. Only one tab is active at a time; older tabs show *Use it here*. (A private window or another browser is a different device as far as the app can tell.)
 
+### Host settings (⚙︎)
+
+The ⚙︎ button at the right of the host page's menu bar opens Account, Appearance and Stage controls. **Show crowd energy** (under Appearance) hides the energy meter on the projector and the energy number on phones, for everyone. The library in **Songs** can be sorted (title, artist, votes, genre, BPM, energy, newest).
+
 ### Asking Gemini
 
-The Gemini window has a text box (a description or a line of lyrics, optional), an optional **genre** dropdown, and one **Popularity** slider: a minimum and maximum of all-time Spotify streams (0 to 2B+). Spotify doesn't give apps play counts, so stream numbers are **Gemini's estimates**, labelled as such.
+The Gemini window has a text box (a description or a line of lyrics, optional), an optional **genres** picker (choose any number; none = any genre), and one **Popularity** slider: a minimum and maximum of all-time Spotify streams (0 to 2B+). Spotify doesn't give apps play counts, so stream numbers are **Gemini's estimates**, labelled as such.
 
-- **Get recommendation** picks from the library, limited to the genre and aimed at the popularity range. The host still approves every pick. If no library song is in that genre, it says so instead of asking Gemini.
-- **🔎 Find on Spotify** recognizes songs from lyrics, a description or part of a title, even if they're not in the library. Gemini names the songs (titles and artists only, never lyrics) with estimated streams; songs outside the range are dropped, and each one is checked on Spotify. The host can **Add** or **Play now**.
+- **Get recommendation** picks from the library, limited to the chosen genres and aimed at the popularity range. The host still approves every pick. If no library song is in that genre, it says so instead of asking Gemini.
+- **🔎 Find songs** lists songs for a description ("songs for a late-night hackathon party") or recognizes lyrics, even songs not in the library. Choose **How many** (5–50). Gemini names the songs (titles and artists only, never lyrics) with estimated streams; songs outside the range are dropped, and each one is checked on Spotify (a 20-song find takes about 7 s). Tick songs, or **Select all**, then **Add selected**; or **Play now** on one.
 - **🎲 Surprise me** finds one random song in the genre and popularity range that isn't already in the library. Gemini suggests a varied pool; the server picks one at random, weighted toward more-streamed songs (by the square root of streams, so hits come up more often without always winning), and confirms it on Spotify.
 
 Find and Surprise me need `GEMINI_API_KEY` and `SPOTIFY_CLIENT_SECRET`.

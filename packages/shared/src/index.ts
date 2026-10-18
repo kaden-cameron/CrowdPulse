@@ -205,8 +205,10 @@ export type AppearanceMode = "light" | "dark";
 export interface Appearance {
   preset: AppearancePreset;
   mode: AppearanceMode;
+  /** Show the crowd energy meter on the big screen and attendee phones (default on). */
+  showEnergy?: boolean;
 }
-export const DEFAULT_APPEARANCE: Appearance = { preset: "sky", mode: "light" };
+export const DEFAULT_APPEARANCE: Appearance = { preset: "sky", mode: "light", showEnergy: true };
 
 // --- Playback (the player page on the DJ laptop follows nowPlaying and reports back) ---
 
@@ -216,8 +218,12 @@ export const PLAYBACK_MODES: PlaybackMode[] = ["auto", "dj"];
 
 export interface PlaybackState {
   mode: PlaybackMode;
+  /** 🔁 on: a song that finishes starts again instead of moving on. */
+  repeat: boolean;
   /** loading = chosen, waiting for the player to start it; ended = finished, waiting for the host (DJ mode). */
-  status: "idle" | "loading" | "playing" | "ended" | "error";
+  status: "idle" | "loading" | "playing" | "paused" | "ended" | "error";
+  /** Where the song was when the host paused it (ms); null unless paused. */
+  pausedPositionMs: number | null;
   trackId: string | null;
   /** The track's round when it was chosen; reports for an older round are ignored. */
   round: number;
@@ -231,6 +237,8 @@ export interface PlaybackState {
   message: string | null;
   /** Bumped when the host moves the song position; the player jumps to the new startedAt. */
   seekSeq: number;
+  /** The tab that is the speaker output (the last one to start a song). Others stand down. */
+  playerId: string | null;
 }
 
 export type PlaybackReportEvent = "started" | "progress" | "ended" | "error";
@@ -256,7 +264,8 @@ export interface RecommendationProposal {
 export interface SongRequest {
   /** e.g. "2000s pop-punk singalong" or a line of lyrics (plain text, max 200 characters). */
   prompt: string;
-  genre: string | null;
+  /** Any of these genres (lowercase); empty = any genre. */
+  genres: string[];
   minStreams: number | null;
   maxStreams: number | null;
 }
@@ -284,7 +293,10 @@ export interface FoundSong {
   } | null;
 }
 
-export const SONG_REQUEST_LIMITS = { promptMax: 200, maxStreams: 100_000_000_000 } as const;
+export const SONG_REQUEST_LIMITS = { promptMax: 200, maxStreams: 100_000_000_000, maxGenres: 10, maxFind: 50 } as const;
+
+/** "How many" choices for Find songs. */
+export const FIND_COUNTS = [5, 10, 20, 30, 50] as const;
 
 /** Popularity slider stops, in all-time Spotify streams. The ends mean "no limit". */
 export const STREAM_STOPS = [

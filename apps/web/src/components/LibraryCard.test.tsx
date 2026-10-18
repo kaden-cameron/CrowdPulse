@@ -45,6 +45,10 @@ function mockNet() {
       if (url.endsWith("/library") && init?.method === "DELETE") return Response.json({ status: "accepted", state });
       if (url.endsWith("/library")) return Response.json({ added: 1, skipped: 0, estimatedBy: "gemini", note: null, trackIds: ["sp_4uLU6hMCjMI75M1A2tKUQC"] });
       if (url.endsWith("/queue")) return Response.json({ status: "accepted", state });
+      if (url.includes("/v1/playlists/")) {
+        const t = (n: number, name: string) => ({ item: { name, uri: `spotify:track:${String(n).padStart(22, "B")}`, type: "track", duration_ms: 200_000, artists: [{ name: "Band" }] } });
+        return Response.json({ items: [t(1, "First Song"), t(2, "Second Song"), t(3, "Third Song")], next: null });
+      }
       if (url.endsWith("/advance")) return Response.json({ status: "accepted", state });
       return new Response("{}", { status: 404 });
     }),
@@ -60,7 +64,8 @@ describe("LibraryCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "Search" }));
     expect(await screen.findByText("One More Time")).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "Add One More Time to the library" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select One More Time" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add selected (1)" }));
     expect(await screen.findByText(/Added 1 song\. BPM\/energy estimated by Gemini\./)).toBeInTheDocument();
     const add = calls.find((c) => c.url === "/api/host/sessions/demo/library")!;
     expect(add.body).toEqual({ tracks: [{ title: "One More Time", artist: "Daft Punk", spotifyUri: URI }] });
@@ -116,10 +121,48 @@ describe("LibraryCard", () => {
   });
 });
 
+describe("LibraryCard playlist import", () => {
+  it("lets the host choose which playlist songs to add", async () => {
+    const calls = mockNet();
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
+    await userEvent.click(screen.getByText("Import a Spotify playlist"));
+    await userEvent.type(screen.getByPlaceholderText(/open.spotify.com\/playlist/), "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M");
+    await userEvent.click(screen.getByRole("button", { name: "Preview" }));
+    // Everything starts selected; untick one.
+    expect(await screen.findByRole("button", { name: "Add selected (3)" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Select Second Song" }));
+    await userEvent.click(screen.getByRole("button", { name: "Add selected (2)" }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/library") && c.method === "POST")).toBe(true));
+    const added = (calls.find((c) => c.url.endsWith("/library") && c.method === "POST")!.body as { tracks: { title: string }[] }).tracks;
+    expect(added.map((t) => t.title)).toEqual(["First Song", "Third Song"]);
+  });
+});
+
 describe("shuffled", () => {
   it("keeps every item exactly once", async () => {
     const { shuffled } = await import("./LibraryCard");
     const out = shuffled([1, 2, 3, 4, 5]);
     expect([...out].sort()).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe("sortLibrary", () => {
+  const lib = [
+    { title: "b song", artist: "Zed", genre: "pop", votes: 1, bpm: 90, energy: 0.2 },
+    { title: "A song", artist: "amy", genre: "house", votes: 3, bpm: 128, energy: 0.9 },
+    { title: "c song", artist: "Bob", genre: "edm", votes: 0, bpm: 140, energy: 0.5 },
+  ];
+  it("sorts by title, artist, votes, genre, BPM, energy, or newest first", async () => {
+    const { sortLibrary } = await import("./LibraryCard");
+    const titles = (k: Parameters<typeof sortLibrary>[1]) => sortLibrary(lib, k).map((x) => x.title);
+    expect(titles("added")).toEqual(["b song", "A song", "c song"]);
+    expect(titles("newest")).toEqual(["c song", "A song", "b song"]);
+    expect(titles("title")).toEqual(["A song", "b song", "c song"]);
+    expect(titles("artist")).toEqual(["A song", "c song", "b song"]);
+    expect(titles("votes")).toEqual(["A song", "b song", "c song"]);
+    expect(titles("genre")).toEqual(["c song", "A song", "b song"]);
+    expect(titles("bpm")).toEqual(["c song", "A song", "b song"]);
+    expect(titles("energy")).toEqual(["A song", "c song", "b song"]);
+    expect(lib[0].title).toBe("b song"); // the library itself isn't changed
   });
 });

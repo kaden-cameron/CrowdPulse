@@ -102,7 +102,9 @@ describe("AiPanel", () => {
     );
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
     await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "slow jam for the end of the night");
-    await userEvent.selectOptions(screen.getByRole("combobox"), "r&b");
+    await userEvent.click(screen.getByText("Any genre"));
+    await userEvent.click(screen.getByRole("checkbox", { name: "R&B" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Soul" }));
     fireEvent.change(screen.getByRole("slider", { name: "Minimum streams" }), { target: { value: "2" } }); // 1M
     fireEvent.change(screen.getByRole("slider", { name: "Maximum streams" }), { target: { value: "7" } }); // 500M
     expect(screen.getByText(/Popularity · 1M – 500M streams/)).toBeInTheDocument();
@@ -112,7 +114,7 @@ describe("AiPanel", () => {
     await waitFor(() => expect(bodies).toHaveLength(1));
     expect(bodies[0]).toEqual({
       hostTarget: "raise_energy",
-      request: { prompt: "slow jam for the end of the night", genre: "r&b", minStreams: 1_000_000, maxStreams: 500_000_000 },
+      request: { prompt: "slow jam for the end of the night", genres: ["r&b", "soul"], minStreams: 1_000_000, maxStreams: 500_000_000 },
     });
   });
 
@@ -132,14 +134,18 @@ describe("AiPanel", () => {
     const onState = vi.fn();
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={onState} />);
     await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "is this the real life, is this just fantasy");
-    const find = await screen.findByRole("button", { name: "🔎 Find on Spotify" });
+    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
     await waitFor(() => expect(find).toBeEnabled());
     await userEvent.click(find);
     expect(await screen.findByText("Bohemian Rhapsody")).toBeInTheDocument();
     expect(screen.getByText(/≈ 2.6B streams/)).toBeInTheDocument();
+    // Results fold away with one click, and come back.
+    await userEvent.click(screen.getByRole("button", { name: "Hide results" }));
+    expect(screen.queryByText("Bohemian Rhapsody")).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Show results" }));
     expect(calls[0]).toEqual({
       url: "/api/host/sessions/demo/find-songs",
-      body: { text: "is this the real life, is this just fantasy", genre: null, minStreams: null, maxStreams: null },
+      body: { text: "is this the real life, is this just fantasy", count: 10, genres: [], minStreams: null, maxStreams: null },
     });
     await userEvent.click(screen.getByRole("button", { name: "Play Bohemian Rhapsody now" }));
     await waitFor(() => expect(onState).toHaveBeenCalled());
@@ -158,16 +164,48 @@ describe("AiPanel", () => {
       }),
     );
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
-    await userEvent.selectOptions(screen.getByRole("combobox"), "house");
+    await userEvent.click(screen.getByText("Any genre"));
+    await userEvent.click(screen.getByRole("checkbox", { name: "House" }));
     const surprise = await screen.findByRole("button", { name: "🎲 Surprise me" });
     await waitFor(() => expect(surprise).toBeEnabled());
     await userEvent.click(surprise);
     expect(await screen.findByText("One More Time")).toBeInTheDocument();
-    expect(calls[0].body).toEqual({ surprise: true, genre: "house", minStreams: null, maxStreams: null });
+    expect(calls[0].body).toEqual({ surprise: true, genres: ["house"], minStreams: null, maxStreams: null });
   });
 
   it("formats stream counts", async () => {
     const { fmtStreams } = await import("./AiPanel");
     expect([fmtStreams(2_500_000_000), fmtStreams(120_000), fmtStreams(50_000_000), fmtStreams(900)]).toEqual(["2.5B", "120K", "50M", "900"]);
+  });
+
+  it("Find songs: choose how many, then select all and add them in one go", async () => {
+    const calls: { url: string; body: unknown }[] = [];
+    const hit = (n: number) => ({ id: `id${n}`, title: `Song ${n}`, artist: "Band", album: "", spotifyUri: `spotify:track:${String(n).padStart(22, "A")}`, durationMs: 1, popularity: 50, imageUrl: null, coverUrl: null });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (init?.method === "POST") calls.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.endsWith("/find-songs")) {
+          return Response.json({
+            songs: [1, 2, 3].map((n) => ({ title: `Song ${n}`, artist: "Band", why: "pop punk", confidence: 0.8, streams: 50_000_000, spotify: hit(n) })),
+            note: null,
+          });
+        }
+        if (url.endsWith("/library")) return Response.json({ added: 3, skipped: 0, estimatedBy: "gemini", note: null, trackIds: [] });
+        return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendations: [] });
+      }),
+    );
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "2000s pop punk");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "How many songs to find" }), "30");
+    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    await waitFor(() => expect(find).toBeEnabled());
+    await userEvent.click(find);
+    await screen.findByText("Song 3");
+    expect(calls[0].body).toMatchObject({ text: "2000s pop punk", count: 30 });
+    await userEvent.click(screen.getByRole("checkbox", { name: /Select all/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Add selected (3)" }));
+    expect(await screen.findByText(/Added 3 songs to the library/)).toBeInTheDocument();
+    expect((calls.find((c) => c.url.endsWith("/library"))!.body as { tracks: unknown[] }).tracks).toHaveLength(3);
   });
 });

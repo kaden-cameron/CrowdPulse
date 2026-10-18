@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   MOODS,
@@ -17,6 +17,8 @@ import { useSessionAppearance } from "../lib/theme";
 import { AppearanceCard } from "../components/AppearanceCard";
 import { LibraryCard } from "../components/LibraryCard";
 import { QueueCard } from "../components/QueueCard";
+import { SettingsPanel } from "../components/SettingsPanel";
+import { ProfileIcon } from "../components/Icons";
 import { hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
 import { presetLabel } from "../lib/theme";
 import { PlayerCard } from "../components/PlayerCard";
@@ -34,6 +36,10 @@ export function HostPage() {
   const [theme, setTheme] = useState<VisualTheme>("calm_waves");
   const [intensity, setIntensity] = useState(0.5);
   const [busy, setBusy] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const closeSettings = useCallback(() => setSettingsOpen(false), []);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const closeProfile = useCallback(() => setProfileOpen(false), []);
   const [message, setMessage] = useState<{
     kind: "accepted" | "rejected";
     text: string;
@@ -59,68 +65,77 @@ export function HostPage() {
 
   const totalMoods = state ? MOODS.reduce((n, m) => n + state.moods[m], 0) : 0;
 
-  // Shown at the top until the host signs in; afterwards it moves down to the session settings.
-  const sessionBlock = (
-    <div className="host-block session-block">
-      <h1>Host · {state?.sessionName ?? sessionCode}</h1>
-      <p className="host-sub">
-        Stage controls and AI decisions need a signed-in host — the server checks every request.
-      </p>
-      <HostSignIn />
-      <div className="cta-row">
-        <Link className="btn ghost compact" to={`/stage/${sessionCode}`}>
-          Open stage
-        </Link>
-        <Link className="btn ghost compact" to={`/join/${sessionCode}`}>
-          Attendee link
-        </Link>
-      </div>
-    </div>
-  );
-
   return (
     <main className="host-page">
-      <MenuBar title="Host" status={status} lastMessageAt={lastMessageAt} />
-
-      <section className="host-grid">
-        {!access.ready && sessionBlock}
-
-        {/* Now playing, with the Gemini DJ beside it */}
-        <PlayerCard
-          sessionCode={sessionCode}
-          state={state}
-          ready={access.ready}
-          getHeaders={access.getHeaders}
-          onState={applyState}
-        />
-        <AiPanel
-          sessionId={sessionCode}
-          getHeaders={access.getHeaders}
-          ready={access.ready}
-          tracks={state?.tracks ?? []}
-          onState={applyState}
-        />
-
-        {/* Picking songs */}
-        <LibraryCard
-          sessionCode={sessionCode}
-          state={state}
-          ready={access.ready}
-          getHeaders={access.getHeaders}
-          onState={applyState}
-        />
-        <QueueCard
-          sessionCode={sessionCode}
-          state={state}
-          ready={access.ready}
-          getHeaders={access.getHeaders}
-          onState={applyState}
-        />
-
-        <div className="host-block">
-          <h2>Stage controls</h2>
+      <MenuBar
+        title="Host"
+        status={status}
+        lastMessageAt={lastMessageAt}
+        actions={
+          <>
+          <button
+            type="button"
+            className={`menubar-tab menubar-action menubar-profile${access.ready ? " signed-in" : ""}`}
+            aria-expanded={profileOpen}
+            aria-controls="host-profile"
+            aria-label={access.ready ? `Profile: signed in${access.userLabel ? ` as ${access.userLabel}` : ""}` : "Sign in"}
+            title={access.ready ? (access.userLabel ?? "Signed in") : "Sign in as host"}
+            onClick={() => (setSettingsOpen(false), setProfileOpen((o) => !o))}
+          >
+            <ProfileIcon size={17} />
+            {!access.ready && <span className="menubar-profile-label">Sign in</span>}
+          </button>
+          <button
+            type="button"
+            className="menubar-tab menubar-action"
+            aria-expanded={settingsOpen}
+            aria-controls="host-settings"
+            aria-label="Settings: appearance and stage"
+            title="Settings"
+            onClick={() => (setProfileOpen(false), setSettingsOpen((o) => !o))}
+          >
+            <span aria-hidden>⚙︎</span>
+          </button>
+          </>
+        }
+      />
+      <SettingsPanel id="host-profile" title="Profile" open={profileOpen} onClose={closeProfile}>
+        <section className="settings-section">
+          <h3>Host · {state?.sessionName ?? sessionCode}</h3>
           {!access.ready && (
-            <p className="host-sub">Sign in as host (above) to use stage controls.</p>
+            <p className="host-sub">Sign in to control music, the stage and Gemini — the server checks every request.</p>
+          )}
+          <HostSignIn />
+          <div className="cta-row">
+            <Link className="btn ghost compact" to={`/stage/${sessionCode}`}>
+              Open stage
+            </Link>
+            <Link className="btn ghost compact" to={`/join/${sessionCode}`}>
+              Attendee link
+            </Link>
+          </div>
+        </section>
+      </SettingsPanel>
+      <SettingsPanel open={settingsOpen} onClose={closeSettings}>
+        <AppearanceCard
+          compact
+          appearance={state?.appearance}
+          disabled={busy || !access.ready}
+          onChange={(next) =>
+            run(
+              (next.showEnergy !== false) !== (state?.appearance.showEnergy !== false)
+                ? next.showEnergy === false
+                  ? "Crowd energy hidden"
+                  : "Crowd energy shown"
+                : `Look changed to ${presetLabel(next.preset)} · ${next.mode}`,
+              async () => hostSetAppearance(sessionCode, await access.getHeaders(), next),
+            )
+          }
+        />
+        <section className="settings-section">
+          <h3>Stage</h3>
+          {!access.ready && (
+            <p className="host-sub">Sign in as host to use stage controls.</p>
           )}
 
           <fieldset className="mood-field">
@@ -205,21 +220,57 @@ export function HostPage() {
               </p>
             )}
           </div>
-        </div>
+        </section>
+      </SettingsPanel>
 
-        <AppearanceCard
-          appearance={state?.appearance}
-          disabled={busy || !access.ready}
-          onChange={(next) =>
-            run(`Look changed to ${presetLabel(next.preset)} · ${next.mode}`, async () =>
-              hostSetAppearance(sessionCode, await access.getHeaders(), next),
-            )
-          }
+      <section className="host-grid">
+        {!access.ready && (
+          <div className="signin-banner" role="note">
+            <span>You&apos;re not signed in as host — the controls below are locked.</span>
+            <button type="button" className="btn primary compact" onClick={() => setProfileOpen(true)}>
+              <ProfileIcon /> Sign in
+            </button>
+          </div>
+        )}
+
+        {/* Now playing, with the Gemini DJ beside it */}
+        <PlayerCard
+          sessionCode={sessionCode}
+          state={state}
+          ready={access.ready}
+          getHeaders={access.getHeaders}
+          onState={applyState}
+        />
+        <AiPanel
+          sessionId={sessionCode}
+          getHeaders={access.getHeaders}
+          ready={access.ready}
+          tracks={state?.tracks ?? []}
+          onState={applyState}
         />
 
-        {access.ready && sessionBlock}
+        {/* Picking songs */}
+        <LibraryCard
+          sessionCode={sessionCode}
+          state={state}
+          ready={access.ready}
+          getHeaders={access.getHeaders}
+          onState={applyState}
+        />
+        <QueueCard
+          sessionCode={sessionCode}
+          state={state}
+          ready={access.ready}
+          getHeaders={access.getHeaders}
+          onState={applyState}
+        />
 
-        {/* Numbers and charts */}
+
+      </section>
+
+      {/* Numbers and charts: their own section so the controls above can pack tightly without
+          pulling these up between them. */}
+      <section className="host-grid metrics-grid" aria-label="Session numbers">
         <div className="metric-strip" role="group" aria-label="Session metrics">
           <div>
             <span className="metric-label">Energy</span>

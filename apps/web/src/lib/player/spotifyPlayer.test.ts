@@ -18,6 +18,7 @@ const state = (over: Partial<SdkState> & { uri?: string; prev?: string[] } = {})
 function fakeSdk(opts: { accountError?: boolean } = {}) {
   const listeners: Record<string, ((arg: unknown) => void)[]> = {};
   const pause = vi.fn(async () => {});
+  const resume = vi.fn(async () => {});
   const sdk: SpotifySdk = {
     Player: class {
       addListener(ev: string, cb: (arg: never) => void) {
@@ -32,6 +33,7 @@ function fakeSdk(opts: { accountError?: boolean } = {}) {
       }
       disconnect() {}
       pause = pause;
+      resume = resume;
       async setVolume() {}
       async activateElement() {}
     } as unknown as SpotifySdk["Player"],
@@ -39,6 +41,7 @@ function fakeSdk(opts: { accountError?: boolean } = {}) {
   return {
     sdk,
     pause,
+    resume,
     emit: (s: SdkState | null) => listeners.player_state_changed?.forEach((cb) => cb(s)),
     fire: (ev: string, arg: unknown) => listeners[ev]?.forEach((cb) => cb(arg)),
   };
@@ -103,6 +106,7 @@ describe("SpotifyPlayer", () => {
     await p;
     emit(state({ position: 150_000 })); // still playing: not ended
     expect(ended).not.toHaveBeenCalled();
+    emit(state({ position: 197_000 })); // the last seconds
     emit(state({ paused: true, position: 0, uri: "", prev: [URI] })); // Spotify's end-of-track state
     expect(ended).toHaveBeenCalledTimes(1);
     expect(pause).toHaveBeenCalled();
@@ -119,6 +123,7 @@ describe("SpotifyPlayer", () => {
     await vi.waitFor(() => expect(calls.length).toBe(1));
     emit(state());
     await p;
+    emit(state({ position: 198_000 }));
     emit(state({ uri: "spotify:track:0000000000000000000000" }));
     expect(ended).toHaveBeenCalledTimes(1);
   });
@@ -161,5 +166,80 @@ describe("SpotifyPlayer reconnects (start → stop → start)", () => {
     await player.seek(61_000);
     expect(calls[1].url).toBe("https://api.spotify.com/v1/me/player/seek?position_ms=61000&device_id=dev123");
     expect(calls[1].init?.method).toBe("PUT");
+  });
+});
+
+describe("SpotifyPlayer: a song that stops right away isn't 'finished'", () => {
+  async function started() {
+    const ctx = setup();
+    const ended = vi.fn();
+    const problem = vi.fn();
+    ctx.player.onEnded(ended);
+    ctx.player.onProblem(problem);
+    await ctx.player.unlock();
+    const p = ctx.player.play({ ...track, spotifyUri: URI });
+    await vi.waitFor(() => expect(ctx.calls.length).toBe(1));
+    ctx.emit(state({ position: 0 }));
+    await p;
+    return { ...ctx, ended, problem };
+  }
+
+  it("an early 'paused at 0:00' (Spotify loading or no audio) resumes instead of skipping", async () => {
+    const { emit, ended, problem, resume } = await started();
+    emit(state({ paused: true, position: 0 }));
+    expect(ended).not.toHaveBeenCalled();
+    expect(problem).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledOnce();
+    emit(state({ position: 3_000 })); // it plays after all
+    emit(state({ position: 60_000 }));
+    expect(ended).not.toHaveBeenCalled();
+  });
+
+  it("stopping early again is reported as a problem, never as the song finishing", async () => {
+    const { emit, ended, problem } = await started();
+    emit(state({ paused: true, position: 0 }));
+    emit(state({ paused: true, position: 0 }));
+    expect(ended).not.toHaveBeenCalled();
+    expect(problem).toHaveBeenCalledOnce();
+    expect(problem.mock.calls[0][0]).toMatch(/Spotify stopped “Real Song” after 0s/);
+  });
+
+  it("a mid-song pause (someone paused Spotify) is left alone", async () => {
+    const { emit, ended, problem } = await started();
+    emit(state({ position: 60_000 }));
+    emit(state({ paused: true, position: 61_000 }));
+    expect(ended).not.toHaveBeenCalled();
+    expect(problem).not.toHaveBeenCalled();
+  });
+
+  it("ignores states while Spotify is still loading", async () => {
+    const { emit, ended, problem, resume } = await started();
+    emit(state({ paused: true, position: 0, loading: true }));
+    expect(ended).not.toHaveBeenCalled();
+    expect(problem).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+  });
+});
+
+describe("SpotifyPlayer hold (host pressed ⏸)", () => {
+  it("a paused-at-0:00 state while held is not a problem or an ending", async () => {
+    const ctx = setup();
+    const ended = vi.fn();
+    const problem = vi.fn();
+    ctx.player.onEnded(ended);
+    ctx.player.onProblem(problem);
+    await ctx.player.unlock();
+    const p = ctx.player.play({ ...track, spotifyUri: URI });
+    await vi.waitFor(() => expect(ctx.calls.length).toBe(1));
+    ctx.emit(state({ position: 0 }));
+    await p;
+    await ctx.player.hold();
+    expect(ctx.pause).toHaveBeenCalled();
+    ctx.emit(state({ paused: true, position: 0 }));
+    ctx.emit(state({ paused: true, position: 0 }));
+    expect(ended).not.toHaveBeenCalled();
+    expect(problem).not.toHaveBeenCalled();
+    await ctx.player.unhold();
+    expect(ctx.resume).toHaveBeenCalled();
   });
 });

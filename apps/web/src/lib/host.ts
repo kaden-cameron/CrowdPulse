@@ -45,6 +45,18 @@ export const hostSetQueue = (sessionId: string, auth: HostHeaders, trackIds: str
 export const hostClearLibrary = (sessionId: string, auth: HostHeaders) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/library`, auth, {}, "DELETE");
 
+export const hostPause = (sessionId: string, auth: HostHeaders) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/pause`, auth);
+export const hostResume = (sessionId: string, auth: HostHeaders) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/resume`, auth);
+/** ⏮: back to the start of the song, or the song before it. */
+export const hostPrevious = (sessionId: string, auth: HostHeaders) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/previous`, auth);
+
+/** 🔁: replay songs when they finish. */
+export const hostSetRepeat = (sessionId: string, auth: HostHeaders, repeat: boolean) =>
+  hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/repeat`, auth, { repeat });
+
 export const hostSeek = (sessionId: string, auth: HostHeaders, positionMs: number) =>
   hostPost(`/api/host/sessions/${encodeURIComponent(sessionId)}/playback/seek`, auth, { positionMs: Math.round(positionMs) });
 
@@ -52,7 +64,7 @@ export const hostSeek = (sessionId: string, auth: HostHeaders, positionMs: numbe
 export async function hostFindSongs(
   sessionId: string,
   auth: HostHeaders,
-  query: { text?: string; surprise?: boolean; genre: string | null; minStreams: number | null; maxStreams: number | null },
+  query: { text?: string; surprise?: boolean; count?: number; genres: string[]; minStreams: number | null; maxStreams: number | null },
 ) {
   const res = await fetch(`/api/host/sessions/${encodeURIComponent(sessionId)}/find-songs`, {
     method: "POST",
@@ -113,8 +125,10 @@ export interface PlaybackReport {
   round: number;
   positionMs?: number;
   durationMs?: number;
-  source?: "file" | "generated" | "spotify";
+  source?: "spotify";
   message?: string;
+  /** This tab's player id (one speaker at a time). */
+  playerId?: string;
 }
 
 /** From the player page. 409 just means the server has moved on to another track. */

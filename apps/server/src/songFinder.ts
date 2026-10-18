@@ -11,12 +11,17 @@ import type { SpotifySearchClient } from "./spotify.js";
 // doesn't give apps play counts, so "listens" are Gemini's estimate and labelled as such. Every
 // song is then confirmed on Spotify. Gemini never reproduces lyrics.
 
-const MAX_FIND = 5;
+const DEFAULT_FIND = 5;
 const SURPRISE_POOL = 12;
+/** Parallel Spotify lookups (a 50-song find is ~50–100 searches). */
+const SPOTIFY_CONCURRENCY = 5;
 
 export interface FindOptions {
   text?: string;
-  genre?: string | null;
+  /** Any of these genres; empty = any. */
+  genres?: string[];
+  /** How many songs to return (Find only; 1–50). */
+  count?: number;
   minStreams?: number | null;
   maxStreams?: number | null;
   surprise?: boolean;
@@ -38,12 +43,13 @@ export const FIND_PROMPT = `You help a live DJ find real songs.
 - a few lines of lyrics (possibly misheard or misspelled): identify the song those lyrics come from;
 - a description ("upbeat 80s synth song from Drive");
 - a partial title or an artist.
-Return up to ${MAX_FIND} songs, most likely first. For lyrics, the first result should be the song they are from.
-If "genre" or a stream range is given, only return songs that fit them.
+Return up to "count" songs, most likely / best fitting first. For lyrics, the first result should be the song they
+are from. For a description, return many different matching songs (different artists where possible).
+If "genres" (any of them) or a stream range is given, only return songs that fit them.
 ${RULES}`;
 
 export const SURPRISE_PROMPT = `You help a live DJ pick a surprise song.
-Return ${SURPRISE_POOL} different songs that fit "genre" (any genre if null) and whose all-time Spotify streams are
+Return ${SURPRISE_POOL} different songs that fit any of "genres" (any genre if null) and whose all-time Spotify streams are
 inside the range [min_streams, max_streams] (null = no limit). Mix eras and artists; use "variety_hint" to vary the
 list. Skip songs listed in "exclude". Lean toward well-known songs within the range.
 ${RULES}`;
@@ -105,9 +111,11 @@ export async function findSongs(
 ): Promise<{ songs: FoundSong[]; note: string | null }> {
   if (!model) return { songs: [], note: "Gemini isn't configured (GEMINI_API_KEY), so it can't find songs." };
   const random = opts.random ?? Math.random;
+  const count = Math.max(1, Math.min(50, opts.count ?? DEFAULT_FIND));
   const input = {
-    ...(opts.surprise ? {} : { host_text: opts.text ?? "" }),
-    genre: opts.genre ?? null,
+    // Ask for a few extra: some fall outside the range or aren't on Spotify.
+    ...(opts.surprise ? {} : { host_text: opts.text ?? "", count: Math.min(60, Math.ceil(count * 1.25)) }),
+    genres: opts.genres?.length ? opts.genres : null,
     min_streams: opts.minStreams ?? null,
     max_streams: opts.maxStreams ?? null,
     ...(opts.surprise
@@ -159,7 +167,18 @@ export async function findSongs(
       if (found.spotify || !spotify?.configured) songs = [found];
     }
   } else {
-    songs = await Promise.all(names.slice(0, MAX_FIND).map(confirm));
+    // Confirm in small parallel batches until we have `count` songs on Spotify (or run out).
+    songs = [];
+    let i = 0;
+    while (i < names.length && songs.filter((x) => x.spotify).length < count) {
+      const batch = names.slice(i, i + SPOTIFY_CONCURRENCY);
+      i += batch.length;
+      songs.push(...(await Promise.all(batch.map(confirm))));
+    }
+    // Songs Spotify confirmed come first; unconfirmed ones stay visible (marked) but can't be added.
+    const onSpotify = songs.filter((x) => x.spotify).slice(0, count);
+    const missing = songs.filter((x) => !x.spotify);
+    songs = [...onSpotify, ...(spotify?.configured ? missing.slice(0, 3) : missing.slice(0, count))];
   }
 
   log({ kind: "ai.find_songs", surprise: !!opts.surprise, found: songs.length, onSpotify: songs.filter((s) => s.spotify).length, latencyMs: call.latencyMs });

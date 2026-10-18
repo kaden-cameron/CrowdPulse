@@ -80,7 +80,10 @@ test("FE-08: the host changes the stage theme and the projector follows", async 
   const stage = await openStage(browser);
   const host = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
   await host.goto("/host/demo");
+  await host.getByRole("button", { name: "Sign in" }).first().click(); // 👤 in the menu bar
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await host.keyboard.press("Escape");
+  await host.getByRole("button", { name: /^Settings/ }).click(); // ⚙︎ in the menu bar
   await host.getByRole("button", { name: "sunset" }).click();
   await host.getByRole("button", { name: "Apply to stage" }).click();
   await expect(host.getByText("Stage updated")).toBeVisible();
@@ -230,7 +233,10 @@ test("The host picks the look; the big screen and attendee phones follow it live
 
   const host = await (await browser.newContext({ viewport: { width: 1280, height: 1000 } })).newPage();
   await host.goto("/host/demo");
+  await host.getByRole("button", { name: "Sign in" }).first().click(); // 👤 in the menu bar
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await host.keyboard.press("Escape");
+  await host.getByRole("button", { name: /^Settings/ }).click(); // ⚙︎ in the menu bar
   const card = host.locator(".appearance-card");
   await card.getByText("Green").click();
   await expect(host.getByText(/Look changed to Green · light/)).toBeVisible();

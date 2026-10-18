@@ -66,7 +66,14 @@ export function JoinPage() {
 
   // Latest rejection that still applies, shown once above the list.
   const rejection = voteRejection;
-  const tracks = state?.tracks ?? [];
+  // The vote list: most-voted first, searchable, PAGE_SIZE songs per page.
+  const [search, setSearch] = useState("");
+  const [page, setPage] = useState(0);
+  const allTracks = state?.tracks ?? [];
+  const matching = filterAndRank(allTracks, search);
+  const pages = Math.max(1, Math.ceil(matching.length / PAGE_SIZE));
+  const pageIndex = Math.min(page, pages - 1);
+  const tracks = matching.slice(pageIndex * PAGE_SIZE, (pageIndex + 1) * PAGE_SIZE);
 
   if (status === "not_found") {
     return (
@@ -169,7 +176,8 @@ export function JoinPage() {
               )}
             </p>
             <p className="vote-stats">
-              Energy {state?.energyScore ?? "—"} · {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
+              {state?.appearance.showEnergy !== false && <>Energy {state?.energyScore ?? "—"} · </>}
+              {state?.visualState.theme.replaceAll("_", " ") ?? "—"}
             </p>
           </div>
 
@@ -202,8 +210,28 @@ export function JoinPage() {
               : `${votesLeft} of ${maxVotes} vote${maxVotes === 1 ? "" : "s"} left`}
           </p>
 
+          {allTracks.length > 0 && (
+            <label className="vote-search">
+              <span className="visually-hidden">Search songs</span>
+              <input
+                type="search"
+                value={search}
+                onChange={(e) => {
+                  setSearch(e.target.value);
+                  setPage(0);
+                }}
+                placeholder={`Search ${allTracks.length} songs`}
+              />
+            </label>
+          )}
+
           <ul className="track-list panel">
-            {tracks.length === 0 && (
+            {allTracks.length > 0 && tracks.length === 0 && (
+              <li className="track-row">
+                <p className="track-meta">No songs match “{search}”.</p>
+              </li>
+            )}
+            {allTracks.length === 0 && (
               <li className="track-row">
                 <div>
                   <p className="track-title">No songs yet</p>
@@ -241,6 +269,19 @@ export function JoinPage() {
               </li>
             ))}
           </ul>
+          {pages > 1 && (
+            <nav className="vote-pages" aria-label="Song pages">
+              <button type="button" className="btn ghost compact" disabled={pageIndex === 0} onClick={() => setPage(pageIndex - 1)}>
+                ‹ Prev
+              </button>
+              <span>
+                Page {pageIndex + 1} of {pages}
+              </span>
+              <button type="button" className="btn ghost compact" disabled={pageIndex >= pages - 1} onClick={() => setPage(pageIndex + 1)}>
+                Next ›
+              </button>
+            </nav>
+          )}
 
           {boostTrack && boostConfig && (
             <BoostPanel
@@ -303,4 +344,29 @@ function saveJoinedRun(sessionCode: string, run: number) {
   } catch {
     /* storage blocked */
   }
+}
+
+/** Songs per page in the attendee's vote list. */
+export const PAGE_SIZE = 15;
+
+/**
+ * The attendee's list: songs matching the search (title, artist or genre), most votes first
+ * (boosts break ties, then library order). The playing song stays at the top.
+ */
+export function filterAndRank<T extends { title: string; artist: string; genre: string; votes: number; boosts: number; status: string }>(
+  tracks: T[],
+  search: string,
+): T[] {
+  const q = search.trim().toLowerCase();
+  return tracks
+    .map((t, i) => ({ t, i }))
+    .filter(({ t }) => !q || `${t.title} ${t.artist} ${t.genre}`.toLowerCase().includes(q))
+    .sort(
+      (a, b) =>
+        Number(b.t.status === "playing") - Number(a.t.status === "playing") ||
+        b.t.votes - a.t.votes ||
+        b.t.boosts - a.t.boosts ||
+        a.i - b.i,
+    )
+    .map(({ t }) => t);
 }

@@ -52,13 +52,15 @@ export function StagePage() {
             <div className="tv-dither" aria-hidden />
             <div className="tv-overlay">
               <span className="tv-tag">{visual.theme.replaceAll("_", " ")}</span>
-              <div className="energy-block" aria-label={`Crowd energy ${state?.energyScore ?? 0}`}>
-                <div className="energy-score">{state?.energyScore ?? 0}</div>
-                <div className="energy-bar-track">
-                  <div className="energy-bar-fill" style={{ width: `${state?.energyScore ?? 0}%` }} />
+              {state?.appearance.showEnergy !== false && (
+                <div className="energy-block" aria-label={`Crowd energy ${state?.energyScore ?? 0}`}>
+                  <div className="energy-score">{state?.energyScore ?? 0}</div>
+                  <div className="energy-bar-track">
+                    <div className="energy-bar-fill" style={{ width: `${state?.energyScore ?? 0}%` }} />
+                  </div>
+                  <p className="energy-caption">crowd energy</p>
                 </div>
-                <p className="energy-caption">crowd energy</p>
-              </div>
+              )}
             </div>
             <div className="tv-strip" aria-hidden>
               <span>▶ live</span>

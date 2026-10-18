@@ -91,6 +91,9 @@ export const MAX_AUTO_FAILURES = 3;
 const SEEK_GRACE_MS = 5_000;
 const PRESET_LABEL: Record<string, string> = { sky: "Blue", flamingo: "Pink", mint: "Green", lemon: "Yellow", lavender: "Purple" };
 
+/** ⏮ restarts the current song if it's further in than this; otherwise goes to the previous one. */
+const RESTART_THRESHOLD_MS = 5_000;
+
 export class SessionStore {
   readonly sessionId: string;
   readonly sessionName: string;
@@ -124,8 +127,9 @@ export class SessionStore {
   private listeners = new Set<() => void>();
   private energyHistory: { at: number; score: number }[] = [];
   private playbackMode: PlaybackMode = "dj";
+  private repeat = false;
   private appearance: Appearance = DEFAULT_APPEARANCE;
-  private playback: Omit<PlaybackState, "mode" | "playerOnline"> = {
+  private playback: Omit<PlaybackState, "mode" | "repeat" | "playerOnline"> = {
     status: "idle",
     trackId: null,
     round: 0,
@@ -134,8 +138,12 @@ export class SessionStore {
     source: null,
     message: null,
     seekSeq: 0,
+    playerId: null,
+    pausedPositionMs: null,
   };
   private playerLastSeen = 0;
+  /** Songs played before the current one (newest last), for ⏮ Previous. Rebuilt on replay. */
+  private playHistory: string[] = [];
   /** Host-ordered queue (track ids). Plays before voted songs. Saved and replayed. */
   private hostQueue: string[] = [];
   /** Songs in a row the player couldn't play; auto mode stops skipping at MAX_AUTO_FAILURES. */
@@ -203,7 +211,7 @@ export class SessionStore {
         intensity: intensityForEnergy(this.energyScore),
       },
       visualMode: this.hostVisual ? "host" : "auto",
-      playback: { ...this.playback, mode: this.playbackMode, playerOnline: this.playerOnline() },
+      playback: { ...this.playback, mode: this.playbackMode, repeat: this.repeat, playerOnline: this.playerOnline() },
       appearance: { ...this.appearance },
       crowdQuest: {
         label: `Quest ${this.questLevel}: send ${this.questGoal()} hype taps`,
@@ -469,6 +477,58 @@ export class SessionStore {
     });
   }
 
+  /** Host action: pause the song (the player pauses; auto play waits). Not saved. */
+  pause(): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const pb = this.playback;
+      if (!this.nowPlaying || (pb.status !== "playing" && pb.status !== "loading")) return this.reject("Nothing is playing", 409);
+      const pos = pb.startedAt ? Math.max(0, this.now() - Date.parse(pb.startedAt)) : 0;
+      this.playback = { ...pb, status: "paused", pausedPositionMs: pos };
+      this.change({ type: "playback.paused", message: `Paused ${this.nowPlaying.title}` });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /** Host action: carry on from where the song was paused. */
+  resume(): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const pb = this.playback;
+      if (!this.nowPlaying || pb.status !== "paused") return this.reject("Nothing is paused", 409);
+      const pos = pb.pausedPositionMs ?? 0;
+      this.seekedAt = this.now();
+      this.playback = { ...pb, status: "playing", pausedPositionMs: null, startedAt: new Date(this.now() - pos).toISOString(), seekSeq: pb.seekSeq + 1 };
+      this.change({ type: "playback.resumed", message: `Playing ${this.nowPlaying.title} again` });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /**
+   * Host action ⏮: more than 5 s into the song → back to its start; otherwise the song before it
+   * (and ⏭ returns to the one we left). With no earlier song, restarts this one.
+   */
+  previous(): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const pb = this.playback;
+      if (!this.nowPlaying) return this.reject("Nothing is playing", 409);
+      const elapsed = pb.status === "paused" ? (pb.pausedPositionMs ?? 0) : pb.startedAt ? this.now() - Date.parse(pb.startedAt) : 0;
+      const prevId = [...this.playHistory].reverse().find((id) => id !== this.nowPlaying!.id && this.catalog.some((t) => t.id === id));
+      if (elapsed > RESTART_THRESHOLD_MS || !prevId) {
+        if (pb.status !== "playing" && pb.status !== "paused") return this.reject("Nothing to go back to", 409);
+        this.seekedAt = this.now();
+        this.playback = { ...pb, status: "playing", pausedPositionMs: null, startedAt: new Date(this.now()).toISOString(), seekSeq: pb.seekSeq + 1 };
+        this.change({ type: "playback.restart", message: `Restarted ${this.nowPlaying.title}` });
+        return { status: "accepted", state: this.getState() };
+      }
+      // Drop history entries after the one we go back to (they were skipped past).
+      while (this.playHistory.length && this.playHistory.at(-1) !== prevId) this.playHistory.pop();
+      const saved = await this.persistHostAction("track_advance", { trackId: prevId, previous: true });
+      if (saved) return saved;
+      const title = this.applyAdvance(prevId, this.now(), true);
+      this.change({ type: "track.playing", message: `Back to ${title}` });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
   /**
    * Host action: move the playing song to `positionMs`. The player follows (seekSeq). Not saved:
    * a restart picks the position up from the player's next progress report.
@@ -496,8 +556,19 @@ export class SessionStore {
     return this.exclusive(async () => {
       const saved = await this.persistHostAction("appearance", { ...appearance });
       if (saved) return saved;
-      this.appearance = { ...appearance };
+      this.appearance = { showEnergy: true, ...appearance };
       this.change({ type: "appearance", message: `New look: ${PRESET_LABEL[appearance.preset] ?? appearance.preset} · ${appearance.mode}` });
+      return { status: "accepted", state: this.getState() };
+    });
+  }
+
+  /** Host action 🔁: when a song finishes, play it again. Saved and replayed. */
+  setRepeat(repeat: boolean): Promise<EventOutcome> {
+    return this.exclusive(async () => {
+      const saved = await this.persistHostAction("playback_mode", { mode: this.playbackMode, repeat });
+      if (saved) return saved;
+      this.repeat = repeat;
+      this.change({ type: "playback.repeat", message: repeat ? "Repeat on — songs replay when they finish" : "Repeat off" });
       return { status: "accepted", state: this.getState() };
     });
   }
@@ -529,8 +600,14 @@ export class SessionStore {
     durationMs?: number;
     source?: string;
     message?: string;
+    playerId?: string;
   }): Promise<EventOutcome> {
     this.playerLastSeen = this.now();
+    // One speaker at a time: the tab that last started a song is the player. Reports from any
+    // other tab are ignored, and that tab sees playback.playerId change and stops itself.
+    if (input.playerId && this.playback.playerId && input.playerId !== this.playback.playerId && input.event !== "started") {
+      return this.reject("Another device is the player now", 409);
+    }
     const current = this.nowPlaying;
     const currentRound = current ? (this.plays.get(current.id) ?? 0) : 0;
     if (!current || current.id !== input.trackId || currentRound !== input.round) {
@@ -542,6 +619,15 @@ export class SessionStore {
       case "started":
       case "progress": {
         this.autoFailures = 0;
+        // Paused by the host: the player is just checking in; keep the paused position.
+        if (this.playback.status === "paused") {
+          this.syncPlayerOnline();
+          return { status: "accepted", state: this.getState() };
+        }
+        if (input.event === "started" && input.playerId && input.playerId !== this.playback.playerId) {
+          this.playback = { ...this.playback, playerId: input.playerId };
+          this.bump();
+        }
         const wasPlaying = this.playback.status === "playing";
         const drift = this.playback.startedAt ? Math.abs(Date.parse(this.playback.startedAt) - Date.parse(startedAt)) : Infinity;
         this.playback = {
@@ -563,7 +649,15 @@ export class SessionStore {
       }
       case "ended":
       case "error": {
-        if (this.playback.status === "ended") return { status: "duplicate", state: this.getState() };
+        if (this.playback.status === "ended" || (this.playback.status === "paused" && input.event === "ended")) {
+          return { status: "duplicate", state: this.getState() };
+        }
+        // 🔁 Repeat: the song finished — start it again from the top (same round, so votes stay put).
+        if (input.event === "ended" && this.repeat) {
+          this.playback = { ...this.playback, status: "loading", startedAt: null, pausedPositionMs: null, message: null };
+          this.change({ type: "playback.repeat", message: `Repeating ${current.title}` });
+          return { status: "accepted", state: this.getState() };
+        }
         const failed = input.event === "error";
         this.autoFailures = failed ? this.autoFailures + 1 : 0;
         const tooManyFailures = this.autoFailures >= MAX_AUTO_FAILURES;
@@ -779,7 +873,11 @@ export class SessionStore {
             APPEARANCE_PRESETS.includes(meta.preset as Appearance["preset"]) &&
             (meta.mode === "light" || meta.mode === "dark")
           ) {
-            this.appearance = { preset: meta.preset as Appearance["preset"], mode: meta.mode };
+            this.appearance = {
+              preset: meta.preset as Appearance["preset"],
+              mode: meta.mode,
+              showEnergy: typeof meta.showEnergy === "boolean" ? meta.showEnergy : this.appearance.showEnergy ?? true,
+            };
           }
           break;
         case "host_queue":
@@ -793,6 +891,7 @@ export class SessionStore {
           break;
         case "playback_mode":
           if (meta.mode === "auto" || meta.mode === "dj") this.playbackMode = meta.mode;
+          if (typeof meta.repeat === "boolean") this.repeat = meta.repeat;
           break;
         case "session_reset":
           this.clearRunState();
@@ -802,7 +901,7 @@ export class SessionStore {
           this.hostVisual = (meta.visual as VisualState | null) ?? null;
           break;
         case "track_advance":
-          if (typeof meta.trackId === "string") this.applyAdvance(meta.trackId, at);
+          if (typeof meta.trackId === "string") this.applyAdvance(meta.trackId, at, meta.previous === true);
           break;
         case "track_add": {
           const t = meta.track as CatalogTrack | undefined;
@@ -1020,12 +1119,23 @@ export class SessionStore {
   }
 
   /** Returns the new track's title. */
-  private applyAdvance(trackId: string, at: number): string {
+  /**
+   * `previous`: going back (⏮). The song we leave goes to the front of the host queue (so ⏭ comes
+   * back to it) and the history steps back, instead of growing.
+   */
+  private applyAdvance(trackId: string, at: number, previous = false): string {
     const track = this.catalog.find((t) => t.id === trackId);
     if (!track) return trackId;
-    if (this.nowPlaying) this.lastPlayedAt.set(this.nowPlaying.id, at);
+    const leaving = this.nowPlaying;
+    if (leaving) this.lastPlayedAt.set(leaving.id, at);
     this.nowPlaying = track;
     this.hostQueue = this.hostQueue.filter((id) => id !== track.id);
+    if (previous) {
+      if (this.playHistory.at(-1) === track.id) this.playHistory.pop();
+      if (leaving && leaving.id !== track.id) this.hostQueue = [leaving.id, ...this.hostQueue.filter((id) => id !== leaving.id)];
+    } else if (leaving && leaving.id !== track.id) {
+      this.playHistory = [...this.playHistory, leaving.id].slice(-50);
+    }
     this.votes.delete(track.id);
     this.boosts.delete(track.id);
     this.plays.set(track.id, (this.plays.get(track.id) ?? 0) + 1);
@@ -1039,6 +1149,8 @@ export class SessionStore {
       source: null,
       message: null,
       seekSeq: this.playback.seekSeq,
+      playerId: this.playback.playerId,
+      pausedPositionMs: null,
     };
     return track.title;
   }
@@ -1059,7 +1171,8 @@ export class SessionStore {
     this.questLevel = 1;
     this.questProgress = 0;
     this.hostVisual = null;
-    this.playback = { status: "idle", trackId: null, round: 0, startedAt: null, durationMs: null, source: null, message: null, seekSeq: this.playback.seekSeq };
+    this.playback = { status: "idle", trackId: null, round: 0, startedAt: null, durationMs: null, source: null, message: null, seekSeq: this.playback.seekSeq, playerId: this.playback.playerId, pausedPositionMs: null };
+    this.playHistory = [];
     this.hostQueue = [];
   }
 

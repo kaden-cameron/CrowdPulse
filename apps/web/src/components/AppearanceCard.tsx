@@ -12,15 +12,18 @@ export function AppearanceCard({
   appearance,
   disabled,
   onChange,
+  compact = false,
 }: {
   appearance: Appearance | undefined;
   disabled: boolean;
   onChange: (next: Appearance) => void;
+  /** Settings-panel version: a section instead of a window, smaller controls. */
+  compact?: boolean;
 }) {
   const current = appearance ?? { preset: "sky" as AppearancePreset, mode: "light" as AppearanceMode };
   return (
-    <div className="host-block appearance-card">
-      <h2>Appearance</h2>
+    <section className={compact ? "settings-section appearance-card compact" : "host-block appearance-card"}>
+      {compact ? <h3>Appearance</h3> : <h2>Appearance</h2>}
       <p className="host-sub">The big screen and every attendee&apos;s phone use this look.</p>
       <fieldset className="theme-field" disabled={disabled}>
         <legend>Color</legend>
@@ -60,7 +63,16 @@ export function AppearanceCard({
           ))}
         </div>
       </fieldset>
-      {disabled && <p className="host-sub">Sign in as host (above) to change it.</p>}
-    </div>
+      <label className="energy-toggle">
+        <input
+          type="checkbox"
+          disabled={disabled}
+          checked={current.showEnergy !== false}
+          onChange={(e) => onChange({ ...current, showEnergy: e.target.checked })}
+        />
+        Show crowd energy on the big screen and phones
+      </label>
+      {disabled && <p className="host-sub">Sign in as host to change it.</p>}
+    </section>
   );
 }
