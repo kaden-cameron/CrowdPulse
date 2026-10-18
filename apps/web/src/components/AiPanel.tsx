@@ -44,6 +44,14 @@ const STATUS_LABELS: Record<Recommendation["status"], string> = {
 
 const POLL_MS = 5000;
 
+const songKey = (song: FoundSong) => song.spotify?.spotifyUri ?? `missing:${song.title}|${song.artist}`;
+
+/** Gemini can name the same song twice (or two names can match one Spotify track); keep the first. */
+function uniqueSongs(songs: FoundSong[]): FoundSong[] {
+  const seen = new Set<string>();
+  return songs.filter((s) => !seen.has(songKey(s)) && !!seen.add(songKey(s)));
+}
+
 export function AiPanel({
   sessionId,
   getHeaders,
@@ -95,14 +103,16 @@ export function AiPanel({
   // Find needs something to go on: text, or an artist (picked or described), or a genre.
   const canFind = prompt.trim().length >= 2 || artists.length > 0 || artistText.trim().length > 0 || genres.length > 0;
   const [error, setError] = useState<string | null>(null);
+  // Kept apart from `error` so a successful background poll doesn't wipe an action's error.
+  const [pollError, setPollError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!ready) return;
     try {
       setSnapshot(await fetchRecommendations(sessionId, await getHeaders()));
-      setError(null);
+      setPollError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load recommendations");
+      setPollError(err instanceof Error ? err.message : "Could not load recommendations");
     }
   }, [sessionId, ready, getHeaders]);
 
@@ -138,13 +148,12 @@ export function AiPanel({
     setError(null);
     setFoundMsg(null);
     try {
-      setFound(
-        await hostFindSongs(
-          sessionId,
-          await getHeaders(),
-          surprise ? { surprise: true, ...filters } : { ...(prompt.trim() ? { text: prompt.trim() } : {}), count, ...filters },
-        ),
+      const res = await hostFindSongs(
+        sessionId,
+        await getHeaders(),
+        surprise ? { surprise: true, ...filters } : { ...(prompt.trim() ? { text: prompt.trim() } : {}), count, ...filters },
       );
+      setFound({ ...res, songs: uniqueSongs(res.songs) });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Request failed");
     } finally {
@@ -251,9 +260,9 @@ export function AiPanel({
         <p className="ai-status">Unavailable — set GEMINI_API_KEY on the server. Voting and stage controls still work.</p>
       )}
       {ai?.lastError && ai.configured && <p className="feedback feedback-rejected">{ai.lastError}</p>}
-      {error && (
+      {(error ?? pollError) && (
         <p className="feedback feedback-rejected" role="alert">
-          {error}
+          {error ?? pollError}
         </p>
       )}
 
@@ -452,7 +461,7 @@ export function AiPanel({
                       label="Songs Gemini found"
                       busy={busy !== null}
                       items={found.songs.map((song) => ({
-                        key: song.spotify?.spotifyUri ?? `missing:${song.title}|${song.artist}`,
+                        key: songKey(song),
                         title: song.spotify?.title ?? song.title,
                         artist: song.spotify?.artist ?? song.artist,
                         meta: song.streams != null ? `≈ ${fmtStreams(song.streams)} streams` : undefined,

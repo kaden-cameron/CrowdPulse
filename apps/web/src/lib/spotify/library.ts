@@ -66,8 +66,8 @@ async function call(path: string, token: string, api: typeof fetch) {
 }
 
 /**
- * All songs in a playlist (up to `cap`), skipping local files, podcasts and unavailable items.
- * Reads 50 per page — Spotify's maximum.
+ * All songs in a playlist (up to `cap`), skipping local files, podcasts, unavailable items and
+ * repeats of a song already listed. Reads 50 per page — Spotify's maximum.
  */
 export async function fetchPlaylistTracks(
   playlistId: string,
@@ -75,6 +75,7 @@ export async function fetchPlaylistTracks(
   { api = fetch, cap = MAX_TRACKS_PER_ADD }: { api?: typeof fetch; cap?: number } = {},
 ): Promise<{ tracks: FoundTrack[]; skipped: number; truncated: boolean }> {
   const tracks: FoundTrack[] = [];
+  const seen = new Set<string>();
   let skipped = 0;
   let offset = 0;
   for (;;) {
@@ -82,8 +83,11 @@ export async function fetchPlaylistTracks(
     const items: { item?: SpotifyTrack; track?: SpotifyTrack }[] = page.items ?? [];
     for (const it of items) {
       const t = toFound(it.item ?? it.track);
-      if (!t) skipped++;
-      else if (tracks.length < cap) tracks.push(t);
+      if (!t || seen.has(t.spotifyUri)) skipped++;
+      else if (tracks.length < cap) {
+        seen.add(t.spotifyUri);
+        tracks.push(t);
+      }
     }
     offset += items.length;
     const total: number = page.total ?? offset;

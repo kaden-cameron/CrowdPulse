@@ -34,7 +34,15 @@ const pick = (xs) => xs[Math.floor(Math.random() * xs.length)];
 const favourites = [...tracks].sort(() => Math.random() - 0.5).slice(0, 3);
 
 console.log(`DEMO DATA: simulating ${PEOPLE} attendees for ${SECONDS}s against ${BASE} (session "${SESSION}")`);
-const people = Array.from({ length: PEOPLE }, () => `sim_${randomUUID().replaceAll("-", "").slice(0, 12)}`);
+// The server hands out (signed) attendee ids; ask for simulated ones. An older server without
+// /api/participants accepts made-up "sim_" ids.
+const newId = async () => {
+  const res = await fetch(`${BASE}/api/participants`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ simulated: true }) });
+  if (res.status === 404) return `sim_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  if (!res.ok) throw new Error(`Couldn't get an attendee id (${res.status})`);
+  return (await res.json()).participantId;
+};
+const people = await Promise.all(Array.from({ length: PEOPLE }, newId));
 const tally = { moods: 0, votes: 0, taps: 0, rejected: 0 };
 const count = (status, key, n = 1) => (status === 200 ? (tally[key] += n) : tally.rejected++);
 

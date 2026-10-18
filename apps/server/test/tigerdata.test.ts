@@ -86,6 +86,29 @@ describe.skipIf(!url)("TigerData integration (Doc 03)", () => {
     expect(b.totalEvents).toBe(4); // 3 bucketed + 1 recent; energy samples excluded
   });
 
+  it("a restart skips run-only events from before the last reset, but keeps the library", async () => {
+    const id = `test-r-${randomUUID().slice(0, 8)}`;
+    try {
+      const live = new SessionStore(id, "Reset test", { persist: db.persist.bind(db) });
+      await live.submitVote({ trackId: "track_03", eventId: randomUUID(), participantId: "participant_r1" });
+      await live.addTrack({ id: "sp_4uLU6hMCjMI75M1A2tKUQC", title: "Kept", artist: "A", genre: "pop", bpm: 120, energy: 0.5, spotifyUri: "spotify:track:4uLU6hMCjMI75M1A2tKUQC" });
+      await live.reset();
+      await live.submitVote({ trackId: "track_04", eventId: randomUUID(), participantId: "participant_r1" });
+      const rows = await db.loadEvents(id);
+      expect(rows.some((r) => r.eventType === "vote" && (r.metadata as { trackId?: string }).trackId === "track_03")).toBe(false);
+      expect(rows.some((r) => r.eventType === "vote" && (r.metadata as { trackId?: string }).trackId === "track_04")).toBe(true);
+      const restored = new SessionStore(id, "Reset test");
+      restored.replay(rows);
+      expect(restored.getState().tracks.some((t) => t.title === "Kept")).toBe(true);
+      expect(restored.getState().tracks.filter((t) => t.votes).map((t) => t.id)).toEqual(live.getState().tracks.filter((t) => t.votes).map((t) => t.id));
+      // Times are strictly increasing, so replay order is the order things happened.
+      const times = rows.map((r) => r.time.getTime());
+      expect(new Set(times).size).toBe(times.length);
+    } finally {
+      await db.deleteSession(id);
+    }
+  });
+
   it("open votes by track match the live queue: votes for a track that played are excluded", async () => {
     const id = `test-q-${randomUUID().slice(0, 8)}`;
     try {
@@ -94,6 +117,7 @@ describe.skipIf(!url)("TigerData integration (Doc 03)", () => {
       await live.submitVote({ trackId: "track_02", eventId: randomUUID(), participantId: "participant_q2" });
       await live.submitVote({ trackId: "track_05", eventId: randomUUID(), participantId: "participant_q1" });
       await live.advance("track_02"); // clears track_02's votes live
+      await live.advance("track_07"); // track_02 finished; it can be voted for again
       await live.submitVote({ trackId: "track_02", eventId: randomUUID(), participantId: "participant_q3" }); // new round
       const m = await db.metrics(id);
       const fromSql = Object.fromEntries(m.votesByTrack.map((r) => [r.trackId, r.votes]));

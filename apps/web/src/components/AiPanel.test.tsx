@@ -74,6 +74,32 @@ describe("AiPanel", () => {
     expect(calls.every((c) => c.auth === "Bearer test-token")).toBe(true);
   });
 
+  it("keeps an action's error when the background poll succeeds", async () => {
+    // Capture the 5 s recommendations poll so the test can fire it.
+    let poll: (() => void) | undefined;
+    const spy = vi.spyOn(window, "setInterval").mockImplementation(((fn: () => void, ms?: number) => {
+      if (ms === 5000) poll = fn;
+      return 1;
+    }) as typeof window.setInterval);
+    let gets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) => {
+        if (init?.method === "POST") return Response.json({ error: "Approve failed" }, { status: 500 });
+        gets++;
+        return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendations: [rec()] });
+      }),
+    );
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    await userEvent.click(await screen.findByRole("button", { name: /Approve/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Approve failed");
+    const before = gets;
+    poll!();
+    await waitFor(() => expect(gets).toBe(before + 1));
+    expect(screen.getByRole("alert")).toHaveTextContent("Approve failed");
+    spy.mockRestore();
+  });
+
   it("shows validator errors and no approve button for an invalid proposal", async () => {
     mockFetch(rec({ status: "invalid", proposal: null, validationErrors: ['recommended_track_id "track_999" is not an eligible catalog track'] }));
     render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
@@ -208,6 +234,29 @@ describe("AiPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add selected (3)" }));
     expect(await screen.findByText(/Added 3 songs to the library/)).toBeInTheDocument();
     expect((calls.find((c) => c.url.endsWith("/library"))!.body as { tracks: unknown[] }).tracks).toHaveLength(3);
+  });
+
+  it("Find songs: drops duplicate Spotify matches", async () => {
+    const hit = { id: "id1", title: "Song 1", artist: "Band", album: "", spotifyUri: `spotify:track:${"A".repeat(22)}`, durationMs: 1, popularity: 50, imageUrl: null, coverUrl: null };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.endsWith("/find-songs")) {
+          return Response.json({
+            songs: ["Song 1", "Song One"].map((title) => ({ title, artist: "Band", why: "", confidence: 0.8, streams: null, spotify: hit })),
+            note: null,
+          });
+        }
+        return Response.json({ ai: { configured: true, model: "gemini-test", lastError: null, lastSuccessAt: null }, recommendations: [] });
+      }),
+    );
+    render(<AiPanel sessionId="demo" getHeaders={getHeaders} ready tracks={tracks} onState={() => {}} />);
+    await userEvent.type(screen.getByPlaceholderText(/pop-punk/), "some song");
+    const find = await screen.findByRole("button", { name: "🔎 Find songs" });
+    await waitFor(() => expect(find).toBeEnabled());
+    await userEvent.click(find);
+    expect(await screen.findAllByText("Song 1")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /Play Song 1 now/ })).toHaveLength(1);
   });
 
   it("artists: pick from suggestions (library + Spotify), include features, sent with the request", async () => {

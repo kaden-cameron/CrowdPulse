@@ -115,7 +115,11 @@ export class SpotifyPlayer implements PlayerAdapter {
       name: "CrowdPulse",
       volume: this.volume,
       getOAuthToken: (cb) => {
-        this.getToken().then(cb, (err: Error) => (this.lastError = err.message));
+        // Always answer, or the SDK waits forever: an empty token makes it report an auth error.
+        this.getToken().then(cb, (err: Error) => {
+          this.lastError = err.message;
+          cb("");
+        });
       },
     });
     this.player = player;
@@ -215,6 +219,14 @@ export class SpotifyPlayer implements PlayerAdapter {
     void this.player?.pause().catch(() => {});
   }
 
+  /** Leave Spotify Connect (unmount); unlock() connects again. */
+  dispose() {
+    this.current = null;
+    this.player?.disconnect();
+    this.player = null;
+    this.deviceId = null;
+  }
+
   async play(track: PlayableTrack, { startAtMs = 0 }: { startAtMs?: number } = {}): Promise<StartedInfo> {
     if (!this.player) throw new PlayerUnavailableError(this.lastError ?? "Spotify isn't connected — press Start audio");
     // The device may be reconnecting after an idle drop; wait a little rather than failing the song.
@@ -222,6 +234,8 @@ export class SpotifyPlayer implements PlayerAdapter {
     const uri = await this.resolveUri(track);
     this.current = { uri, title: track.title, confirmed: false, reached: Math.max(0, startAtMs), duration: 0, retried: false, held: false };
     const started = this.waitForState((s) => sameTrack(s.track_window.current_track, uri) && !s.paused);
+    // Awaited below only if the play call works; otherwise its timeout mustn't be an unhandled rejection.
+    started.catch(() => {});
     const res = await this.call(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
       method: "PUT",
       body: JSON.stringify({ uris: [uri], position_ms: Math.max(0, Math.round(startAtMs)) }),
@@ -288,7 +302,6 @@ export class SpotifyPlayer implements PlayerAdapter {
     });
   }
 
-  /** Exposed for tests: feeds a Web Playback SDK state change through the player. */
   /** Spotify stopped a song early and resuming didn't help (e.g. no audio on this device). */
   onProblem(cb: (message: string) => void) {
     this.problemCb = cb;

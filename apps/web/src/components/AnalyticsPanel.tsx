@@ -124,7 +124,7 @@ export function AnalyticsPanel({
 
       <h3 className="chart-title">Open votes by track · this run (SQL)</h3>
       {metrics.votesByTrack.length ? (
-        <VotesBars rows={metrics.votesByTrack.map((r) => ({ label: titles.get(r.trackId) ?? r.trackId, value: r.votes }))} />
+        <VotesBars rows={metrics.votesByTrack.map((r) => ({ id: r.trackId, label: titles.get(r.trackId) ?? r.trackId, value: r.votes }))} />
       ) : (
         <p className="host-sub">No open votes in this run.</p>
       )}
@@ -339,12 +339,13 @@ function EnergyChart({ buckets }: { buckets: (Bucket & { empty?: boolean })[] })
   );
 }
 
-function VotesBars({ rows }: { rows: { label: string; value: number }[] }) {
-  const max = Math.max(...rows.map((r) => r.value));
+function VotesBars({ rows }: { rows: { id: string; label: string; value: number }[] }) {
+  // At least 1, so all-zero rows draw empty bars instead of NaN widths.
+  const max = Math.max(1, ...rows.map((r) => r.value));
   return (
     <ul className="votes-bars">
       {rows.map((r) => (
-        <li key={r.label} title={`${r.label}: ${r.value} votes`}>
+        <li key={r.id} title={`${r.label}: ${r.value} votes`}>
           <span className="votes-label">{r.label}</span>
           <span className="votes-track">
             <span className="votes-fill" style={{ width: `${(r.value / max) * 100}%` }} />

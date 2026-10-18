@@ -79,6 +79,13 @@ export class HybridPlayer implements PlayerAdapter {
     this.spotify.onEnded(cb);
   }
   onProblem(cb: (message: string) => void) {
+    this.local.onProblem(cb);
     this.spotify.onProblem?.(cb);
+  }
+  dispose() {
+    this.local.dispose();
+    this.spotify.dispose?.();
+    this.spotifyOn = false;
+    this.active = null;
   }
 }

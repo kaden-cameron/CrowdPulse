@@ -156,6 +156,8 @@ export interface ParticipantState {
 
 /** Votes one attendee can have at once. Taking one back frees it. */
 export const MAX_VOTES_PER_PERSON = 3;
+/** Event rejection reason when the attendee id isn't one the server handed out: get a new one. */
+export const PARTICIPANT_REJOIN = "Please rejoin — tap again";
 
 /** Genre names as stored and sent: plain lowercase words. */
 export const GENRE_PATTERN = /^[a-z0-9 &'/+-]{1,30}$/;

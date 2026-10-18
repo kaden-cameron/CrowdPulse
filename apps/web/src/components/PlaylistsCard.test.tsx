@@ -66,4 +66,26 @@ describe("PlaylistsCard", () => {
     await waitFor(() => expect(calls.find((c) => c.method === "DELETE")?.url).toBe("/api/host/sessions/demo/playlists/pl_1"));
     confirm.mockRestore();
   });
+
+  it("keeps the typed name and rename text when the request fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string, init?: RequestInit) =>
+        (init?.method ?? "GET") === "GET" ? Response.json({ playlists: [pl] }) : Response.json({ error: "Name taken" }, { status: 409 }),
+      ),
+    );
+    render(<PlaylistsCard {...props} />);
+    await screen.findByText("Friday warm-up");
+    await userEvent.type(screen.getByPlaceholderText(/Name it/), "Late night");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Name taken")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/Name it/)).toHaveValue("Late night");
+    await userEvent.click(screen.getByLabelText("More for Friday warm-up"));
+    await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const box = screen.getByRole("textbox", { name: "New name for Friday warm-up" });
+    await userEvent.type(box, "!");
+    await userEvent.click(screen.getByRole("button", { name: "Save new name" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save new name" })).toBeEnabled());
+    expect(screen.getByRole("textbox", { name: "New name for Friday warm-up" })).toHaveValue("Friday warm-up!");
+  });
 });

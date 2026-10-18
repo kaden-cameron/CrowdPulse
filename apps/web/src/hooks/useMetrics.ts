@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { SessionMetrics } from "@crowdpulse/shared";
 
 const POLL_MS = 3000;
@@ -11,6 +11,9 @@ export function useMetrics(sessionId: string, ready: boolean, getHeaders: () => 
   const [metrics, setMetrics] = useState<SessionMetrics | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  // Read through a ref so each poll uses the latest headers, not the ones from the first render.
+  const headersRef = useRef(getHeaders);
+  headersRef.current = getHeaders;
 
   useEffect(() => {
     if (!ready) return;
@@ -19,7 +22,7 @@ export function useMetrics(sessionId: string, ready: boolean, getHeaders: () => 
 
     const poll = async () => {
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/metrics`, { headers: await getHeaders() });
+        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/metrics`, { headers: await headersRef.current() });
         const body = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(body.error ?? `Metrics request failed (${res.status})`);
         if (cancelled) return;
@@ -38,7 +41,6 @@ export function useMetrics(sessionId: string, ready: boolean, getHeaders: () => 
       cancelled = true;
       window.clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- getHeaders is read on each poll
   }, [sessionId, ready]);
 
   return { metrics, error, fetchedAt };

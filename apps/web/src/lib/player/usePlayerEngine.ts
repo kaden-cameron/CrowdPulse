@@ -2,12 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { SessionState } from "@crowdpulse/shared";
 import { fetchHighlight, reportPlayback, type PlaybackReport } from "../host";
 import { spotifyAccessToken, spotifyConnected } from "../spotify/auth";
-import { decide, type Playing } from "./follow";
+import { decide, playableTrack, type Playing } from "./follow";
 import { clipWindow } from "@crowdpulse/shared";
 import { HybridPlayer } from "./hybridPlayer";
 import { LocalPlayer } from "./localPlayer";
 import { SpotifyPlayer } from "./spotifyPlayer";
-import type { PlayerUnavailableError, StartedInfo } from "./types";
+import { PlaybackCancelledError, type PlayerUnavailableError, type StartedInfo } from "./types";
 
 // Makes this browser tab the session's speaker output: it plays whatever the server says is now
 // playing (host pick, Gemini approval, or auto mode) and reports started / progress / ended.
@@ -43,6 +43,13 @@ export function usePlayerEngine({
   const [, tick] = useState(0); // re-render for the progress bar
   const [followSeq, setFollowSeq] = useState(0); // re-run the follower after a play finishes
   const playing = useRef<Playing>(null);
+  // The song + round this tab last finished: not restarted while the server catches up.
+  const ended = useRef<Playing>(null);
+  // Bumped when this tab stops (Stop audio here, another speaker took over, unmount): a song still
+  // loading then gives up quietly instead of starting sound and telling the server "started".
+  const loadGen = useRef(0);
+  const stateRef = useRef(state);
+  stateRef.current = state;
   // Highlights mode: the part of the current song to play (ms), and whether to fade at the ends.
   const clip = useRef<{ start: number; end: number; fade: boolean; trackId: string } | null>(null);
   // Fade level (0–1) multiplied into the host's volume, for clip fade out / in.
@@ -71,6 +78,7 @@ export function usePlayerEngine({
     player.onProblem?.((message) => {
       const p = playing.current;
       playing.current = null;
+      ended.current = p;
       setInfo(null);
       setError(message);
       if (p) void sendRef.current({ event: "error", trackId: p.trackId, round: p.round, message });
@@ -82,6 +90,7 @@ export function usePlayerEngine({
     player.onEnded(() => {
       const p = playing.current;
       playing.current = null;
+      ended.current = p;
       setInfo(null);
       if (p) void sendRef.current({ event: "ended", trackId: p.trackId, round: p.round });
     });
@@ -90,7 +99,7 @@ export function usePlayerEngine({
   // Follow the server: start, stop or re-announce whenever state changes.
   useEffect(() => {
     if (!unlocked || !ready || busy.current) return;
-    const action = decide(state, playing.current);
+    const action = decide(state, playing.current, Date.now(), ended.current);
     if (action.type === "none") return;
     if (action.type === "stop") {
       player.stop();
@@ -103,17 +112,18 @@ export function usePlayerEngine({
       void send({ event: "started", trackId: p.trackId, round: p.round, positionMs: player.positionMs(), durationMs: info?.durationMs, source: info?.source });
       return;
     }
-    const np = state!.nowPlaying;
-    // Normally from the library; a song cleared from the library while playing is still known from
-    // nowPlaying (e.g. Repeat brings it back).
-    const track =
-      state!.tracks.find((t) => t.id === action.trackId) ??
-      (np && np.trackId === action.trackId
-        ? { id: np.trackId, title: np.title, artist: np.artist, genre: "", bpm: 0, energy: 0, spotifyUri: np.spotifyUri, imageUrl: np.imageUrl }
-        : undefined);
+    const track = playableTrack(state!, action.trackId);
     if (!track) return;
     busy.current = true;
+    const gen = ++loadGen.current;
+    // After each wait: if this tab stopped meanwhile, silence whatever started and give up quietly.
+    const live = () => {
+      if (gen === loadGen.current) return;
+      player.stop();
+      throw new PlaybackCancelledError();
+    };
     playing.current = { trackId: action.trackId, round: action.round };
+    ended.current = null;
     held.current = false;
     seekSeen.current = state!.playback.seekSeq; // startAtMs already includes any earlier seek
     const hl = state!.playback.highlights;
@@ -129,14 +139,24 @@ export function usePlayerEngine({
         hl.enabled && action.startAtMs === 0
           ? await fetchHighlight(sessionCode, await getHeaders(), track.id, hl.part).catch(() => ({ startMs: null, endMs: null, source: "default" as const }))
           : null;
+      live();
       // Fade-in clips start silent; everything else at full volume (even right after a fade-out).
       fadeTo(hl.enabled && hl.transition === "fade" ? 0 : 1, 0);
       const started = await player.play(track, { startAtMs: highlight?.startMs ?? action.startAtMs });
+      live();
       let win = resumeClip;
       if (highlight) {
         win = clipWindow(highlight, started.durationMs, hl.clipSec);
         // Unknown start or one that had to move (past the end): jump to where the clip really starts.
         if (win.start !== (highlight.startMs ?? -1)) await player.seek(win.start).catch(() => {});
+        live();
+      }
+      // The host pressed ⏸ while it was loading: end up paused (the hold effect waits for loads).
+      const pb = stateRef.current?.playback;
+      if (pb && pb.status === "paused" && pb.trackId === action.trackId && pb.round === action.round) {
+        held.current = true;
+        await player.hold().catch((err: Error) => setError(`Couldn't pause: ${err.message}`));
+        live();
       }
       clip.current = win ? { ...win, fade: hl.transition === "fade", trackId: track.id } : null;
       if (hl.enabled && hl.transition === "fade") fadeTo(1, FADE_IN_MS);
@@ -151,12 +171,16 @@ export function usePlayerEngine({
         source: started.source,
         ...(win ? { clipStartMs: win.start, clipEndMs: win.end } : {}),
       });
+      live();
       // Warm up the next song's highlight so the switch is quick.
       const next = state!.queue[0]?.trackId;
       if (hl.enabled && next) void fetchHighlight(sessionCode, await getHeaders(), next, hl.part).catch(() => {});
     })()
       .catch(async (err: Error) => {
+        // Stopped or replaced while loading: nobody's fault, nothing to report.
+        if (gen !== loadGen.current) return;
         playing.current = null;
+        if ((err as Partial<PlaybackCancelledError>).cancelled) return;
         if ((err as Partial<PlayerUnavailableError>).playerUnavailable) {
           // Not this song's fault (Spotify disconnected, no Premium…): stop this device and ask the
           // host to start again, instead of telling the server the song failed (auto mode would skip).
@@ -182,6 +206,7 @@ export function usePlayerEngine({
     const changed = owner !== knownOwner.current;
     knownOwner.current = owner;
     if (!unlocked || !changed || !owner || owner === playerId.current) return;
+    loadGen.current++;
     player.stop();
     playing.current = null;
     setInfo(null);
@@ -193,15 +218,18 @@ export function usePlayerEngine({
   useEffect(() => {
     const pb = state?.playback;
     const p = playing.current;
-    if (!unlocked || !pb || !p || pb.trackId !== p.trackId || pb.round !== p.round) return;
+    // While loading, the load itself checks for ⏸ at the end (holding now would hit the old song).
+    if (!unlocked || !pb || !p || busy.current || pb.trackId !== p.trackId || pb.round !== p.round) return;
     if (pb.status === "paused" && !held.current) {
       held.current = true;
       player.hold().catch((err: Error) => setError(`Couldn't pause: ${err.message}`));
     } else if (pb.status === "playing" && held.current) {
       held.current = false;
+      fadeTo(1, 0); // a clip fade-out cut short by ⏸ starts over
       player.unhold().catch((err: Error) => setError(`Couldn't resume: ${err.message}`));
     }
-  }, [state, unlocked, player]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, unlocked, player, followSeq]);
 
   // The host moved the song position: jump to where the server now says the song is.
   useEffect(() => {
@@ -214,6 +242,7 @@ export function usePlayerEngine({
     // Highlights mode: the clip moves with the host (same length, starting where they moved to).
     const c = clip.current;
     if (c && c.trackId === p.trackId) clip.current = { ...c, start: target, end: target + (c.end - c.start) };
+    fadeTo(1, 0); // a clip fade-out in progress starts over from the new position
     player.seek(target).catch((err: Error) => setError(`Couldn't move in the song: ${err.message}`));
   }, [state, unlocked, player]);
 
@@ -249,7 +278,12 @@ export function usePlayerEngine({
     setUnlocked(false);
     playing.current = null;
     setInfo(null);
-    return () => player.stop();
+    return () => {
+      loadGen.current++;
+      window.clearInterval(fadeTimer.current);
+      player.stop();
+      player.dispose();
+    };
   }, [player]);
 
   useEffect(() => player.setVolume(volume * fadeLevel.current), [player, volume, unlocked]);
@@ -288,6 +322,7 @@ export function usePlayerEngine({
         clip.current = null;
         player.stop();
         playing.current = null;
+        ended.current = p;
         setInfo(null);
         void sendRef.current({ event: "ended", trackId: p.trackId, round: p.round });
         if (!c.fade) fadeTo(1, 0);
@@ -299,6 +334,7 @@ export function usePlayerEngine({
   const start = async () => {
     // Taking over from whoever is the player now isn't a "change" to react to.
     knownOwner.current = state?.playback.playerId ?? null;
+    ended.current = null;
     try {
       await player.unlock();
       player.setVolume(volume);
@@ -311,6 +347,7 @@ export function usePlayerEngine({
 
   /** Silence this tab (another device can take over as the player). */
   const stopHere = () => {
+    loadGen.current++;
     player.stop();
     playing.current = null;
     setInfo(null);

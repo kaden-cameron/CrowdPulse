@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { SessionState } from "@crowdpulse/shared";
-import { decide } from "./follow";
+import { decide, playableTrack } from "./follow";
 
 const NOW = Date.parse("2026-10-17T20:00:00Z");
 const base = (over: Partial<SessionState["playback"]> = {}, nowPlaying: string | null = "track_03", round = 1): SessionState =>
@@ -55,5 +55,36 @@ describe("decide while paused", () => {
     } as never;
     expect(decide(s, null)).toEqual({ type: "none" });
     expect(decide(s, { trackId: "t1", round: 1 })).toEqual({ type: "none" });
+  });
+});
+
+describe("after a song ends here", () => {
+  const playingFor = (ms: number) => base({ status: "playing", startedAt: new Date(NOW - ms).toISOString() });
+
+  it("doesn't restart it while the server still says it's playing (it hasn't processed 'ended' yet)", () => {
+    expect(decide(playingFor(200_000), null, NOW, { trackId: "track_03", round: 1 })).toEqual({ type: "none" });
+  });
+
+  it("plays it again when Repeat reloads it (same round, status loading)", () => {
+    expect(decide(base({ status: "loading" }), null, NOW, { trackId: "track_03", round: 1 })).toEqual({ type: "play", trackId: "track_03", round: 1, startAtMs: 0 });
+  });
+
+  it("still plays the same song in a new round", () => {
+    expect(decide(base({ status: "loading" }, "track_03", 2), null, NOW, { trackId: "track_03", round: 1 })).toMatchObject({ type: "play", round: 2 });
+  });
+});
+
+describe("playableTrack", () => {
+  const LOCAL = "lf_0123456789abcdef";
+  const s = (tracks: object[]) =>
+    ({ nowPlaying: { trackId: LOCAL, title: "Mine", artist: "Me", votes: 0, boosts: 0 }, tracks, playback: {} }) as unknown as SessionState;
+
+  it("treats a local-file id as local even when it's gone from the library (rebuilt from nowPlaying)", () => {
+    expect(playableTrack(s([]), LOCAL)).toMatchObject({ id: LOCAL, title: "Mine", source: "local" });
+  });
+
+  it("keeps the library's own source, and Spotify songs stay Spotify", () => {
+    expect(playableTrack(s([{ id: LOCAL, title: "Mine", artist: "Me", source: "local" }]), LOCAL)?.source).toBe("local");
+    expect(playableTrack(s([{ id: "track_03", title: "x", artist: "y" }]), "track_03")?.source).toBeUndefined();
   });
 });

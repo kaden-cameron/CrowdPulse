@@ -125,6 +125,17 @@ describe("LibraryCard", () => {
     expect(calls.find((c) => c.url.endsWith("/queue"))?.method).toBe("PUT");
   });
 
+  it("✕ Remove is disabled while the library has only 2 songs", async () => {
+    mockNet();
+    const { rerender } = render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
+    const remove = screen.getByRole("button", { name: "Remove Midnight from the library" });
+    expect(remove).toBeDisabled();
+    expect(remove).toHaveAttribute("title", "The library needs at least 2 songs");
+    const three = { ...state, tracks: [...state.tracks, { ...state.tracks[1], id: "track_03", title: "Third" }] } as SessionState;
+    rerender(<LibraryCard sessionCode="demo" state={three} ready getHeaders={async () => ({})} onState={() => {}} />);
+    expect(screen.getByRole("button", { name: "Remove Midnight from the library" })).toBeEnabled();
+  });
+
   it("▶ on a library song plays it now", async () => {
     const calls = mockNet();
     const onState = vi.fn();

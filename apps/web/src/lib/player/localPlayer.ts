@@ -1,5 +1,5 @@
 import { localFile } from "../local/files";
-import { PlayerUnavailableError, type PlayableTrack, type PlayerAdapter, type StartedInfo } from "./types";
+import { PlaybackCancelledError, PlayerUnavailableError, type PlayableTrack, type PlayerAdapter, type StartedInfo } from "./types";
 
 // Plays local files on this laptop (the audio never leaves it). Two audio elements take turns, so
 // a new song fades in while the old one fades out:  file → fader → master → limiter → speakers.
@@ -59,6 +59,9 @@ export class LocalPlayer implements PlayerAdapter {
   private active = 0;
   private token = 0;
   private endedCb: () => void = () => {};
+  private problemCb: (message: string) => void = () => {};
+  /** The song the active slot is playing (null once stopped), for problem reports. */
+  private current: string | null = null;
 
   async unlock() {
     if (!this.ctx) {
@@ -71,13 +74,26 @@ export class LocalPlayer implements PlayerAdapter {
       limiter.ratio.value = 12;
       this.master.connect(limiter).connect(ctx.destination);
       this.slots = [new Slot(ctx, this.master), new Slot(ctx, this.master)];
-      for (const s of this.slots) s.el.addEventListener("ended", () => s === this.slots[this.active] && this.endedCb());
+      for (const s of this.slots) {
+        s.el.addEventListener("ended", () => s === this.slots[this.active] && this.endedCb());
+        // The file broke mid-song (moved, unreadable): report it, or the party would just go quiet.
+        s.el.addEventListener("error", () => {
+          if (s !== this.slots[this.active] || this.current == null) return;
+          const title = this.current;
+          this.current = null;
+          this.problemCb(`“${title}” stopped playing: this browser couldn't read the file any more`);
+        });
+      }
     }
     if (this.ctx.state !== "running") await this.ctx.resume();
   }
 
   onEnded(cb: () => void) {
     this.endedCb = cb;
+  }
+
+  onProblem(cb: (message: string) => void) {
+    this.problemCb = cb;
   }
 
   setVolume(v: number) {
@@ -91,7 +107,8 @@ export class LocalPlayer implements PlayerAdapter {
   async play(track: PlayableTrack, { startAtMs = 0 }: { startAtMs?: number } = {}): Promise<StartedInfo> {
     if (!this.ctx) throw new PlayerUnavailableError("Audio is locked — press Start audio first");
     const file = localFile(track.id);
-    if (!file) throw new Error(`“${track.title}” isn't linked on this device — add its folder again in Songs`);
+    // Not the song's fault (e.g. the page was reloaded): stop the speaker until the folder is back.
+    if (!file) throw new PlayerUnavailableError(`“${track.title}” isn't linked on this device — re-link your music folder in Songs`);
     const token = ++this.token;
     const old = this.slots[this.active];
     if (!old.el.paused) {
@@ -101,15 +118,21 @@ export class LocalPlayer implements PlayerAdapter {
     const next = this.slots[1 - this.active];
     next.fader.gain.value = 0;
     const durationMs = await next.load(file, startAtMs);
-    if (token !== this.token) throw new Error("replaced");
+    if (token !== this.token) throw new PlaybackCancelledError();
     await next.el.play();
+    if (token !== this.token) {
+      next.el.pause();
+      throw new PlaybackCancelledError();
+    }
     next.fadeTo(1, 0.03);
     this.active = 1 - this.active;
+    this.current = track.title;
     return { durationMs, source: "file" };
   }
 
   stop() {
     const token = ++this.token;
+    this.current = null;
     for (const s of this.slots) {
       s.fadeTo(0, 0.2);
       // Unless something new started meanwhile.
@@ -128,5 +151,15 @@ export class LocalPlayer implements PlayerAdapter {
 
   async unhold() {
     await this.slots[this.active]?.el.play();
+  }
+
+  dispose() {
+    this.stop();
+    for (const s of this.slots) s.el.removeAttribute("src");
+    void this.ctx?.close().catch(() => {});
+    this.ctx = null;
+    this.master = null;
+    this.slots = [];
+    this.active = 0;
   }
 }

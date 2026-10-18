@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  PARTICIPANT_REJOIN,
   type ConnectionStatus,
   type Mood,
   type ParticipantState,
@@ -8,9 +9,10 @@ import {
 } from "@crowdpulse/shared";
 import {
   createEventId,
+  ensureParticipantId,
   fetchSessionState,
-  getParticipantId,
   isNewer,
+  resetParticipantId,
   SessionSocket,
 } from "../lib/ws";
 
@@ -27,7 +29,8 @@ function voteKey(state: SessionState | null, trackId: string): string {
 
 /** This device's own choices in the session (votes, join), from the server. */
 async function fetchMe(sessionId: string): Promise<ParticipantState> {
-  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(getParticipantId())}`);
+  const pid = await ensureParticipantId();
+  const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/participants/${encodeURIComponent(pid)}`);
   if (!res.ok) throw new Error("Failed to load your votes");
   return res.json() as Promise<ParticipantState>;
 }
@@ -89,6 +92,9 @@ export function useSessionSocket(
       },
       onEventResult: (result) => {
         if (cancelled) return;
+        // The server didn't hand out this attendee id (e.g. one made before ids were signed): get a
+        // new one; the next tap works.
+        if (result.status === "rejected" && result.reason === PARTICIPANT_REJOIN) void resetParticipantId();
         if (result.retryable) {
           // Not saved yet; the socket resends it. Keep the vote button pending.
           setError("Couldn't save to the database — retrying…");
@@ -179,14 +185,10 @@ export function useSessionSocket(
   }, [sessionId, role, applyState]);
 
   function setMood(mood: Mood, genre?: string | null) {
-    socketRef.current?.sendEvent({
-      type: "session.join",
-      sessionId,
-      eventId: createEventId(),
-      participantId: getParticipantId(),
-      mood,
-      ...(genre ? { genre } : {}),
-    });
+    const eventId = createEventId();
+    void ensureParticipantId().then((participantId) =>
+      socketRef.current?.sendEvent({ type: "session.join", sessionId, eventId, participantId, mood, ...(genre ? { genre } : {}) }),
+    );
     setMe((m) => ({ run: state?.run ?? m?.run ?? 0, joined: true, mood, genre: genre ?? null, votes: m?.votes ?? [] }));
   }
 
@@ -196,13 +198,9 @@ export function useSessionSocket(
     pendingVotes.current.set(eventId, key);
     setVotes((v) => ({ ...v, [key]: { feedback: "pending", at: Date.now() } }));
     pendingOps.current.set(eventId, { kind: "vote", trackId, key });
-    socketRef.current?.sendEvent({
-      type: "vote.submit",
-      sessionId,
-      trackId,
-      eventId,
-      participantId: getParticipantId(),
-    });
+    void ensureParticipantId().then((participantId) =>
+      socketRef.current?.sendEvent({ type: "vote.submit", sessionId, trackId, eventId, participantId }),
+    );
   }
 
   /** Take back this device's vote for a song. */
@@ -211,13 +209,9 @@ export function useSessionSocket(
     const key = voteKey(state, trackId);
     pendingOps.current.set(eventId, { kind: "unvote", trackId, key });
     setVotes((v) => ({ ...v, [key]: { feedback: "pending", at: Date.now() } }));
-    socketRef.current?.sendEvent({
-      type: "vote.retract",
-      sessionId,
-      trackId,
-      eventId,
-      participantId: getParticipantId(),
-    });
+    void ensureParticipantId().then((participantId) =>
+      socketRef.current?.sendEvent({ type: "vote.retract", sessionId, trackId, eventId, participantId }),
+    );
   }
 
   // A song that starts playing uses its votes up (the server clears them), and removed songs go:

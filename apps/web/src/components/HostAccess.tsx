@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { Auth0Provider, useAuth0 } from "@auth0/auth0-react";
 import type { AuthConfig } from "@crowdpulse/shared";
@@ -19,6 +19,7 @@ export interface HostAccess {
   logout(): void;
   getHeaders(): Promise<HostHeaders>;
   devKey: string;
+  /** Commits a dev key (call on submit, not per keystroke, so `ready` flips once). */
   setDevKey(key: string): void;
 }
 
@@ -135,6 +136,38 @@ function DevKeyAccess({ children }: { children: ReactNode }) {
     [devKey],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
+}
+
+/**
+ * The dev-key form. The typed key stays local until "Sign in" (or Enter), so the host page doesn't
+ * unlock on the first keystroke and pollers don't start with a partial key.
+ */
+export function DevKeySignIn() {
+  const { devKey, setDevKey } = useHostAccess();
+  const [draft, setDraft] = useState(devKey);
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setDevKey(draft.trim());
+  };
+
+  return (
+    <form className="host-auth" onSubmit={submit}>
+      <label className="host-field">
+        <span className="metric-label">Dev host key (Auth0 not configured on this server)</span>
+        <input
+          type="password"
+          autoComplete="off"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Type the dev host key"
+        />
+      </label>
+      <button type="submit" className="btn primary" disabled={!draft.trim()}>
+        Sign in
+      </button>
+    </form>
+  );
 }
 
 /** Landing route for the Auth0 redirect; the provider exchanges the code and navigates back. */

@@ -42,10 +42,21 @@ describe("fetchPlaylistTracks", () => {
   });
 
   it("stops at the cap and says it was cut short", async () => {
-    const api = vi.fn(async () => Response.json({ items: Array.from({ length: 50 }, (_, i) => ({ item: t(i) })), next: "more", total: 300 })) as unknown as typeof fetch;
+    const api = vi.fn(async (url: string) => {
+      const offset = Number(new URL(url).searchParams.get("offset"));
+      return Response.json({ items: Array.from({ length: 50 }, (_, i) => ({ item: t(offset + i) })), next: "more", total: 300 });
+    }) as unknown as typeof fetch;
     const r = await fetchPlaylistTracks(PL, "tok", { api, cap: 60 });
     expect(r.tracks).toHaveLength(60);
     expect(r.truncated).toBe(true);
+  });
+
+  it("drops repeats of a song and counts them as skipped", async () => {
+    const api = vi.fn(async () => Response.json({ items: [{ item: t(1) }, { item: t(2) }, { item: t(1) }], next: null, total: 3 })) as unknown as typeof fetch;
+    const r = await fetchPlaylistTracks(PL, "tok", { api });
+    expect(r.tracks.map((x) => x.title)).toEqual(["Song 1", "Song 2"]);
+    expect(r.skipped).toBe(1);
+    expect(r.truncated).toBe(false);
   });
 
   it("explains Spotify's 'only your own playlists' rule on 403", async () => {

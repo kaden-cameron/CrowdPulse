@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { HostAccessProvider, useHostAccess } from "./HostAccess";
+import { DevKeySignIn, HostAccessProvider, useHostAccess } from "./HostAccess";
 
 const loginWithRedirect = vi.fn();
 vi.mock("@auth0/auth0-react", () => ({
@@ -41,7 +41,10 @@ const renderWith = (config: object) => {
   );
 };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  sessionStorage.clear();
+});
 
 describe("HostAccessProvider", () => {
   it("uses Auth0 when the server says so, and starts signed out", async () => {
@@ -57,5 +60,32 @@ describe("HostAccessProvider", () => {
     expect(await screen.findByText("mode:dev-key")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("key"), "k");
     expect(screen.getByText("ready:true")).toBeInTheDocument();
+  });
+
+  it("dev-key form only unlocks on Sign in / Enter, not per keystroke", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ mode: "dev-key" }), { status: 200 })));
+    function Keyed() {
+      const a = useHostAccess();
+      return (
+        <div>
+          <span>ready:{String(a.ready)}</span>
+          <span>key:{a.devKey}</span>
+          {a.mode === "dev-key" && <DevKeySignIn />}
+        </div>
+      );
+    }
+    render(
+      <MemoryRouter>
+        <HostAccessProvider>
+          <Keyed />
+        </HostAccessProvider>
+      </MemoryRouter>,
+    );
+    const input = await screen.findByLabelText(/Dev host key/);
+    await userEvent.type(input, "secret");
+    expect(screen.getByText("ready:false")).toBeInTheDocument();
+    await userEvent.type(input, "{Enter}");
+    expect(screen.getByText("ready:true")).toBeInTheDocument();
+    expect(screen.getByText("key:secret")).toBeInTheDocument();
   });
 });

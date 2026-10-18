@@ -1,12 +1,17 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { devices, expect, test, type Browser, type Page } from "@playwright/test";
+import { devices, expect, test, type APIRequestContext, type Browser, type Page } from "@playwright/test";
 import type { SessionState } from "@crowdpulse/shared";
 
 const HOST_KEY = "e2e-host-key";
 const evidence = (name: string) =>
   path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../../evidence/frontend", name);
+
+/** A signed attendee id from the server (made-up ids are refused). */
+async function newId(request: APIRequestContext, simulated = false): Promise<string> {
+  return (await (await request.post("/api/participants", { data: simulated ? { simulated: true } : {} })).json()).participantId;
+}
 
 async function openStage(browser: Browser): Promise<Page> {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 } });
@@ -66,7 +71,7 @@ test("FE-04 / E2E-12: a vote made offline is sent once on reconnect, and missed 
 
   // Someone else votes while this phone is away.
   await request.post("/api/sessions/demo/votes", {
-    data: { sessionId: "demo", trackId: "track_06", eventId: randomUUID(), participantId: "participant_other1" },
+    data: { sessionId: "demo", trackId: "track_06", eventId: randomUUID(), participantId: await newId(request) },
   });
 
   await phone.context().setOffline(false);
@@ -85,6 +90,7 @@ test("FE-08: the host changes the stage theme and the projector follows", async 
   await expect(host.getByRole("heading", { name: "Host sign in" })).toBeVisible();
   await expect(host.locator(".player-card")).toHaveCount(0);
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await host.getByLabel(/Dev host key/).press("Enter");
   await expect(host.locator(".player-card")).toBeVisible();
   await host.getByRole("button", { name: /^Settings/ }).click(); // ⚙︎ in the menu bar
   await host.getByRole("button", { name: "sunset" }).click();
@@ -107,7 +113,7 @@ test("Simulated crowd traffic is labelled as demo data on the stage", async ({ b
   const stage = await openStage(browser);
   await expect(stage.getByText(/Demo data/)).toHaveCount(0);
   await request.post("/api/sessions/demo/votes", {
-    data: { sessionId: "demo", trackId: "track_01", eventId: randomUUID(), participantId: "sim_e2e00001" },
+    data: { sessionId: "demo", trackId: "track_01", eventId: randomUUID(), participantId: await newId(request, true) },
   });
   await expect(stage.getByText("Demo data · 1 simulated attendees")).toBeVisible();
 });
@@ -122,7 +128,7 @@ test("Vote buttons come back after a track plays, and a new run starts fresh on 
   // Host plays Stage Lightning, then another track: Stage Lightning is votable again.
   expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
   await request.post("/api/sessions/demo/votes", {
-    data: { sessionId: "demo", trackId: "track_01", eventId: randomUUID(), participantId: "participant_other2" },
+    data: { sessionId: "demo", trackId: "track_01", eventId: randomUUID(), participantId: await newId(request) },
   });
   expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
   await expect(phone.getByRole("button", { name: "Vote: Stage Lightning" })).toBeEnabled();
@@ -177,12 +183,13 @@ test("Music: the player plays through Spotify only, and the host's queue + skip 
   const laptop = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
   await laptop.goto("/player/demo");
   await laptop.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await laptop.getByLabel(/Dev host key/).press("Enter");
   await expect(laptop.getByRole("button", { name: /This laptop/ })).toHaveCount(0);
   await expect(laptop.locator(".player-start")).toBeDisabled();
 
   // The host's queue plays before votes; Skip works with or without a queue.
   await request.post("/api/sessions/demo/votes", {
-    data: { sessionId: "demo", trackId: "track_05", eventId: randomUUID(), participantId: "participant_music1" },
+    data: { sessionId: "demo", trackId: "track_05", eventId: randomUUID(), participantId: await newId(request) },
   });
   expect((await request.put("/api/host/sessions/demo/queue", { headers: host, data: { trackIds: ["track_02"] } })).status()).toBe(200);
   expect((await request.post("/api/host/sessions/demo/advance", { headers: host })).status()).toBe(200);
@@ -219,6 +226,7 @@ test("Spotify explains what's missing instead of failing silently", async ({ bro
   const page = await (await browser.newContext()).newPage();
   await page.goto("/player/demo");
   await page.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await page.getByLabel(/Dev host key/).press("Enter");
   // This test server has no SPOTIFY_CLIENT_ID.
   await expect(page.getByText(/Spotify isn't set up on this server/)).toBeVisible();
   await expect(page.locator(".player-start")).toBeDisabled();
@@ -240,6 +248,7 @@ test("The host picks the look; the big screen and attendee phones follow it live
   await expect(host.getByRole("heading", { name: "Host sign in" })).toBeVisible();
   await expect(host.locator(".player-card")).toHaveCount(0);
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await host.getByLabel(/Dev host key/).press("Enter");
   await expect(host.locator(".player-card")).toBeVisible();
   await host.getByRole("button", { name: /^Settings/ }).click(); // ⚙︎ in the menu bar
   const card = host.locator(".appearance-card");
@@ -304,6 +313,7 @@ test("Playlists: save the library under a name, clear it, load it back", async (
   host.on("dialog", (d) => void d.accept());
   await host.goto("/host/demo");
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await host.getByLabel(/Dev host key/).press("Enter");
   const card = host.locator(".playlists-card");
   await card.getByPlaceholder(/Name it/).fill(`Warm-up ${Date.now() % 10000}`);
   await card.getByRole("button", { name: "Save", exact: true }).click();
@@ -322,6 +332,7 @@ test("The host can reset the crowd mood (votes stay)", async ({ browser, request
   host.on("dialog", (d) => void d.accept());
   await host.goto("/host/demo");
   await host.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await host.getByLabel(/Dev host key/).press("Enter");
   const crowd = host.locator(".crowd-card");
   await expect(crowd.locator(".mood-bars li", { hasText: "wild" })).toContainText("1");
   await crowd.getByRole("button", { name: /Reset mood/ }).click();
@@ -335,8 +346,9 @@ test("The host can reset the crowd mood (votes stay)", async ({ browser, request
 
 test("The host switches the projector to the vote count", async ({ browser, request }) => {
   const host = { "x-host-key": HOST_KEY };
+  const ids: Record<string, string> = {};
   for (const [t, p] of [["track_05", "v1"], ["track_05", "v2"], ["track_02", "v3"]]) {
-    await request.post("/api/sessions/demo/votes", { data: { sessionId: "demo", trackId: t, eventId: randomUUID(), participantId: `participant_${p}xxxx` } });
+    await request.post("/api/sessions/demo/votes", { data: { sessionId: "demo", trackId: t, eventId: randomUUID(), participantId: ids[p] ??= await newId(request) } });
   }
   const stage = await openStage(browser);
   await expect(stage.locator(".stage-queue").getByRole("heading", { name: "Up next" })).toBeVisible();
@@ -392,6 +404,7 @@ test("Local files: songs from this laptop are added, play without Spotify, and c
   const page = await (await browser.newContext({ viewport: { width: 1280, height: 1100 } })).newPage();
   await page.goto("/host/demo");
   await page.getByLabel(/Dev host key/).fill(HOST_KEY);
+  await page.getByLabel(/Dev host key/).press("Enter");
   await expect(page.locator(".player-card")).toBeVisible();
   const stateNow = async () => (await (await request.get("/api/sessions/demo/state")).json()) as SessionState;
   let ids: string[] = [];

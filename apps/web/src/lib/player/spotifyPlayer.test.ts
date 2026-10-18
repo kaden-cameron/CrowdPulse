@@ -243,3 +243,26 @@ describe("SpotifyPlayer hold (host pressed ⏸)", () => {
     expect(ctx.resume).toHaveBeenCalled();
   });
 });
+
+describe("SpotifyPlayer token callback", () => {
+  it("answers the SDK even when the token can't be fetched, so it doesn't wait forever", async () => {
+    let getOAuthToken: ((cb: (t: string) => void) => void) | undefined;
+    const sdk = {
+      Player: class {
+        constructor(opts: { getOAuthToken: (cb: (t: string) => void) => void }) {
+          getOAuthToken = opts.getOAuthToken;
+        }
+        addListener() {}
+        async connect() {
+          return false;
+        }
+        disconnect() {}
+      },
+    } as unknown as SpotifySdk;
+    const player = new SpotifyPlayer({ getToken: async () => Promise.reject(new Error("Not connected to Spotify")), loadSdk: async () => sdk });
+    await expect(player.unlock()).rejects.toThrow();
+    const cb = vi.fn();
+    getOAuthToken!(cb);
+    await vi.waitFor(() => expect(cb).toHaveBeenCalledWith(""));
+  });
+});

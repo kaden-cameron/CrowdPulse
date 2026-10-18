@@ -63,13 +63,17 @@ async function http(method, p, body, headers = {}) {
   return { status: res.status, json, text };
 }
 const getState = async () => (await http("GET", `/api/sessions/${SESSION}/state`)).json;
-const participant = () => `participant_e2e_${randomUUID().slice(0, 8)}`;
-const vote = (trackId, overrides = {}) =>
+// Attendee ids come from the server (signed); older servers accept made-up ones.
+const participant = async () => {
+  const r = await http("POST", "/api/participants", {});
+  return r.status === 200 && r.json?.participantId ? r.json.participantId : `participant_e2e_${randomUUID().slice(0, 8)}`;
+};
+const vote = async (trackId, overrides = {}) =>
   http("POST", `/api/sessions/${SESSION}/votes`, {
     sessionId: SESSION,
     trackId,
     eventId: randomUUID(),
-    participantId: participant(),
+    participantId: (await participant()),
     ...overrides,
   });
 
@@ -150,7 +154,7 @@ await check("E2E-02/03", "Vote is accepted and a second client sees it without r
 
 await check("FAULT", "Duplicate eventId counts once; invalid event rejected", async () => {
   const trackId = freeTrack();
-  const body = { sessionId: SESSION, trackId, eventId: randomUUID(), participantId: participant() };
+  const body = { sessionId: SESSION, trackId, eventId: randomUUID(), participantId: (await participant()) };
   const first = await http("POST", `/api/sessions/${SESSION}/votes`, body);
   const before = (await getState()).tracks.find((t) => t.id === trackId).votes;
   const again = await http("POST", `/api/sessions/${SESSION}/votes`, body);
@@ -158,7 +162,7 @@ await check("FAULT", "Duplicate eventId counts once; invalid event rejected", as
   assert(first.json.status === "accepted" && again.json.status === "duplicate", `got ${first.json.status}/${again.json.status}`);
   assert(after === before, "duplicate changed the vote count");
   const bad = await vote("track_does_not_exist");
-  const noSession = await http("POST", `/api/sessions/${SESSION}/votes`, { trackId, eventId: randomUUID(), participantId: participant() });
+  const noSession = await http("POST", `/api/sessions/${SESSION}/votes`, { trackId, eventId: randomUUID(), participantId: (await participant()) });
   assert(bad.status === 400 && noSession.status === 400, `invalid events returned ${bad.status}/${noSession.status}`);
   evidence["backend/duplicate-rejected.txt"] =
     `eventId ${body.eventId}\nfirst: ${first.status} ${first.json.status}\nretry: ${again.status} ${again.json.status}\n` +
@@ -259,7 +263,7 @@ await check("HOST", "Host manual stage change reaches clients (FE-08)", async ()
 await check("E2E-10", "Solana devnet boost verified server-side", async () => {
   const cfg = (await http("GET", "/api/solana/config")).json;
   if (!cfg?.enabled) return { skip: "boosts disabled (BOOST_RECIPIENT not set)" };
-  const intent = (await http("POST", `/api/sessions/${SESSION}/boosts/intents`, { trackId: freeTrack(), participantId: participant() })).json;
+  const intent = (await http("POST", `/api/sessions/${SESSION}/boosts/intents`, { trackId: freeTrack(), participantId: (await participant()) })).json;
   const malformed = await http("POST", "/api/solana/boost/verify", { sessionId: SESSION, intentId: intent.intentId, signature: "not-a-signature" });
   assert(malformed.json.status === "rejected", "malformed signature was not rejected");
   if (!args["boost-signature"] || !args["boost-intent"]) {

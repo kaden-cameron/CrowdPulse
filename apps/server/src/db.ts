@@ -126,8 +126,12 @@ const MIGRATIONS: { name: string; sql: string; optional?: boolean }[] = [
 export class Database {
   private pool: pg.Pool;
   private healthy = false;
+  private connectionString: string;
+  /** Last event time written (ms): each new event gets a later one, so replay order = write order. */
+  private lastTime = 0;
 
   constructor(connectionString: string) {
+    this.connectionString = connectionString;
     this.pool = new pg.Pool({
       connectionString,
       max: 10,
@@ -170,6 +174,10 @@ export class Database {
    * event ID is reported as "duplicate" and never produces a second row.
    */
   async persist(rec: EventRecord): Promise<PersistResult> {
+    // Strictly increasing times: two events in the same millisecond (or after the clock steps
+    // back) would otherwise replay in random event-id order after a restart.
+    const time = rec.time ?? new Date(Math.max(Date.now(), this.lastTime + 1));
+    this.lastTime = Math.max(this.lastTime, time.getTime());
     const client = await this.connect();
     // A checked-out client isn't covered by the pool's "error" handler. Without this, a dropped
     // network (Wi-Fi change, sleep) mid-write throws an unhandled error and kills the server.
@@ -194,7 +202,7 @@ export class Database {
         `INSERT INTO crowd_events (time, event_id, session_id, participant_id, event_type, value, metadata)
          VALUES ($1, $2, $3, $4, $5, $6, $7)`,
         [
-          rec.time ?? new Date(),
+          time,
           rec.eventId,
           rec.sessionId,
           rec.participantId,
@@ -250,23 +258,50 @@ export class Database {
   }
 
   /** All replayable events for a session, oldest first (energy samples are metrics only). */
+  /**
+   * The events a restart replays, oldest first. Events that only matter for one run (votes, moods,
+   * taps, boosts, plays, the queue) are skipped before the last "Start new run" — a reset clears
+   * them anyway — so startup doesn't slow down forever as history grows. Library, playlists,
+   * settings and highlights are kept from all time. Runs on its own connection with a long timeout
+   * (the pool's 5 s limit is for live requests).
+   */
   async loadEvents(sessionId: string): Promise<Required<EventRecord>[]> {
+    const client = new pg.Client({ connectionString: this.connectionString, statement_timeout: 120_000, query_timeout: 125_000, connectionTimeoutMillis: 10_000 });
+    await client.connect();
+    try {
+      const { rows } = await client.query(
+        `SELECT time, event_id, session_id, participant_id, event_type, value, metadata
+         FROM crowd_events
+         WHERE session_id = $1
+           AND event_type NOT IN ('energy_sample', 'ai_recommendation', 'ai_decision')
+           AND NOT (
+             event_type IN ('vote', 'unvote', 'mood', 'tap', 'boost', 'track_advance', 'host_queue', 'host_visual')
+             AND time < COALESCE((SELECT max(time) FROM crowd_events WHERE session_id = $1 AND event_type = 'session_reset'), '-infinity')
+           )
+         ORDER BY time, event_id`,
+        [sessionId],
+      );
+      return rows.map((r) => ({
+        time: r.time,
+        eventId: r.event_id,
+        sessionId: r.session_id,
+        participantId: r.participant_id,
+        eventType: r.event_type,
+        value: r.value,
+        metadata: r.metadata,
+      }));
+    } finally {
+      await client.end().catch(() => {});
+    }
+  }
+
+  /** Every Solana signature ever used for a boost (a signature can't be used twice, across runs). */
+  async boostSignatures(sessionId: string): Promise<string[]> {
     const { rows } = await this.pool.query(
-      `SELECT time, event_id, session_id, participant_id, event_type, value, metadata
-       FROM crowd_events
-       WHERE session_id = $1 AND event_type NOT IN ('energy_sample', 'ai_recommendation', 'ai_decision')
-       ORDER BY time, event_id`,
+      `SELECT metadata->>'signature' AS sig FROM crowd_events WHERE session_id = $1 AND event_type = 'boost' AND metadata ? 'signature'`,
       [sessionId],
     );
-    return rows.map((r) => ({
-      time: r.time,
-      eventId: r.event_id,
-      sessionId: r.session_id,
-      participantId: r.participant_id,
-      eventType: r.event_type,
-      value: r.value,
-      metadata: r.metadata,
-    }));
+    return rows.map((r) => r.sig as string).filter(Boolean);
   }
 
   async metrics(sessionId: string, windowMinutes = 5): Promise<TigerMetrics> {
@@ -378,7 +413,7 @@ export class Database {
 
   /** Test helper: force-refresh the aggregate for a window (CALL cannot run in a transaction). */
   async refreshAggregate(from: Date, to: Date): Promise<void> {
-    await this.pool.query("CALL refresh_continuous_aggregate('crowd_metrics_5s', $1, $2)", [from, to]);
+    await this.pool.query("CALL refresh_continuous_aggregate('crowd_metrics_5s', $1::timestamptz, $2::timestamptz)", [from, to]);
   }
 
   async ping(): Promise<boolean> {

@@ -27,6 +27,8 @@ export interface SpotifySearchClient {
   search(query: string, limit?: number): Promise<SpotifySearchHit[]>;
   /** ~300px album cover for a track id (cached; null if Spotify has none). */
   cover(trackId: string): Promise<string | null>;
+  /** A track's real title / artist / cover (null = Spotify doesn't know this id). */
+  track?(trackId: string): Promise<{ title: string; artist: string; imageUrl: string | null } | null>;
 }
 
 type TokenCache = { accessToken: string; expiresAt: number };
@@ -84,6 +86,17 @@ export function createSpotifySearch(clientId?: string, clientSecret?: string): S
 
   return {
     configured: true,
+    async track(trackId: string) {
+      const res = await fetch(`${API}/tracks/${encodeURIComponent(trackId)}`, {
+        headers: { authorization: `Bearer ${await accessToken()}` },
+      });
+      if (res.status === 404 || res.status === 400) return null;
+      if (!res.ok) throw Object.assign(new Error(`Spotify track lookup failed (${res.status})`), { status: 502 });
+      const data = (await res.json().catch(() => ({}))) as SpotifyApiTrack & { name?: string; artists?: { name?: string }[] };
+      const artist = (data.artists ?? []).map((a) => a.name).filter(Boolean).join(", ");
+      if (!data.name || !artist) return null;
+      return { title: data.name.slice(0, 120), artist: artist.slice(0, 120), imageUrl: pickCover(data.album?.images) };
+    },
     async cover(trackId: string): Promise<string | null> {
       if (covers.has(trackId)) return covers.get(trackId)!;
       const res = await fetch(`${API}/tracks/${encodeURIComponent(trackId)}`, {

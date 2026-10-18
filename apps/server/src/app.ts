@@ -18,6 +18,7 @@ import {
   SPOTIFY_IMAGE_URL,
   PLAYBACK_MODES,
   MAX_TAPS_PER_BATCH,
+  PARTICIPANT_REJOIN,
   MOODS,
   THEME_ALLOWLIST,
   type EventResultMessage,
@@ -30,6 +31,7 @@ import {
 } from "@crowdpulse/shared";
 import { log } from "./log.js";
 import { RateLimiter } from "./rateLimit.js";
+import type { ParticipantIds } from "./participants.js";
 import { authErrorHandler, createDevKeyHostAuth, type HostAuth } from "./auth.js";
 import { clientIp, originPolicy, pickLanIp, securityHeaders } from "./http.js";
 import type { Database } from "./db.js";
@@ -131,10 +133,14 @@ export interface AppOptions {
   exposeLanIp?: boolean;
   /** Per-IP backstop per minute. High on purpose: a whole venue can share one Wi-Fi IP. */
   ipLimitPerMinute?: number;
+  /** Signed attendee ids. Omitted (tests): any well-formed id is accepted. */
+  participantIds?: ParticipantIds;
+  /** How many attendee ids one address may get per hour (a venue may share one address). */
+  participantsPerIpHour?: number;
   now?: () => number;
 }
 
-export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute = 6000 }: AppOptions) {
+export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute = 6000, participantIds }: AppOptions) {
   // Per-participant limits live in SessionStore. This per-IP limit is only an abuse backstop:
   // every attendee on venue Wi-Fi can share one public IP, so it must stay far above real use.
   const ipLimiter = new RateLimiter(ipLimitPerMinute, 60_000, now);
@@ -177,6 +183,7 @@ export function createEventHandler({ sessions, now = Date.now, ipLimitPerMinute 
     const session = sessions.get(event.sessionId);
     if (!session) return done("rejected", 404, "Unknown session");
     if (!ipLimiter.allow(ip)) return done("rejected", 429, "Rate limit exceeded");
+    if (participantIds && !participantIds.valid(event.participantId)) return done("rejected", 401, PARTICIPANT_REJOIN);
 
     const outcome = await (event.type === "vote.submit"
       ? session.submitVote(event)
@@ -199,6 +206,14 @@ export function createApp(options: AppOptions) {
   if (!options.hostAuth && !options.hostKey) throw new Error("createApp needs hostAuth or hostKey");
   const intentLimiter = new RateLimiter(10, 60_000, options.now);
   const trackAddLimiter = new RateLimiter(30, 60_000, options.now);
+  const participantLimiter = new RateLimiter(options.participantsPerIpHour ?? 600, 3_600_000, options.now);
+  const signedOrAbsent = (id: string | undefined) => !id || !options.participantIds || options.participantIds.valid(id);
+
+  // Per address too: participant ids are made up by the phone, so they alone can't limit anything.
+  // (Generous: a whole venue may share one Wi-Fi address.)
+  const trackAddIpLimiter = new RateLimiter(120, 60_000, options.now);
+  const searchLimiter = new RateLimiter(240, 60_000, options.now);
+  const searchCache = new Map<string, { at: number; tracks: unknown }>();
   const handleEvent = createEventHandler(options);
 
   const app = express();
@@ -240,12 +255,25 @@ export function createApp(options: AppOptions) {
       return;
     }
     const q = typeof req.query.q === "string" ? req.query.q : "";
-    if (q.trim().length < 2) {
-      res.status(400).json({ error: "Type at least 2 characters to search" });
+    if (q.trim().length < 2 || q.length > 200) {
+      res.status(400).json({ error: q.length > 200 ? "Search is too long" : "Type at least 2 characters to search" });
+      return;
+    }
+    // Unauthenticated: limit per address and cache, so a loop can't use up the server's Spotify quota.
+    const key = q.trim().toLowerCase();
+    const hit = searchCache.get(key);
+    if (hit && Date.now() - hit.at < 60_000) {
+      res.json({ tracks: hit.tracks });
+      return;
+    }
+    if (!searchLimiter.allow(clientIp(req))) {
+      res.status(429).json({ error: "Too many searches — try again in a minute" });
       return;
     }
     try {
       const tracks = await spotifySearch.search(q, 8);
+      searchCache.set(key, { at: Date.now(), tracks });
+      if (searchCache.size > 500) searchCache.delete(searchCache.keys().next().value!);
       res.json({ tracks });
     } catch (err) {
       const status = (err as { status?: number }).status ?? 502;
@@ -272,6 +300,21 @@ export function createApp(options: AppOptions) {
     } catch (err) {
       res.status(502).json({ error: err instanceof Error ? err.message : "Cover lookup failed" });
     }
+  });
+
+  // A new attendee id (signed by the server). The join page asks once and keeps it.
+  app.post("/api/participants", (req, res) => {
+    if (!options.participantIds) {
+      res.status(404).json({ error: "Attendee ids aren't issued here" });
+      return;
+    }
+    if (!participantLimiter.allow(clientIp(req))) {
+      res.status(429).json({ error: "Too many new attendees from this network — try again later" });
+      return;
+    }
+    // { simulated: true }: the demo crowd simulator ("sim_" ids, shown as demo data).
+    const simulated = (req.body as { simulated?: unknown } | undefined)?.simulated === true;
+    res.set("cache-control", "no-store").json({ participantId: options.participantIds.issue(simulated) });
   });
 
   // Add a Spotify track to the live session catalog so attendees can vote on it.
@@ -302,29 +345,54 @@ export function createApp(options: AppOptions) {
       return;
     }
     const ip = clientIp(req);
-    if (!trackAddLimiter.allow(parsed.data.participantId ?? ip)) {
+    if (!signedOrAbsent(parsed.data.participantId)) {
+      res.status(401).json({ error: PARTICIPANT_REJOIN });
+      return;
+    }
+    if (!trackAddIpLimiter.allow(ip) || (parsed.data.participantId && !trackAddLimiter.allow(parsed.data.participantId))) {
       res.status(429).json({ error: "Too many songs added — try again shortly" });
       return;
     }
     try {
-      const uri = toSpotifyUri(parsed.data.spotifyUri) ?? parsed.data.spotifyUri;
-      const spotifyId =
-        parsed.data.id ??
-        uri.match(/^spotify:track:([A-Za-z0-9]{22})$/)?.[1] ??
-        uri.replace(/[^A-Za-z0-9]/g, "").slice(0, 22);
+      // The id always comes from the Spotify link (never from the client), so a library id can't
+      // be pointed at a different song.
+      const uri = toSpotifyUri(parsed.data.spotifyUri);
+      const spotifyId = uri && spotifyTrackId(uri);
+      if (!uri || !spotifyId) {
+        res.status(400).json({ error: "Not a Spotify song link" });
+        return;
+      }
+      const known = session.catalogTracks().some((t) => t.id === `sp_${spotifyId}` || t.spotifyUri === uri);
+      if (known) {
+        res.status(201).json({ status: "accepted", state: session.getState() });
+        return;
+      }
+      // Full library: say so before spending a Spotify / Gemini call.
+      if (session.catalogTracks().length >= MAX_CATALOG_TRACKS) {
+        res.status(409).json({ error: `Song list is full (${MAX_CATALOG_TRACKS} max) — start a new session or remove songs` });
+        return;
+      }
+      // The song's real name from Spotify (when search is set up), not whatever the client sent.
+      let real: { title: string; artist: string; imageUrl: string | null } | null | undefined;
+      if (spotifySearch?.configured && spotifySearch.track) {
+        real = await spotifySearch.track(spotifyId).catch(() => undefined);
+        if (real === null) {
+          res.status(400).json({ error: "Spotify doesn't know that song" });
+          return;
+        }
+      }
       const fromSpotify = catalogTrackFromSpotify({
         id: spotifyId,
-        title: parsed.data.title,
-        artist: parsed.data.artist,
+        title: real?.title ?? parsed.data.title,
+        artist: real?.artist ?? parsed.data.artist,
         spotifyUri: uri,
         popularity: parsed.data.popularity,
-        imageUrl: parsed.data.imageUrl,
+        imageUrl: real?.imageUrl ?? parsed.data.imageUrl,
       });
       // New song from an attendee: Gemini estimates its genre (for the by-genre song list) and
-      // BPM/energy, like host imports. Songs already in the session skip the call.
-      const known = session.catalogTracks().some((t) => t.id === fromSpotify.id || t.spotifyUri === fromSpotify.spotifyUri);
+      // BPM/energy, like host imports.
       const estimate =
-        !known && !parsed.data.genre && trackEstimator
+        !parsed.data.genre && trackEstimator
           ? (await estimateSongs(trackEstimator, [{ title: fromSpotify.title, artist: fromSpotify.artist }])).meta[0]
           : null;
       const track = parseLiveTrack({
@@ -475,7 +543,8 @@ export function createApp(options: AppOptions) {
       clipStartMs: z.number().min(0).max(24 * 3_600_000).optional(),
       clipEndMs: z.number().min(0).max(24 * 3_600_000).optional(),
     })
-    .strict();
+    .strict()
+    .refine((r) => r.clipStartMs == null || r.clipEndMs == null || r.clipEndMs > r.clipStartMs, "clip ends before it starts");
 
   // --- Music library: songs the host imports from Spotify (playlist or search) ---
   const LibraryAddSchema = z
@@ -915,7 +984,8 @@ export function createApp(options: AppOptions) {
       startMs: z.number().int().min(0).max(3_600_000),
       endMs: z.number().int().min(0).max(3_600_000).optional(),
     })
-    .strict();
+    .strict()
+    .refine((h) => h.endMs == null || h.endMs > h.startMs, "the highlight ends before it starts");
   app.put("/api/host/sessions/:id/highlight/:trackId", ...requireHost, hostSession, async (req: express.Request<{ id: string; trackId: string }>, res: express.Response) => {
     const parsed = NudgeSchema.safeParse(req.body ?? {});
     if (!parsed.success) {
@@ -964,6 +1034,10 @@ export function createApp(options: AppOptions) {
     }
     if (!boosts) {
       res.status(503).json({ error: "Boosts are disabled on this server" });
+      return;
+    }
+    if (!signedOrAbsent(parsed.data.participantId)) {
+      res.status(401).json({ error: PARTICIPANT_REJOIN });
       return;
     }
     if (!intentLimiter.allow(parsed.data.participantId)) {

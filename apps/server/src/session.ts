@@ -35,6 +35,7 @@ import {
   type VisualTheme,
 } from "@crowdpulse/shared";
 import type { EventRecord, PersistResult } from "./db.js";
+import { RateLimiter } from "./rateLimit.js";
 import { log } from "./log.js";
 
 const RATE_WINDOW_MS = 10_000;
@@ -144,7 +145,7 @@ export class SessionStore {
   private activeEvents = 0;
   private exclusiveLock: Promise<void> | null = null;
   private idleWaiters: (() => void)[] = [];
-  private clientHits = new Map<string, number[]>();
+  private clientHits: RateLimiter;
   private activity: { at: number; weight: number }[] = [];
   private questLevel = 1;
   private questProgress = 0;
@@ -198,6 +199,7 @@ export class SessionStore {
     this.catalog = options.catalog ?? DEMO_TRACKS;
     this.persist = options.persist ?? memoryOnly;
     this.now = now;
+    this.clientHits = new RateLimiter(RATE_LIMIT, RATE_WINDOW_MS, now);
     this.updatedAt = now();
     this.latestEvent = {
       type: "session.ready",
@@ -577,7 +579,9 @@ export class SessionStore {
     return this.exclusive(async () => {
       const pb = this.playback;
       if (!this.nowPlaying) return this.reject("Nothing is playing", 409);
-      const elapsed = pb.status === "paused" ? (pb.pausedPositionMs ?? 0) : pb.startedAt ? this.now() - Date.parse(pb.startedAt) : 0;
+      // Finished / failed / still loading: ⏮ goes to the song before (there's nothing to restart).
+      const elapsed =
+        pb.status === "paused" ? (pb.pausedPositionMs ?? 0) : pb.status === "playing" && pb.startedAt ? this.now() - Date.parse(pb.startedAt) : 0;
       const prevId = [...this.playHistory].reverse().find((id) => id !== this.nowPlaying!.id && this.catalog.some((t) => t.id === id));
       if (elapsed > RESTART_THRESHOLD_MS || !prevId) {
         if (pb.status !== "playing" && pb.status !== "paused") return this.reject("Nothing to go back to", 409);
@@ -586,8 +590,6 @@ export class SessionStore {
         this.change({ type: "playback.restart", message: `Restarted ${this.nowPlaying.title}` });
         return { status: "accepted", state: this.getState() };
       }
-      // Drop history entries after the one we go back to (they were skipped past).
-      while (this.playHistory.length && this.playHistory.at(-1) !== prevId) this.playHistory.pop();
       const saved = await this.persistHostAction("track_advance", { trackId: prevId, previous: true });
       if (saved) return saved;
       const title = this.applyAdvance(prevId, this.now(), true);
@@ -745,9 +747,14 @@ export class SessionStore {
         if (t.spotifyUri) uris.add(t.spotifyUri);
         fresh.push({ ...t });
       }
+      // A later step failing after the library was already cleared still shows on every screen.
+      const partial = (saved: EventOutcome) => {
+        if (opts.replace) this.change({ type: "playlist.partial", message: `Loading “${pl.name}” stopped partway` });
+        return saved;
+      };
       if (fresh.length) {
         const saved = await this.persistHostAction("catalog_add", { tracks: fresh });
-        if (saved) return saved;
+        if (saved) return partial(saved);
         this.catalog = [...this.catalog, ...fresh];
       }
       if (opts.queue) {
@@ -756,7 +763,10 @@ export class SessionStore {
         const order = pl.tracks.map(libId).filter((x): x is string => !!x);
         const next = [...(opts.replace ? [] : this.hostQueue), ...order].slice(0, MAX_CATALOG_TRACKS);
         const saved = await this.persistHostAction("host_queue", { trackIds: next });
-        if (saved) return saved;
+        if (saved) {
+          if (fresh.length || opts.replace) this.change({ type: "playlist.partial", message: `Loaded “${pl.name}” but couldn't queue it` });
+          return saved;
+        }
         this.hostQueue = next;
       }
       this.change({
@@ -803,12 +813,15 @@ export class SessionStore {
   }
 
   /** Save a song's highlight (found from lyrics / Gemini, or nudged by the host). */
-  async saveHighlight(trackId: string, part: HighlightPart, highlight: Highlight): Promise<boolean> {
-    if (!this.catalog.some((t) => t.id === trackId)) return false;
-    const saved = await this.persistHostAction("highlight", { trackId, part, highlight });
-    if (saved) return false;
-    this.highlightCache.set(`${trackId}|${part}`, { ...highlight });
-    return true;
+  saveHighlight(trackId: string, part: HighlightPart, highlight: Highlight): Promise<boolean> {
+    // Under the lock, so a song removed meanwhile can't keep a highlight that replay wouldn't.
+    return this.exclusive(async () => {
+      if (!this.catalog.some((t) => t.id === trackId)) return false;
+      const saved = await this.persistHostAction("highlight", { trackId, part, highlight });
+      if (saved) return false;
+      this.highlightCache.set(`${trackId}|${part}`, { ...highlight });
+      return true;
+    });
   }
 
   /** Host action 🔁: when a song finishes, play it again. Saved and replayed. */
@@ -870,14 +883,15 @@ export class SessionStore {
       case "started":
       case "progress": {
         this.autoFailures = 0;
+        // The tab that started the song is the speaker — even if it finished loading while paused.
+        if (input.event === "started" && input.playerId && input.playerId !== this.playback.playerId) {
+          this.playback = { ...this.playback, playerId: input.playerId };
+          this.bump();
+        }
         // Paused by the host: the player is just checking in; keep the paused position.
         if (this.playback.status === "paused") {
           this.syncPlayerOnline();
           return { status: "accepted", state: this.getState() };
-        }
-        if (input.event === "started" && input.playerId && input.playerId !== this.playback.playerId) {
-          this.playback = { ...this.playback, playerId: input.playerId };
-          this.bump();
         }
         const wasPlaying = this.playback.status === "playing";
         const drift = this.playback.startedAt ? Math.abs(Date.parse(this.playback.startedAt) - Date.parse(startedAt)) : Infinity;
@@ -902,48 +916,51 @@ export class SessionStore {
         return { status: "accepted", state: this.getState() };
       }
       case "ended":
-      case "error": {
-        if (this.playback.status === "ended" || (this.playback.status === "paused" && input.event === "ended")) {
-          return { status: "duplicate", state: this.getState() };
-        }
-        // 🔁 Repeat: the song finished — start it again from the top (same round, so votes stay put).
-        if (input.event === "ended" && this.repeat) {
-          this.playback = { ...this.playback, status: "loading", startedAt: null, pausedPositionMs: null, message: null };
-          this.change({ type: "playback.repeat", message: `Repeating ${current.title}` });
-          return { status: "accepted", state: this.getState() };
-        }
-        const failed = input.event === "error";
-        this.autoFailures = failed ? this.autoFailures + 1 : 0;
-        const tooManyFailures = this.autoFailures >= MAX_AUTO_FAILURES;
-        if (this.playbackMode === "auto" && !tooManyFailures) {
-          const next = await this.advanceAuto();
-          if (next.status === "accepted") return next;
-        }
-        this.playback = {
-          ...this.playback,
-          status: failed ? "error" : "ended",
-          message: failed
-            ? (tooManyFailures && this.playbackMode === "auto"
-                ? `Auto play paused: ${this.autoFailures} songs in a row couldn't play. Last error: `
-                : "") + (input.message ?? "Playback failed").slice(0, 200)
-            : null,
-        };
-        this.change({
-          type: failed ? "playback.error" : "playback.ended",
-          message: failed ? `Couldn't play ${current.title}` : `${current.title} finished — host picks the next song`,
-        });
-        return { status: "accepted", state: this.getState() };
-      }
+      case "error":
+        // Under the host-action lock: a second report (an HTTP retry, "ended" + "error") or a host
+        // action that got in first must not move on twice.
+        return this.exclusive(() => this.endCurrent(input));
     }
   }
 
-  /** Auto mode: the top of the queue, or else the least-recently-played other track. */
-  private advanceAuto(): Promise<EventOutcome> {
-    return this.exclusive(() => {
+  private async endCurrent(input: { event: PlaybackReportEvent; trackId: string; round: number; message?: string }): Promise<EventOutcome> {
+    const current = this.nowPlaying;
+    if (!current || current.id !== input.trackId || (this.plays.get(current.id) ?? 0) !== input.round) {
+      return { status: "duplicate", state: this.getState() };
+    }
+    const st = this.playback.status;
+    if (st === "ended" || st === "error" || (st === "paused" && input.event === "ended") || (st === "loading" && input.event === "ended" && this.repeat)) {
+      return { status: "duplicate", state: this.getState() };
+    }
+    // 🔁 Repeat: the song finished — start it again from the top (same round, so votes stay put).
+    if (input.event === "ended" && this.repeat) {
+      this.playback = { ...this.playback, status: "loading", startedAt: null, pausedPositionMs: null, message: null };
+      this.change({ type: "playback.repeat", message: `Repeating ${current.title}` });
+      return { status: "accepted", state: this.getState() };
+    }
+    const failed = input.event === "error";
+    this.autoFailures = failed ? this.autoFailures + 1 : 0;
+    const tooManyFailures = this.autoFailures >= MAX_AUTO_FAILURES;
+    if (this.playbackMode === "auto" && !tooManyFailures) {
       const nextId = this.nextTrackId();
-      if (!nextId) return Promise.resolve(this.reject("Nothing to play", 409));
-      return this.advanceNow(nextId);
+      // (The queue may start with the song that just played: it plays again.)
+      const next = nextId ? await this.advanceNow(nextId, true) : null;
+      if (next?.status === "accepted") return next;
+    }
+    this.playback = {
+      ...this.playback,
+      status: failed ? "error" : "ended",
+      message: failed
+        ? (tooManyFailures && this.playbackMode === "auto"
+            ? `Auto play paused: ${this.autoFailures} songs in a row couldn't play. Last error: `
+            : "") + (input.message ?? "Playback failed").slice(0, 200)
+        : null,
+    };
+    this.change({
+      type: failed ? "playback.error" : "playback.ended",
+      message: failed ? `Couldn't play ${current.title}` : `${current.title} finished — host picks the next song`,
     });
+    return { status: "accepted", state: this.getState() };
   }
 
   /**
@@ -962,8 +979,8 @@ export class SessionStore {
     if (this.catalog.some((t) => t.spotifyUri && track.spotifyUri && t.spotifyUri === track.spotifyUri)) {
       return { status: "accepted", state: this.getState() };
     }
-    if (this.catalog.length >= 100) {
-      return this.reject("Song list is full (100 max) — start a new session or remove songs", 409);
+    if (this.catalog.length >= MAX_CATALOG_TRACKS) {
+      return this.reject(`Song list is full (${MAX_CATALOG_TRACKS} max) — start a new session or remove songs`, 409);
     }
     const saved = await this.persistHostAction("track_add", { track });
     if (saved) return saved;
@@ -977,11 +994,12 @@ export class SessionStore {
     return this.exclusive(() => this.advanceNow(trackId));
   }
 
-  private async advanceNow(trackId?: string): Promise<EventOutcome> {
+  /** `again`: the song may be the one playing (it was queued again) — it restarts as a new play. */
+  private async advanceNow(trackId?: string, again = false): Promise<EventOutcome> {
     let nextId: string;
     if (trackId) {
       if (!this.catalog.some((t) => t.id === trackId)) return this.reject("Unknown track ID", 400);
-      if (this.nowPlaying?.id === trackId) return this.reject("Track is already playing", 409);
+      if (this.nowPlaying?.id === trackId && !again) return this.reject("Track is already playing", 409);
       nextId = trackId;
     } else {
       // Skip: the host's queue, then the top-voted song, then the least recently played one.
@@ -1131,7 +1149,8 @@ export class SessionStore {
             this.appearance = {
               preset: meta.preset as Appearance["preset"],
               mode: meta.mode,
-              showEnergy: typeof meta.showEnergy === "boolean" ? meta.showEnergy : this.appearance.showEnergy ?? true,
+              // Same default as the live path: an appearance without showEnergy means "show it".
+              showEnergy: typeof meta.showEnergy === "boolean" ? meta.showEnergy : true,
             };
           }
           break;
@@ -1193,7 +1212,7 @@ export class SessionStore {
           break;
         case "track_add": {
           const t = meta.track as CatalogTrack | undefined;
-          if (t?.id && t.title && t.artist && !this.catalog.some((c) => c.id === t.id)) {
+          if (t?.id && t.title && t.artist && !this.catalog.some((c) => c.id === t.id) && this.catalog.length < MAX_CATALOG_TRACKS) {
             this.catalog = [...this.catalog, t];
           }
           break;
@@ -1440,6 +1459,8 @@ export class SessionStore {
     const at1 = this.hostQueue.indexOf(track.id);
     if (at1 >= 0) this.hostQueue = [...this.hostQueue.slice(0, at1), ...this.hostQueue.slice(at1 + 1)];
     if (previous) {
+      // Drop history entries after the one we go back to (they were skipped past), then that one.
+      while (this.playHistory.length && this.playHistory.at(-1) !== track.id) this.playHistory.pop();
       if (this.playHistory.at(-1) === track.id) this.playHistory.pop();
       if (leaving && leaving.id !== track.id) this.hostQueue = [leaving.id, ...this.hostQueue];
     } else if (leaving && leaving.id !== track.id) {
@@ -1539,17 +1560,7 @@ export class SessionStore {
   }
 
   private allowRequest(clientKey: string): boolean {
-    const now = this.now();
-    const hits = (this.clientHits.get(clientKey) ?? []).filter(
-      (t) => now - t < RATE_WINDOW_MS,
-    );
-    if (hits.length >= RATE_LIMIT) {
-      this.clientHits.set(clientKey, hits);
-      return false;
-    }
-    hits.push(now);
-    this.clientHits.set(clientKey, hits);
-    return true;
+    return this.clientHits.allow(clientKey);
   }
 
   // Tracks with votes or boosts, ordered by score (votes + capped boost bonus) desc,

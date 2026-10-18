@@ -162,15 +162,25 @@ export function useSpotifyConnected(): boolean {
   return connected;
 }
 
+// One refresh at a time: Spotify may rotate the refresh token, so a second parallel refresh could
+// use the old one and fail (or save tokens out of order).
+let refreshing: Promise<string> | null = null;
+
 /** A valid access token, refreshed a minute before it expires. */
 export async function spotifyAccessToken(): Promise<string> {
   const t = loadTokens();
   if (!t) throw new Error("Not connected to Spotify");
   if (Date.now() < t.expiresAt - 60_000) return t.accessToken;
   if (!t.refreshToken) throw new Error("Spotify session expired — connect again");
-  const fresh = await tokenRequest({ grant_type: "refresh_token", refresh_token: t.refreshToken, client_id: t.clientId });
-  saveTokens({ ...fresh, refreshToken: fresh.refreshToken ?? t.refreshToken, clientId: t.clientId, scope: fresh.scope ?? t.scope });
-  return fresh.accessToken;
+  const refreshToken = t.refreshToken;
+  refreshing ??= (async () => {
+    const fresh = await tokenRequest({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: t.clientId });
+    saveTokens({ ...fresh, refreshToken: fresh.refreshToken ?? refreshToken, clientId: t.clientId, scope: fresh.scope ?? t.scope });
+    return fresh.accessToken;
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
 }
 
 async function tokenRequest(body: Record<string, string>): Promise<Omit<Tokens, "clientId">> {

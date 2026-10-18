@@ -48,15 +48,18 @@ export function PlaylistsCard({
     void refresh();
   }, [refresh]);
 
-  async function act(label: string, fn: () => Promise<{ state: SessionState }>, done: string) {
+  /** Resolves true on success, so callers only clear their input when it worked. */
+  async function act(label: string, fn: () => Promise<{ state: SessionState }>, done: string): Promise<boolean> {
     setBusy(label);
     setMsg(null);
     try {
       onState((await fn()).state);
       setMsg({ kind: "accepted", text: done });
       await refresh();
+      return true;
     } catch (err) {
       setMsg({ kind: "rejected", text: (err as Error).message });
+      return false;
     } finally {
       setBusy(null);
     }
@@ -66,8 +69,8 @@ export function PlaylistsCard({
     e.preventDefault();
     const n = name.trim();
     if (!n) return;
-    void act("save", async () => hostSavePlaylist(sessionCode, await getHeaders(), { name: n }), `Saved “${n}” (${librarySize} songs).`).then(() =>
-      setName(""),
+    void act("save", async () => hostSavePlaylist(sessionCode, await getHeaders(), { name: n }), `Saved “${n}” (${librarySize} songs).`).then((ok) =>
+      ok && setName(""),
     );
   };
 
@@ -96,8 +99,8 @@ export function PlaylistsCard({
     e.preventDefault();
     const r = renaming;
     if (!r || !r.name.trim()) return;
-    void act(`rename:${r.id}`, async () => hostRenamePlaylist(sessionCode, await getHeaders(), r.id, r.name.trim()), `Renamed to “${r.name.trim()}”.`).then(() =>
-      setRenaming(null),
+    void act(`rename:${r.id}`, async () => hostRenamePlaylist(sessionCode, await getHeaders(), r.id, r.name.trim()), `Renamed to “${r.name.trim()}”.`).then((ok) =>
+      ok && setRenaming(null),
     );
   };
 

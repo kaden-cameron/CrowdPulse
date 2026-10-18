@@ -10,7 +10,7 @@ import { AiPanel } from "../components/AiPanel";
 import { AnalyticsPanel } from "../components/AnalyticsPanel";
 import { Dock } from "../components/Dock";
 import { MenuBar } from "../components/MenuBar";
-import { useHostAccess } from "../components/HostAccess";
+import { DevKeySignIn, useHostAccess } from "../components/HostAccess";
 import { useMetrics } from "../hooks/useMetrics";
 import { useSessionSocket } from "../hooks/useSessionSocket";
 import { useSessionAppearance } from "../lib/theme";
@@ -407,22 +407,7 @@ export function HostSignIn() {
     return <p className="feedback feedback-rejected">{access.error}</p>;
   }
 
-  if (access.mode === "dev-key") {
-    return (
-      <div className="host-auth">
-        <label className="host-field">
-          <span className="metric-label">Dev host key (Auth0 not configured on this server)</span>
-          <input
-            type="password"
-            autoComplete="off"
-            value={access.devKey}
-            onChange={(e) => access.setDevKey(e.target.value)}
-            placeholder="Type the dev host key"
-          />
-        </label>
-      </div>
-    );
-  }
+  if (access.mode === "dev-key") return <DevKeySignIn />;
 
   return (
     <div className="host-auth">

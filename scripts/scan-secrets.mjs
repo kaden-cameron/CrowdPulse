@@ -14,9 +14,10 @@ const PATTERNS = [
   ["Private key block", /-----BEGIN [A-Z ]*PRIVATE KEY-----\s*[A-Za-z0-9+/=\s]{64,}/],
   ["Solana keypair array", /\[\s*(?:\d{1,3}\s*,\s*){63}\d{1,3}\s*\]/],
   ["Auth0 client secret assignment", /AUTH0_CLIENT_SECRET\s*[=:]\s*["']?[A-Za-z0-9_-]{20,}/],
+  ["Spotify client secret assignment", /SPOTIFY_CLIENT_SECRET\s*[=:]\s*["']?[0-9a-f]{32}\b/],
   ["JWT literal", /eyJhbGciOi[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/],
   // Real values only — documented placeholders (change-me, <...>, values elided with …) are fine.
-  ["Env file value", /^(?:DATABASE_URL|GEMINI_API_KEY|HOST_DEV_KEY|AUTH0_CLIENT_SECRET)=(?!change-me\b|<)[^\s…]+$/m],
+  ["Env file value", /^(?:DATABASE_URL|GEMINI_API_KEY|HOST_DEV_KEY|AUTH0_CLIENT_SECRET|SPOTIFY_CLIENT_SECRET)=(?!change-me\b|<)[^\s…]+$/m],
 ];
 
 const files = [];
@@ -28,8 +29,10 @@ if (existsSync(dist)) {
       statSync(p).isDirectory() ? walk(p) : files.push(p);
     });
   walk(dist);
-} else {
-  console.warn("apps/web/dist not found — run `npm run build` first to scan the bundle.");
+} else if (!process.argv.includes("--repo-only")) {
+  // Not scanning the browser bundle would make a PASS misleading.
+  console.error("FAIL: apps/web/dist not found — run `npm run build` first (or pass --repo-only to scan just the repo).");
+  process.exit(1);
 }
 const tracked = execSync("git ls-files --cached --others --exclude-standard", { cwd: root })
   .toString()

@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import express from "express";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
@@ -9,6 +10,7 @@ import {
   DEMO_SESSION_NAME,
   type ServerToClientMessage,
 } from "@crowdpulse/shared";
+import { ParticipantIds } from "./participants.js";
 import { createApp, type Sessions } from "./app.js";
 import { clientIp } from "./http.js";
 import { createAuth0HostAuth, createDevKeyHostAuth } from "./auth.js";
@@ -33,6 +35,17 @@ const isProd = process.env.NODE_ENV === "production";
 // Host auth: Auth0 when configured (required in production); otherwise a local dev key.
 const auth0Domain =
   process.env.AUTH0_DOMAIN ?? process.env.AUTH0_ISSUER_BASE_URL?.replace(/^https?:\/\//, "").replace(/\/+$/, "");
+/**
+ * Without Auth0 (local development): HOST_DEV_KEY, or else a random key printed at startup. Never a
+ * fixed, publicly known default — any web page could otherwise call host actions on this server.
+ */
+function devHostKey(): string {
+  const set = process.env.HOST_DEV_KEY?.trim();
+  if (set) return set;
+  const key = randomBytes(9).toString("base64url");
+  console.log(`Dev host key (set HOST_DEV_KEY to choose your own): ${key}`);
+  return key;
+}
 const hostAuth =
   auth0Domain && process.env.AUTH0_AUDIENCE
     ? createAuth0HostAuth({
@@ -42,7 +55,7 @@ const hostAuth =
       })
     : isProd
       ? undefined
-      : createDevKeyHostAuth(process.env.HOST_DEV_KEY ?? "local-dev-host-key");
+      : createDevKeyHostAuth(devHostKey());
 if (!hostAuth) {
   console.error("Production requires Auth0: set AUTH0_DOMAIN, AUTH0_AUDIENCE and AUTH0_CLIENT_ID");
   process.exit(1);
@@ -66,9 +79,22 @@ if (isProd && !corsOrigins.length) {
 
 // With DATABASE_URL set, every accepted event is written to TigerData before it is applied.
 const db = process.env.DATABASE_URL ? new Database(process.env.DATABASE_URL) : undefined;
+/** Retries a startup step a few times (the database may be briefly unreachable at boot). */
+async function withRetries<T>(what: string, fn: () => Promise<T>, attempts = 5): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (i >= attempts) throw err;
+      log({ kind: "startup.retry", what, attempt: i, message: (err as Error).message });
+      await new Promise((r) => setTimeout(r, 2_000 * 2 ** (i - 1)));
+    }
+  }
+}
+
 if (db) {
   try {
-    await db.migrate();
+    await withRetries("db.migrate", () => db.migrate());
   } catch (err) {
     console.error(`TigerData setup failed: ${(err as Error).message}`);
     process.exit(1);
@@ -118,10 +144,13 @@ const boosts = process.env.BOOST_RECIPIENT
 if (db) {
   for (const [id, session] of sessions) {
     const t0 = performance.now();
-    const records = await db.loadEvents(id);
-    for (const r of records) {
-      const sig = (r.metadata as { signature?: unknown }).signature;
-      if (r.eventType === "boost" && typeof sig === "string") boosts?.markUsed(sig);
+    let records;
+    try {
+      records = await withRetries("db.replay", () => db.loadEvents(id));
+      for (const sig of await withRetries("db.boosts", () => db.boostSignatures(id))) boosts?.markUsed(sig);
+    } catch (err) {
+      console.error(`Couldn't load saved events for ${id}: ${(err as Error).message}`);
+      process.exit(1);
     }
     const applied = session.replay(records);
     log({ kind: "db.replay", sessionId: id, events: applied, ms: +(performance.now() - t0).toFixed(1) });
@@ -148,6 +177,16 @@ const highlightModel = process.env.GEMINI_API_KEY
   : undefined;
 const recommenders = new Map([...sessions].map(([id, s]) => [id, new RecommendationService(s, gemini)]));
 
+// Signed attendee ids. The secret must stay the same across restarts (saved votes belong to these
+// ids): PARTICIPANT_SECRET, or one derived from the database / Auth0 settings. In memory-only
+// development a random one is fine (nothing survives a restart anyway).
+const participantSecret =
+  process.env.PARTICIPANT_SECRET?.trim() ||
+  (process.env.DATABASE_URL || process.env.AUTH0_CLIENT_ID
+    ? createHash("sha256").update(`crowdpulse-participants|${process.env.DATABASE_URL ?? ""}|${process.env.AUTH0_CLIENT_ID ?? ""}`).digest("hex")
+    : randomBytes(32).toString("hex"));
+const participantIds = new ParticipantIds(participantSecret);
+
 const { app, handleEvent, isOriginAllowed } = createApp({
   sessions,
   hostAuth,
@@ -163,6 +202,8 @@ const { app, handleEvent, isOriginAllowed } = createApp({
   spotifyClientId,
   spotifySearch,
   exposeLanIp: !isProd,
+  participantIds,
+  participantsPerIpHour: Number(process.env.PARTICIPANTS_PER_IP_HOUR || 600),
 });
 
 // In production, serve the built web app and fall back to index.html for SPA routes.
@@ -197,14 +238,29 @@ const wss = new WebSocketServer({
   verifyClient: ({ origin }: { origin?: string }) => isOriginAllowed(origin),
 });
 const alive = new WeakSet<WebSocket>();
+/** Open sockets per address (generous: a venue's phones may share one Wi-Fi address). */
+const MAX_SOCKETS_PER_IP = 400;
+/** A hello sends the whole session state back, so one socket may only ask a few times. */
+const MAX_HELLOS_PER_SOCKET = 20;
+const socketsPerIp = new Map<string, number>();
 
 wss.on("connection", (ws, req) => {
   const ip = clientIp(req);
+  const open = (socketsPerIp.get(ip) ?? 0) + 1;
+  if (open > MAX_SOCKETS_PER_IP) {
+    ws.close(4429, "too_many_connections");
+    return;
+  }
+  socketsPerIp.set(ip, open);
+  let hellos = 0;
   let boundSessionId: string | null = null;
   alive.add(ws);
   ws.on("pong", () => alive.add(ws));
   ws.on("close", () => {
     if (boundSessionId) socketsBySession.get(boundSessionId)?.delete(ws);
+    const n = (socketsPerIp.get(ip) ?? 1) - 1;
+    if (n > 0) socketsPerIp.set(ip, n);
+    else socketsPerIp.delete(ip);
   });
 
   ws.on("message", async (raw) => {
@@ -217,6 +273,10 @@ wss.on("connection", (ws, req) => {
     }
 
     if (msg?.type === "client.hello") {
+      if (++hellos > MAX_HELLOS_PER_SOCKET) {
+        ws.close(4429, "too_many_hellos");
+        return;
+      }
       const id = typeof msg.sessionId === "string" ? msg.sessionId : "";
       const session = sessions.get(id);
       if (!session) {

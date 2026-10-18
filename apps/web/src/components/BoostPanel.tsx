@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BOOST_VOTE_WEIGHT,
   MAX_BOOSTS_PER_TRACK,
@@ -51,6 +51,13 @@ export function BoostPanel({
   const [phase, setPhase] = useState<Phase>({ kind: "loading" });
   const [manualSig, setManualSig] = useState("");
   const wallet = detectWallet();
+  // Stops verification polling (and its state updates) once the panel closes.
+  const closed = useRef(new AbortController());
+  useEffect(() => {
+    const ctrl = new AbortController();
+    closed.current = ctrl;
+    return () => ctrl.abort();
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -63,15 +70,22 @@ export function BoostPanel({
   }, [sessionId, trackId]);
 
   async function check(intent: BoostIntent, signature: string) {
+    const signal = closed.current.signal;
+    if (signal.aborted) return;
     setPhase({ kind: "checking", intent, result: null, signature });
-    const result: BoostVerifyResult = await waitForVerification(sessionId, intent.intentId, signature, (r) =>
-      setPhase({ kind: "checking", intent, result: r, signature }),
+    const result: BoostVerifyResult = await waitForVerification(
+      sessionId,
+      intent.intentId,
+      signature,
+      (r) => setPhase({ kind: "checking", intent, result: r, signature }),
+      { signal },
     ).catch((err): BoostVerifyResult => ({
       status: "unknown" as const,
       signature,
       reason: (err as Error).message,
       explorerUrl: `https://explorer.solana.com/tx/${signature}?cluster=devnet`,
     }));
+    if (signal.aborted) return;
     if (result.state) onState(result.state);
     setPhase({ kind: "done", intent, result });
   }

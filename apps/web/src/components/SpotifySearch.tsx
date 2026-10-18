@@ -12,8 +12,10 @@ interface Props {
   participantId?: string;
   /** Host-only: play the song immediately after adding it. */
   onPlayNow?: (trackId: string) => Promise<void>;
-  /** After a song is added (and optionally voted). */
-  onAdded?: (trackId: string) => void;
+  /** After a song is added; `vote` is true when the button promised a vote ("Add & vote"). */
+  onAdded?: (trackId: string, vote: boolean) => void;
+  /** Attendee can vote right now (votes left, active tab). When false the button is just "Add". */
+  canVote?: boolean;
   /** When true, show Connect Spotify for client-side search fallback. */
   allowClientLogin?: boolean;
   compact?: boolean;
@@ -24,6 +26,7 @@ export function SpotifySearch({
   participantId,
   onPlayNow,
   onAdded,
+  canVote = true,
   allowClientLogin = false,
   compact = false,
 }: Props) {
@@ -35,12 +38,16 @@ export function SpotifySearch({
   const [error, setError] = useState<string | null>(null);
   const [hint, setHint] = useState<string | null>(null);
   const debounce = useRef<number | null>(null);
+  // Only the newest search may update the results (an older, slower one is ignored).
+  const searchSeq = useRef(0);
   const connected = typeof window !== "undefined" && spotifyConnected();
 
   useEffect(() => {
     if (debounce.current) window.clearTimeout(debounce.current);
     const q = query.trim();
     if (q.length < 2) {
+      searchSeq.current++;
+      setBusy(false);
       setHits([]);
       setError(null);
       setHint(null);
@@ -56,28 +63,35 @@ export function SpotifySearch({
   }, [query]);
 
   async function runSearch(q: string) {
+    const seq = ++searchSeq.current;
     setBusy(true);
     setError(null);
     setHint(null);
     try {
       const { tracks, source } = await searchSpotifyTracks(q);
+      if (seq !== searchSeq.current) return;
       setHits(tracks);
       if (!tracks.length) setHint("No matches — try another spelling.");
       else if (source === "client") setHint("Searching with your Spotify account.");
     } catch (err) {
+      if (seq !== searchSeq.current) return;
       setHits([]);
       setError(err instanceof Error ? err.message : "Search failed");
     } finally {
-      setBusy(false);
+      if (seq === searchSeq.current) setBusy(false);
     }
   }
 
+  // Host mode (Play now) never votes; attendees vote only when they can.
+  const votes = !onPlayNow && canVote;
+
   async function add(hit: SpotifySearchHit, play: boolean) {
+    const vote = votes && !play;
     setAdding(hit.id);
     setError(null);
     try {
       const { trackId } = await addSessionTrack(sessionId, hit, participantId);
-      onAdded?.(trackId);
+      onAdded?.(trackId, vote);
       if (play && onPlayNow) await onPlayNow(trackId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't add song");
@@ -174,7 +188,7 @@ export function SpotifySearch({
                   disabled={adding === hit.id}
                   onClick={() => void add(hit, false)}
                 >
-                  {adding === hit.id ? "…" : onPlayNow ? "Add" : "Add & vote"}
+                  {adding === hit.id ? "…" : votes ? "Add & vote" : "Add"}
                 </button>
                 {onPlayNow && (
                   <button

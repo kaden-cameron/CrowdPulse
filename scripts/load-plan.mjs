@@ -45,7 +45,9 @@ async function runStage(users) {
   const deadline = Date.now() + SECONDS * 1000;
 
   async function attendee(n) {
-    const participantId = `load_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
+    // Signed ids from the server (start it with a high PARTICIPANTS_PER_IP_HOUR for big runs).
+    const idRes = await fetch(`${BASE}/api/participants`, { method: "POST" });
+    const participantId = idRes.ok ? (await idRes.json()).participantId : `load_${randomUUID().replaceAll("-", "").slice(0, 12)}`;
     const voted = new Set();
     const waiting = new Map(); // version → request start
     const seen = []; // recent { version, at } from this socket (updates can beat the HTTP response)

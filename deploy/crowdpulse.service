@@ -4,8 +4,8 @@
 Description=CrowdPulse server
 After=network-online.target
 Wants=network-online.target
-StartLimitIntervalSec=60
-StartLimitBurst=10
+# Never give up restarting (e.g. the database is down for a while at boot); RestartSec spaces tries out.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -16,9 +16,9 @@ EnvironmentFile=/etc/crowdpulse/crowdpulse.env
 Environment=NODE_ENV=production
 Environment=PORT=8787
 ExecStart=/opt/crowdpulse/node_modules/.bin/tsx apps/server/src/index.ts
-# Crash → back within ~2s; clients reconnect and reload state (VU-04).
+# Crash → back within ~3s; clients reconnect and reload state (VU-04).
 Restart=always
-RestartSec=2
+RestartSec=3
 KillSignal=SIGTERM
 TimeoutStopSec=10
 # Hardening: the app writes nothing to disk; logs go to journald.

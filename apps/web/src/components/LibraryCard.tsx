@@ -532,9 +532,10 @@ export function LibraryCard({
                   <button
                     type="button"
                     className="btn ghost compact"
-                    disabled={!ready || busy !== null || t.id === playingId}
+                    disabled={!ready || busy !== null || t.id === playingId || tracks.length <= 2}
                     onClick={() => void remove(t)}
                     aria-label={`Remove ${t.title} from the library`}
+                    title={tracks.length <= 2 ? "The library needs at least 2 songs" : undefined}
                   >
                     ✕
                   </button>
@@ -594,7 +595,7 @@ export function LibraryCard({
           <div className="library-preview">
             <p className="host-sub">
               <strong>{preview.tracks.length}</strong> song{preview.tracks.length === 1 ? "" : "s"} in the playlist
-              {preview.skipped > 0 && ` · ${preview.skipped} skipped (local files, podcasts, unavailable)`}
+              {preview.skipped > 0 && ` · ${preview.skipped} skipped (local files, podcasts, unavailable, repeats)`}
               {preview.truncated && " · only the first 100 are shown"} — pick the ones to add.
             </p>
             <SongPicker

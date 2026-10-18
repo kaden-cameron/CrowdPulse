@@ -202,7 +202,8 @@ export function JoinPage() {
           <SpotifySearch
             sessionId={sessionCode}
             participantId={getParticipantId()}
-            onAdded={(trackId) => submitVote(trackId)}
+            canVote={votesLeft > 0 && tabs.active}
+            onAdded={(trackId, vote) => vote && submitVote(trackId)}
           />
 
           <p className="votes-left" aria-live="polite">

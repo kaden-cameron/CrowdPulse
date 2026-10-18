@@ -44,6 +44,8 @@ export interface PlayerAdapter {
   onEnded(cb: () => void): void;
   /** Called when the current track stops early by itself (it didn't really play). */
   onProblem?(cb: (message: string) => void): void;
+  /** Free what the player holds (audio context, Spotify device); unlock() sets it up again. */
+  dispose?(): void;
 }
 
 /**
@@ -53,4 +55,12 @@ export interface PlayerAdapter {
  */
 export class PlayerUnavailableError extends Error {
   readonly playerUnavailable = true;
+}
+
+/** The load was cancelled (stopped, or replaced by another song). Nobody's fault: not reported. */
+export class PlaybackCancelledError extends Error {
+  readonly cancelled = true;
+  constructor() {
+    super("cancelled");
+  }
 }

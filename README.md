@@ -22,7 +22,7 @@ npm test           # server + web tests
 |------|-----|
 | Attendee | http://localhost:5173/join/demo |
 | Stage (projector) | http://localhost:5173/stage/demo |
-| Host | http://localhost:5173/host/demo (dev host key: `local-dev-host-key`) |
+| Host | http://localhost:5173/host/demo (dev host key: `HOST_DEV_KEY` from `.env`, or the random key printed when the server starts) |
 | Player (speakers) | http://localhost:5173/player/demo |
 
 QR/onboarding: the stage shows a QR for its own origin, so open the stage at `http://<LAN-IP>:5173/stage/demo` when phones need to scan it. Vite listens on all interfaces.

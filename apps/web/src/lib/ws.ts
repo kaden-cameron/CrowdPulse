@@ -50,10 +50,17 @@ export class SessionSocket {
       this.attempt === 0 ? "connecting" : "reconnecting",
     );
 
+    if (this.reconnectTimer != null) window.clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    // Replacing a socket (e.g. still closing after going offline): its late events must not
+    // schedule another reconnect, or a second connection leaks.
+    this.detach();
+
     const ws = new WebSocket(wsUrl());
     this.ws = ws;
 
     ws.onopen = () => {
+      if (ws !== this.ws) return;
       this.attempt = 0;
       this.handlers.onStatus("connected");
       this.raw({
@@ -65,6 +72,7 @@ export class SessionSocket {
     };
 
     ws.onmessage = (event) => {
+      if (ws !== this.ws) return;
       let msg: ServerToClientMessage;
       try {
         msg = JSON.parse(String(event.data)) as ServerToClientMessage;
@@ -97,7 +105,7 @@ export class SessionSocket {
     };
 
     ws.onclose = () => {
-      if (this.intentionalClose) return;
+      if (ws !== this.ws || this.intentionalClose) return;
       this.handlers.onStatus("disconnected");
       this.scheduleReconnect();
     };
@@ -130,14 +138,6 @@ export class SessionSocket {
    */
   refresh() {
     if (this.intentionalClose) return;
-    if (this.reconnectTimer != null) window.clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
-    const old = this.ws;
-    if (old) {
-      old.onclose = null;
-      old.onmessage = null;
-      old.close();
-    }
     this.attempt = 0;
     this.connect();
   }
@@ -158,6 +158,18 @@ export class SessionSocket {
       this.reconnectTimer = null;
     }
     this.ws?.close();
+    this.ws = null;
+  }
+
+  /** Drop the current socket's handlers and close it (it's being replaced). */
+  private detach() {
+    const old = this.ws;
+    if (!old) return;
+    old.onopen = null;
+    old.onclose = null;
+    old.onmessage = null;
+    old.onerror = null;
+    if (old.readyState <= WebSocket.OPEN) old.close();
     this.ws = null;
   }
 
@@ -206,10 +218,55 @@ export function createEventId(): string {
 // still be stable for this page, or every request would count as a new attendee.
 let participantIdCache: string | null = null;
 
+const PARTICIPANT_KEY = "crowdpulse.participant";
+/** Ids the server hands out (signed); older made-up ids are replaced. */
+const SIGNED_ID = /^ps_[0-9a-f]{24}_[0-9a-f]{16}$/;
+let participantRequest: Promise<string> | null = null;
+
+/**
+ * This browser's attendee id, from the server (it signs ids so they can't be made up). Asked for
+ * once and kept; if the server doesn't hand out ids (older server), the local id is used.
+ */
+export function ensureParticipantId(): Promise<string> {
+  const have = getParticipantId();
+  if (SIGNED_ID.test(have)) return Promise.resolve(have);
+  participantRequest ??= (async () => {
+    try {
+      const res = await fetch("/api/participants", { method: "POST" });
+      if (!res.ok) return getParticipantId();
+      const { participantId } = (await res.json()) as { participantId?: string };
+      if (!participantId || !SIGNED_ID.test(participantId)) return getParticipantId();
+      participantIdCache = participantId;
+      try {
+        localStorage.setItem(PARTICIPANT_KEY, participantId);
+      } catch {
+        /* storage blocked — the in-memory id still holds for this page */
+      }
+      return participantId;
+    } catch {
+      return getParticipantId();
+    } finally {
+      participantRequest = null;
+    }
+  })();
+  return participantRequest;
+}
+
+/** The server didn't accept this id (e.g. it was made before ids were signed): get a new one. */
+export function resetParticipantId(): Promise<string> {
+  participantIdCache = `p_${createEventId().replaceAll("-", "")}`;
+  try {
+    localStorage.removeItem(PARTICIPANT_KEY);
+  } catch {
+    /* storage blocked */
+  }
+  return ensureParticipantId();
+}
+
 /** Anonymous, random per-browser participant token. No personal data. */
 export function getParticipantId(): string {
   if (participantIdCache) return participantIdCache;
-  const key = "crowdpulse.participant";
+  const key = PARTICIPANT_KEY;
   try {
     participantIdCache = localStorage.getItem(key);
   } catch {

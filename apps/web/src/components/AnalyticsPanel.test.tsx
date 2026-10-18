@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SessionMetrics } from "@crowdpulse/shared";
 import { AnalyticsPanel } from "./AnalyticsPanel";
 
@@ -49,5 +49,21 @@ describe("AnalyticsPanel", () => {
     render(<AnalyticsPanel metrics={tiger} error="Metrics unavailable" tracks={[]} />);
     expect(screen.getByRole("alert")).toHaveTextContent("showing the last good result");
     expect(screen.getByText("57")).toBeInTheDocument();
+  });
+
+  it("vote bars: same-titled tracks get their own rows, and all-zero votes draw empty bars (no NaN)", () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const song = { title: "Intro", artist: "x", genre: "house", bpm: 120, energy: 0.5, votes: 0, boosts: 0, round: 0, status: "open" as const };
+    const { container } = render(
+      <AnalyticsPanel
+        metrics={{ ...tiger, votesByTrack: [{ trackId: "a", votes: 0 }, { trackId: "b", votes: 0 }] }}
+        error={null}
+        tracks={[{ ...song, id: "a" }, { ...song, id: "b" }]}
+      />,
+    );
+    const fills = Array.from(container.querySelectorAll<HTMLElement>(".votes-fill"));
+    expect(fills.map((f) => f.style.width)).toEqual(["0%", "0%"]);
+    expect(errors.mock.calls.some((c) => String(c[0]).includes("same key"))).toBe(false);
+    errors.mockRestore();
   });
 });

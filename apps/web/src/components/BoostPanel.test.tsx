@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { BoostPanel } from "./BoostPanel";
@@ -58,5 +58,27 @@ describe("BoostPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Verify signature" }));
     expect(await screen.findByText(/memo does not match/)).toBeInTheDocument();
     expect(screen.queryByText(/Verified on devnet/)).toBeNull();
+  });
+
+  it("stops checking once the panel closes (no state update after)", async () => {
+    let release!: () => void;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/boosts/intents")) return new Response(JSON.stringify(intent), { status: 201 });
+      await new Promise<void>((r) => (release = r));
+      return Response.json({ status: "verified", signature: "sig", explorerUrl: "x", state: {} });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const onState = vi.fn();
+    const { unmount } = render(
+      <BoostPanel sessionId="demo" trackId="track_02" trackTitle="Midnight Cypress" config={config} onState={onState} onClose={() => {}} />,
+    );
+    await userEvent.type(await screen.findByPlaceholderText(/Paste the devnet signature/), "5abc");
+    await userEvent.click(screen.getByRole("button", { name: "Verify signature" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    unmount();
+    release();
+    await new Promise((r) => setTimeout(r, 20));
+    expect(onState).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 });

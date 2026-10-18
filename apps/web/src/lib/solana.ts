@@ -75,20 +75,34 @@ export async function payWithWallet(wallet: InjectedWallet, intent: BoostIntent)
   return signature;
 }
 
-/** Polls verification until verified/rejected, or gives up (still unverified — never "success"). */
+/**
+ * Polls verification until verified/rejected, or gives up (still unverified — never "success").
+ * Aborting `signal` (e.g. the panel closed) stops polling: it rejects and never calls onUpdate again.
+ */
 export async function waitForVerification(
   sessionId: string,
   intentId: string,
   signature: string,
   onUpdate: (r: BoostVerifyResult) => void,
-  { attempts = 30, intervalMs = 2500 } = {},
+  { attempts = 30, intervalMs = 2500, signal }: { attempts?: number; intervalMs?: number; signal?: AbortSignal } = {},
 ): Promise<BoostVerifyResult> {
   let last: BoostVerifyResult | null = null;
   for (let i = 0; i < attempts; i++) {
+    signal?.throwIfAborted();
     last = await verifyBoost(sessionId, intentId, signature);
+    signal?.throwIfAborted();
     onUpdate(last);
     if (last.status === "verified" || last.status === "rejected") return last;
-    await new Promise((r) => setTimeout(r, intervalMs));
+    await new Promise<void>((resolve) => {
+      if (signal?.aborted) return resolve();
+      const t = setTimeout(done, intervalMs);
+      signal?.addEventListener("abort", done, { once: true });
+      function done() {
+        clearTimeout(t);
+        signal?.removeEventListener("abort", done);
+        resolve();
+      }
+    });
   }
   return last!;
 }
