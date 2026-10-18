@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   COMMON_GENRES,
   FIND_COUNTS,
@@ -23,6 +23,7 @@ import {
 } from "../lib/host";
 import { searchSpotifyTracks } from "../lib/spotify/search";
 import { SongPicker } from "./SongPicker";
+import { useAutoHide } from "../hooks/useAutoHide";
 
 const TARGET_LABELS: Record<HostTarget, string> = {
   raise_energy: "Raise energy",
@@ -84,6 +85,7 @@ export function AiPanel({
     note: string | null;
   } | null>(null);
   const [foundMsg, setFoundMsg] = useState<string | null>(null);
+  useAutoHide(foundMsg, () => setFoundMsg(null));
   // Results fold away; new results open them again.
   const [showResults, setShowResults] = useState(true);
   // Find needs something to go on: text, or an artist (picked or described), or a genre.
@@ -296,6 +298,10 @@ export function AiPanel({
         <button type="button" className="btn primary" disabled={!ready || !ai?.configured || busy !== null} onClick={ask}>
           {busy === "ask" ? "Asking Gemini…" : "Get recommendation"}
         </button>
+        <InfoTip label="Get recommendation">
+          Picks the next song from your library, using your text, genres, artists and popularity range plus the crowd&apos;s
+          votes and mood. You approve it before anything plays.
+        </InfoTip>
         <span className="find-group">
           <button
             type="button"
@@ -306,6 +312,10 @@ export function AiPanel({
           >
             {busy === "find" ? "Looking it up…" : "🔎 Find songs"}
           </button>
+          <InfoTip label="Find songs">
+            Lists songs from all of Spotify for your description, artists or genres — or recognizes a song from its lyrics. Tick the
+            ones you want and add them to the library. Stream counts are Gemini&apos;s estimates.
+          </InfoTip>
           <label className="find-count">
             <span>How many</span>
             <select value={count} onChange={(e) => setCount(Number(e.target.value))} aria-label="How many songs to find">
@@ -326,12 +336,11 @@ export function AiPanel({
         >
           {busy === "surprise" ? "Picking…" : "🎲 Surprise me"}
         </button>
+        <InfoTip label="Surprise me">
+          One random song in your genres, artists and popularity range that isn&apos;t in the library yet. Popular songs come up more
+          often.
+        </InfoTip>
       </div>
-      <p className="host-sub ai-help">
-        <strong>Get recommendation</strong> picks from your library · <strong>Find songs</strong> lists songs for a description or
-        recognizes lyrics — tick the ones you want and add them · <strong>Surprise me</strong> finds a random song, favoring popular ones.
-        Stream counts are Gemini&apos;s estimates.
-      </p>
       {(found || latest || history) && (
         // Results under the controls, folded away with one click so they don't take over the page.
         <section className="ai-results-section">
@@ -428,7 +437,7 @@ export function AiPanel({
                         key: song.spotify?.spotifyUri ?? `missing:${song.title}|${song.artist}`,
                         title: song.spotify?.title ?? song.title,
                         artist: song.spotify?.artist ?? song.artist,
-                        meta: [song.why, song.streams != null ? `≈ ${fmtStreams(song.streams)} streams` : ""].filter(Boolean).join(" · "),
+                        meta: song.streams != null ? `≈ ${fmtStreams(song.streams)} streams` : undefined,
                         imageUrl: song.spotify?.imageUrl,
                         unavailable: !song.spotify
                           ? "not found on Spotify"
@@ -730,5 +739,17 @@ function ArtistPicker({
         </span>
       )}
     </div>
+  );
+}
+
+/** A small "?" that shows an explanation on hover or keyboard focus. */
+function InfoTip({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <span className="info-tip" tabIndex={0} aria-label={`About ${label}`}>
+      <span aria-hidden>?</span>
+      <span className="info-tip-text" role="tooltip">
+        {children}
+      </span>
+    </span>
   );
 }

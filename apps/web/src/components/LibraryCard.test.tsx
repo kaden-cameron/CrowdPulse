@@ -71,6 +71,31 @@ describe("LibraryCard", () => {
     expect(add.body).toEqual({ tracks: [{ title: "One More Time", artist: "Daft Punk", spotifyUri: URI }] });
   });
 
+  it("+ Queue on a search result adds it to the library, then to the end of the queue", async () => {
+    const calls = mockNet();
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
+    await userEvent.type(await screen.findByPlaceholderText("Song or artist"), "daft punk");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Add One More Time to the queue" }));
+    await waitFor(() => expect(calls.some((c) => c.url.endsWith("/queue"))).toBe(true));
+    const addIdx = calls.findIndex((c) => c.url.endsWith("/library") && c.method === "POST");
+    const queueIdx = calls.findIndex((c) => c.url.endsWith("/queue"));
+    expect(addIdx).toBeGreaterThanOrEqual(0);
+    expect(queueIdx).toBeGreaterThan(addIdx);
+    expect(calls[queueIdx].body).toEqual({ trackIds: ["sp_4uLU6hMCjMI75M1A2tKUQC"] });
+  });
+
+  it("search results close with ✕ without searching again", async () => {
+    mockNet();
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
+    await userEvent.type(await screen.findByPlaceholderText("Song or artist"), "daft punk");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText("One More Time")).toBeInTheDocument();
+    expect(screen.getByText(/1 result for “daft punk”/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Close search results" }));
+    expect(screen.queryByText("One More Time")).not.toBeInTheDocument();
+  });
+
   it("Play now adds the song if needed, then plays it", async () => {
     const calls = mockNet();
     const onState = vi.fn();
@@ -164,5 +189,27 @@ describe("sortLibrary", () => {
     expect(titles("bpm")).toEqual(["c song", "A song", "b song"]);
     expect(titles("energy")).toEqual(["A song", "c song", "b song"]);
     expect(lib[0].title).toBe("b song"); // the library itself isn't changed
+  });
+});
+
+describe("Spotify search fields", () => {
+  it("builds a Spotify query from the box plus optional title / artist / album", async () => {
+    const { buildSpotifyQuery } = await import("./LibraryCard");
+    const none = { title: "", artist: "", album: "" };
+    expect(buildSpotifyQuery("daft punk", none)).toBe("daft punk");
+    expect(buildSpotifyQuery("", { ...none, artist: "Daft Punk", album: "Discovery" })).toBe('artist:"Daft Punk" album:"Discovery"');
+    expect(buildSpotifyQuery("live", { title: 'One "More" Time', artist: "", album: "" })).toBe('live track:"One More Time"');
+  });
+
+  it("searches with only the artist and album fields filled", async () => {
+    const calls = mockNet();
+    render(<LibraryCard sessionCode="demo" state={state} ready getHeaders={async () => ({})} onState={() => {}} />);
+    await userEvent.click(screen.getByText("Search by title, artist or album"));
+    await userEvent.type(screen.getByRole("textbox", { name: "Artist" }), "Daft Punk");
+    await userEvent.type(screen.getByRole("textbox", { name: "Album" }), "Discovery");
+    await userEvent.click(screen.getByRole("button", { name: "Search" }));
+    expect(await screen.findByText(/for “artist Daft Punk · album Discovery”/)).toBeInTheDocument();
+    const search = calls.find((c) => c.url.startsWith("/api/spotify/search"))!;
+    expect(decodeURIComponent(search.url.split("q=")[1])).toBe('artist:"Daft Punk" album:"Discovery"');
   });
 });

@@ -139,6 +139,7 @@ describe("AiPanel", () => {
     await userEvent.click(find);
     expect(await screen.findByText("Bohemian Rhapsody")).toBeInTheDocument();
     expect(screen.getByText(/≈ 2.6B streams/)).toBeInTheDocument();
+    expect(screen.queryByText(/Opening lyric/)).not.toBeInTheDocument(); // Gemini's reason isn't shown
     // Results fold away with one click, and come back.
     await userEvent.click(screen.getByRole("button", { name: "Hide results" }));
     expect(screen.queryByText("Bohemian Rhapsody")).not.toBeInTheDocument();

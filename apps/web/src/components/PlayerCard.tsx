@@ -3,6 +3,7 @@ import type { PlaybackMode, SessionState } from "@crowdpulse/shared";
 import { hostPause, hostPlaybackMode, hostPrevious, hostResume, hostSeek, hostSetRepeat, hostSkip } from "../lib/host";
 import { usePlayerEngine } from "../lib/player/usePlayerEngine";
 import { RepeatIcon } from "./Icons";
+import { useAutoHide } from "../hooks/useAutoHide";
 import { usePublicConfig } from "../lib/publicConfig";
 import { useSpotifyCover } from "../lib/spotify/cover";
 import { disconnectSpotify, redirectProblem, startSpotifyLogin, useSpotifyConnected } from "../lib/spotify/auth";
@@ -42,6 +43,7 @@ export function PlayerCard({
   const engine = usePlayerEngine({ sessionCode, state, ready, getHeaders });
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: "accepted" | "rejected"; text: string } | null>(null);
+  useAutoHide(msg, () => setMsg(null));
   const [drag, setDrag] = useState<number | null>(null); // slider position while the host drags it
   const spotifyConnected = useSpotifyConnected();
 
@@ -123,7 +125,7 @@ export function PlayerCard({
             {np ? `${np.artist} · ${STATUS_TEXT[pb?.status ?? "idle"]}` : "Pick a song, or switch on auto play."}
           </p>
           {/* Always shown (empty when nothing's playing) so the window doesn't jump around. */}
-          <div className="player-progress">
+          <div className="player-progress with-transport">
             <input
               type="range"
               className="seek-slider"
@@ -143,56 +145,57 @@ export function PlayerCard({
             <span>
               {fmt(drag ?? pos)} / {fmt(dur)}
             </span>
+            {/* Second row of the same grid: ⏮ ⏸ ⏭ centered under the bar, 🔁 Repeat under the timer. */}
+            <div className="transport-main">
+              <button
+                type="button"
+                className="btn"
+                disabled={busy || !ready || !np}
+                onClick={() => void back()}
+                aria-label="Previous: restart this song, or go back to the one before"
+                title="Restart this song (or, in the first 5 seconds, go back to the one before)"
+              >
+                ⏮
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy || !ready || !np || (!paused && pb?.status !== "playing" && pb?.status !== "loading")}
+                onClick={() => void togglePause()}
+                aria-label={paused ? "Resume" : "Pause"}
+                title={paused ? "Resume" : "Pause"}
+              >
+                {paused ? "▶" : "⏸"}
+              </button>
+              <button
+                type="button"
+                className="btn"
+                disabled={busy || !ready || (state?.tracks.length ?? 0) < 1}
+                onClick={() => void skip()}
+                aria-label="Skip to the next song"
+                title="Skip: plays your queue first, then the top votes"
+              >
+                ⏭
+              </button>
+            </div>
+            <button
+              type="button"
+              className={`btn transport-repeat${pb?.repeat ? " primary" : ""}`}
+              disabled={busy || !ready}
+              aria-pressed={!!pb?.repeat}
+              onClick={() =>
+                void run(pb?.repeat ? "Repeat off" : "Repeat on", async () => hostSetRepeat(sessionCode, await getHeaders(), !pb?.repeat))
+              }
+              aria-label="Repeat the song when it finishes"
+              title={pb?.repeat ? "Repeat is on: the song replays when it finishes" : "Repeat: replay the song when it finishes"}
+            >
+              <RepeatIcon />
+            </button>
           </div>
         </div>
       </div>
       {pb?.status === "error" && pb.message && <p className="feedback feedback-rejected">{pb.message}</p>}
 
-      <div className="cta-row transport">
-        <button
-          type="button"
-          className="btn"
-          disabled={busy || !ready || !np}
-          onClick={() => void back()}
-          aria-label="Previous: restart this song, or go back to the one before"
-          title="Restart this song (or, in the first 5 seconds, go back to the one before)"
-        >
-          ⏮
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy || !ready || !np || (!paused && pb?.status !== "playing" && pb?.status !== "loading")}
-          onClick={() => void togglePause()}
-          aria-label={paused ? "Resume" : "Pause"}
-          title={paused ? "Resume" : "Pause"}
-        >
-          {paused ? "▶" : "⏸"}
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy || !ready || (state?.tracks.length ?? 0) < 1}
-          onClick={() => void skip()}
-          aria-label="Skip to the next song"
-          title="Skip: plays your queue first, then the top votes"
-        >
-          ⏭
-        </button>
-        <button
-          type="button"
-          className={`btn${pb?.repeat ? " primary" : ""}`}
-          disabled={busy || !ready}
-          aria-pressed={!!pb?.repeat}
-          onClick={() =>
-            void run(pb?.repeat ? "Repeat off" : "Repeat on", async () => hostSetRepeat(sessionCode, await getHeaders(), !pb?.repeat))
-          }
-          aria-label="Repeat the song when it finishes"
-          title={pb?.repeat ? "Repeat is on: the song replays when it finishes" : "Repeat: replay the song when it finishes"}
-        >
-          <RepeatIcon />
-        </button>
-      </div>
       <div className="target-row two">
         {(["auto", "dj"] as const).map((m) => (
           <button

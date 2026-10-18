@@ -255,3 +255,25 @@ test("The host picks the look; the big screen and attendee phones follow it live
   // Put the default back for other tests.
   await request.post("/api/host/sessions/demo/appearance", { headers: { "x-host-key": HOST_KEY }, data: { preset: "sky", mode: "light" } });
 });
+
+test("With crowd energy off, the projector shows a quiet screen: song, QR code and queue", async ({ browser, request }) => {
+  const host = { "x-host-key": HOST_KEY };
+  const stage = await openStage(browser);
+  await expect(stage.locator(".energy-block")).toHaveCount(1);
+  await request.post("/api/host/sessions/demo/appearance", { headers: host, data: { preset: "sky", mode: "light", showEnergy: false } });
+  await expect(stage.locator(".energy-block")).toHaveCount(0);
+  await expect(stage.locator(".stage-quiet canvas.stage-canvas")).toHaveCount(1); // the visuals stay, behind the song
+  await expect(stage.locator(".stage-song-title")).toBeVisible();
+  await expect(stage.locator(".join-qr-code img")).toBeVisible();
+  await expect(stage.locator(".stage-queue")).toBeVisible();
+  // The timer shows how far into the song it is.
+  await request.post("/api/host/sessions/demo/advance", { headers: host, data: { trackId: "track_02" } });
+  await request.post("/api/host/sessions/demo/playback/report", {
+    headers: host,
+    data: { event: "started", trackId: "track_02", round: 1, positionMs: 65_000, durationMs: 200_000 },
+  });
+  await expect(stage.locator(".stage-timer")).toHaveText(/1:0[5-9] \/ 3:20/);
+    await stage.screenshot({ path: evidence("stage-quiet.png") });
+  await request.post("/api/host/sessions/demo/appearance", { headers: host, data: { preset: "sky", mode: "light", showEnergy: true } });
+  await expect(stage.locator(".energy-block")).toHaveCount(1);
+});

@@ -10,10 +10,7 @@ import { useSpotifyCover } from "../lib/spotify/cover";
 
 export function StagePage() {
   const { sessionCode = "demo" } = useParams();
-  const { state, status, lastMessageAt } = useSessionSocket(
-    sessionCode,
-    "stage",
-  );
+  const { state, status, lastMessageAt } = useSessionSocket(sessionCode, "stage");
   useSessionAppearance(sessionCode, state?.appearance);
   const joinBase = useJoinBase();
   const joinUrl = `${joinBase.origin}/join/${encodeURIComponent(sessionCode)}`;
@@ -40,19 +37,44 @@ export function StagePage() {
 
   const playingTrack = state?.nowPlaying ? state.tracks.find((t) => t.id === state.nowPlaying!.trackId) : undefined;
   const cover = useSpotifyCover(playingTrack?.spotifyUri, playingTrack?.imageUrl);
+  // The host turned crowd energy off: show the calm layout without the visuals.
+  const minimal = state?.appearance.showEnergy === false;
 
   return (
     <main className="stage-page desktop" data-theme={visual.theme}>
       <MenuBar title={state?.sessionName ?? "Stage"} status={status} lastMessageAt={lastMessageAt} />
 
-      <div className="stage-desktop">
-        <Window title="CrowdPulse TV" className="stage-tv" headingLevel={1}>
-          <div className="tv-screen">
-            <StageCanvas visual={visual} paused={!live} />
-            <div className="tv-dither" aria-hidden />
-            <div className="tv-overlay">
-              <span className="tv-tag">{visual.theme.replaceAll("_", " ")}</span>
-              {state?.appearance.showEnergy !== false && (
+      <div className={`stage-desktop${minimal ? " minimal" : ""}`}>
+        {minimal ? (
+          // Energy hidden by the host: a quiet screen — just the song (over the stage visuals), the
+          // QR code and the queue.
+          <Window title="Now playing" className="stage-tv stage-quiet" headingLevel={1}>
+            <div className="tv-screen">
+              <StageCanvas visual={visual} paused={!live} />
+              <div className="tv-dither" aria-hidden />
+              <section className="stage-song" aria-label="Now playing">
+                <div className="stage-song-cover">{cover ? <img src={cover} alt="" /> : <span aria-hidden>♪</span>}</div>
+                <div className="stage-song-meta">
+                  <p className="on-air">
+                    <strong>NOW PLAYING</strong>{" "}
+                    <span className="on-air-dot" aria-hidden>
+                      ●
+                    </span>
+                  </p>
+                  <h1 className="stage-song-title">{state?.nowPlaying?.title ?? "Waiting for the first pick"}</h1>
+                  {state?.nowPlaying && <p className="stage-song-artist">{state.nowPlaying.artist}</p>}
+                  <SongProgress state={state} />
+                </div>
+              </section>
+            </div>
+          </Window>
+        ) : (
+          <Window title="CrowdPulse TV" className="stage-tv" headingLevel={1}>
+            <div className="tv-screen">
+              <StageCanvas visual={visual} paused={!live} />
+              <div className="tv-dither" aria-hidden />
+              <div className="tv-overlay">
+                <span className="tv-tag">{visual.theme.replaceAll("_", " ")}</span>
                 <div className="energy-block" aria-label={`Crowd energy ${state?.energyScore ?? 0}`}>
                   <div className="energy-score">{state?.energyScore ?? 0}</div>
                   <div className="energy-bar-track">
@@ -60,29 +82,32 @@ export function StagePage() {
                   </div>
                   <p className="energy-caption">crowd energy</p>
                 </div>
-              )}
+              </div>
+              <div className="tv-strip" aria-hidden>
+                <span>▶ live</span>
+                <span>{Math.round(visual.intensity * 100)}% intensity</span>
+              </div>
             </div>
-            <div className="tv-strip" aria-hidden>
-              <span>▶ live</span>
-              <span>{Math.round(visual.intensity * 100)}% intensity</span>
-            </div>
-          </div>
-          <div className="panel now-playing">
-            <p className="on-air">
-              CrowdPulse: <strong>ON AIR</strong> <span className="on-air-dot" aria-hidden>●</span>
-            </p>
-            <div className="stage-now">
-              {cover && <img className="stage-cover" src={cover} alt="" width={72} height={72} />}
-              <p className="now-playing-title">
-                {state?.nowPlaying ? `${state.nowPlaying.artist} – ${state.nowPlaying.title}` : "Waiting for the first pick"}
+            <div className="panel now-playing">
+              <p className="on-air">
+                CrowdPulse: <strong>ON AIR</strong>{" "}
+                <span className="on-air-dot" aria-hidden>
+                  ●
+                </span>
+              </p>
+              <div className="stage-now">
+                {cover && <img className="stage-cover" src={cover} alt="" width={72} height={72} />}
+                <p className="now-playing-title">
+                  {state?.nowPlaying ? `${state.nowPlaying.artist} – ${state.nowPlaying.title}` : "Waiting for the first pick"}
+                </p>
+              </div>
+              <SongProgress state={state} />
+              <p className="latest-event" aria-live="polite">
+                {state?.latestEvent?.message ?? "Session warming up"}
               </p>
             </div>
-            <SongProgress state={state} />
-            <p className="latest-event" aria-live="polite">
-              {state?.latestEvent?.message ?? "Session warming up"}
-            </p>
-          </div>
-        </Window>
+          </Window>
+        )}
 
         <div className="stage-col">
           <Window title="Join the party" className="join-window">
@@ -93,7 +118,14 @@ export function StagePage() {
                 </div>
               )}
               <p className="join-qr-hint">
-                Scan to vote
+                <span className="scan-cta">
+                  <span aria-hidden className="scan-arrow">
+                    ←
+                  </span>{" "}
+                  Scan to vote!
+                </span>
+                <span className="scan-sub">Pick the next song from your phone</span>
+
                 <strong>{joinUrl.replace(/^https?:\/\//, "")}</strong>
                 <span>{state?.participants ?? 0} in the crowd</span>
                 {joinBase.warning && <span className="join-qr-warning">{joinBase.warning}</span>}
@@ -123,7 +155,6 @@ export function StagePage() {
               {!state?.queue.length && <li className="empty-queue">Votes will fill the queue</li>}
             </ol>
           </Window>
-
         </div>
       </div>
 
@@ -136,7 +167,16 @@ export function StagePage() {
   );
 }
 
-/** Progress of the current song, from the player's reports (only while it's actually playing). */
+/** m:ss */
+export const fmtClock = (ms: number) => {
+  const sec = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+};
+
+/**
+ * Progress of the current song with a timer (elapsed / length), from the player's reports. Shown
+ * while a song is playing or paused; hidden otherwise.
+ */
 function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionState | null }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -144,11 +184,20 @@ function SongProgress({ state }: { state: import("@crowdpulse/shared").SessionSt
     return () => window.clearInterval(t);
   }, []);
   const pb = state?.playback;
-  if (!pb || pb.status !== "playing" || !pb.startedAt || !pb.durationMs) return null;
-  const pct = Math.min(100, ((now - Date.parse(pb.startedAt)) / pb.durationMs) * 100);
+  if (!pb || !pb.durationMs) return null;
+  const elapsed =
+    pb.status === "paused" ? (pb.pausedPositionMs ?? 0) : pb.status === "playing" && pb.startedAt ? now - Date.parse(pb.startedAt) : null;
+  if (elapsed === null) return null;
+  const pos = Math.min(elapsed, pb.durationMs);
   return (
-    <div className="song-progress" aria-hidden>
-      <div style={{ width: `${pct}%` }} />
+    <div className="stage-progress">
+      <div className="song-progress" aria-hidden>
+        <div style={{ width: `${(pos / pb.durationMs) * 100}%` }} />
+      </div>
+      <span className="stage-timer" aria-label={`${fmtClock(pos)} of ${fmtClock(pb.durationMs)}`}>
+        {fmtClock(pos)} / {fmtClock(pb.durationMs)}
+        {pb.status === "paused" && <em> · paused</em>}
+      </span>
     </div>
   );
 }

@@ -13,6 +13,7 @@ import {
 import { fetchPlaylistTracks, parsePlaylistId, type FoundTrack } from "../lib/spotify/library";
 import { searchSpotifyTracks } from "../lib/spotify/search";
 import { SongPicker } from "./SongPicker";
+import { useAutoHide } from "../hooks/useAutoHide";
 
 // Host-page window: pick songs. Search Spotify (no login needed when the server has the client
 // secret) or import one of your playlists, then build the queue from the library: + Queue,
@@ -66,6 +67,31 @@ export function sortLibrary<T extends { title: string; artist: string; genre: st
   }
 }
 
+export type SearchFields = { title: string; artist: string; album: string };
+
+/**
+ * The search box plus optional exact fields → one Spotify query, using its field filters
+ * (`track:"…" artist:"…" album:"…"`). Quotes typed by the host are dropped.
+ */
+export function buildSpotifyQuery(free: string, f: SearchFields): string {
+  const clean = (v: string) => v.replace(/"/g, "").trim();
+  return [
+    clean(free),
+    clean(f.title) && `track:"${clean(f.title)}"`,
+    clean(f.artist) && `artist:"${clean(f.artist)}"`,
+    clean(f.album) && `album:"${clean(f.album)}"`,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** For the results header: "daft punk · artist Daft Punk · album Discovery". */
+function describeSearch(free: string, f: SearchFields): string {
+  return [free.trim(), f.title.trim() && `title ${f.title.trim()}`, f.artist.trim() && `artist ${f.artist.trim()}`, f.album.trim() && `album ${f.album.trim()}`]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 /** Fisher–Yates; exported for tests. */
 export function shuffled<T>(items: T[], rand: () => number = Math.random): T[] {
   const out = [...items];
@@ -93,10 +119,15 @@ export function LibraryCard({
   const connected = useSpotifyConnected();
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<Msg>(null);
+  useAutoHide(msg, () => setMsg(null));
   const [playlistInput, setPlaylistInput] = useState("");
   const [preview, setPreview] = useState<{ tracks: FoundTrack[]; skipped: number; truncated: boolean } | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<FoundTrack[] | null>(null);
+  const [searched, setSearched] = useState("");
+  // Optional exact fields (Spotify field filters): title, artist, album.
+  const [fields, setFields] = useState<SearchFields>({ title: "", artist: "", album: "" });
+  const hasQuery = query.trim().length >= 2 || Object.values(fields).some((v) => v.trim());
   const [sort, setSort] = useState<LibrarySort>("added");
 
   const tracks = state?.tracks ?? [];
@@ -163,7 +194,9 @@ export function LibraryCard({
   const onSearch = (e: FormEvent) => {
     e.preventDefault();
     void withBusy("search", async () => {
-      const { tracks: hits } = await searchSpotifyTracks(query);
+      const q = buildSpotifyQuery(query, fields);
+      const { tracks: hits } = await searchSpotifyTracks(q);
+      setSearched(describeSearch(query, fields));
       setResults(
         hits.map((h) => ({
           title: h.title,
@@ -177,6 +210,15 @@ export function LibraryCard({
       );
     });
   };
+
+  /** Search result → library (if needed) → end of the host's queue. */
+  const queueFound = (t: FoundTrack) =>
+    withBusy(`queue:${t.spotifyUri}`, async () => {
+      let id = libraryIdFor(t.spotifyUri);
+      if (!id) id = (await add([t])).trackIds[0];
+      if (!id) throw new Error("Couldn't add that song");
+      await setQueue([...hostQueue.filter((q) => q !== id), id], `“${t.title}” is #${hostQueue.length + 1} in the queue.`);
+    });
 
   const playNow = (t: FoundTrack) =>
     withBusy(`play:${t.spotifyUri}`, async () => {
@@ -233,17 +275,44 @@ export function LibraryCard({
               placeholder="Song or artist"
               disabled={!canSearch}
             />
-            <button type="submit" className="btn" disabled={!canSearch || query.trim().length < 2 || busy !== null}>
+            <button type="submit" className="btn" disabled={!canSearch || !hasQuery || busy !== null}>
               {busy === "search" ? "Searching…" : "Search"}
             </button>
           </span>
         </label>
+        <details className="search-fields">
+          <summary>Search by title, artist or album</summary>
+          <div className="search-fields-row">
+            {(["title", "artist", "album"] as const).map((f) => (
+              <label key={f} className="host-field">
+                <span className="metric-label">{f === "title" ? "Title" : f === "artist" ? "Artist" : "Album"}</span>
+                <input
+                  type="text"
+                  value={fields[f]}
+                  onChange={(e) => setFields((x) => ({ ...x, [f]: e.target.value }))}
+                  placeholder="Optional"
+                  disabled={!canSearch}
+                />
+              </label>
+            ))}
+          </div>
+        </details>
       </form>
       {!ready && <p className="host-sub">Sign in as host to pick songs.</p>}
       {ready && config && !canSearch && (
         <p className="host-sub">Connect Spotify under &ldquo;Import a Spotify playlist&rdquo; to search, or set SPOTIFY_CLIENT_SECRET on the server.</p>
       )}
-      {results && !results.length && <p className="host-sub">No songs found.</p>}
+      {results && (
+        <div className="results-head">
+          <span className="metric-label">
+            {results.length ? `${results.length} result${results.length === 1 ? "" : "s"}` : "No songs found"}
+            {searched && ` for “${searched}”`}
+          </span>
+          <button type="button" className="btn ghost compact" onClick={() => setResults(null)} aria-label="Close search results" title="Close">
+            ✕
+          </button>
+        </div>
+      )}
       {results && results.length > 0 && (
         <SongPicker
           label="Spotify search results"
@@ -261,16 +330,29 @@ export function LibraryCard({
           }
           rowAction={(item) => {
             const t = results.find((r) => r.spotifyUri === item.key)!;
+            const id = libraryIdFor(t.spotifyUri);
+            const pos = id ? hostQueue.indexOf(id) : -1;
             return (
-              <button
-                type="button"
-                className="btn primary compact"
-                disabled={busy !== null || isPlaying(t.spotifyUri)}
-                onClick={() => void playNow(t)}
-                aria-label={`Play ${t.title} now`}
-              >
-                {busy === `play:${t.spotifyUri}` ? "…" : "Play now"}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="btn compact"
+                  disabled={busy !== null || pos >= 0 || isPlaying(t.spotifyUri)}
+                  onClick={() => void queueFound(t)}
+                  aria-label={pos >= 0 ? `${t.title} is #${pos + 1} in the queue` : `Add ${t.title} to the queue`}
+                >
+                  {busy === `queue:${t.spotifyUri}` ? "…" : pos >= 0 ? `#${pos + 1}` : "+ Queue"}
+                </button>
+                <button
+                  type="button"
+                  className="btn primary compact"
+                  disabled={busy !== null || isPlaying(t.spotifyUri)}
+                  onClick={() => void playNow(t)}
+                  aria-label={`Play ${t.title} now`}
+                >
+                  {busy === `play:${t.spotifyUri}` ? "…" : "Play now"}
+                </button>
+              </>
             );
           }}
         />

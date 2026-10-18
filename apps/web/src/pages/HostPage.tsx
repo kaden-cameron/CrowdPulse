@@ -22,6 +22,7 @@ import { ProfileIcon } from "../components/Icons";
 import { hostReset, hostSetAppearance, hostSetVisual } from "../lib/host";
 import { presetLabel } from "../lib/theme";
 import { PlayerCard } from "../components/PlayerCard";
+import { useAutoHide } from "../hooks/useAutoHide";
 
 
 export function HostPage() {
@@ -44,6 +45,7 @@ export function HostPage() {
     kind: "accepted" | "rejected";
     text: string;
   } | null>(null);
+  useAutoHide(message, () => setMessage(null));
 
 
   async function run(label: string, action: () => Promise<{ state: SessionState }>) {

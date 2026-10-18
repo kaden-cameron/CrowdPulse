@@ -198,11 +198,15 @@ export function StageCanvas({
 
     resize();
     window.addEventListener("resize", resize);
+    // Also follow the container itself (layouts can settle after mount, e.g. the quiet stage view).
+    const observer = typeof ResizeObserver !== "undefined" && canvas.parentElement ? new ResizeObserver(resize) : null;
+    if (observer && canvas.parentElement) observer.observe(canvas.parentElement);
     raf = requestAnimationFrame(draw);
 
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener("resize", resize);
+      observer?.disconnect();
     };
   }, []);
 

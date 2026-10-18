@@ -668,9 +668,6 @@ ul.library-list li:last-child {
   margin: 0.5rem 0 0.3rem;
 }
 
-.ai-help {
-  font-size: 13px;
-}
 
 .rec-asked {
   margin: 0.2rem 0;
@@ -2522,17 +2519,37 @@ button.menubar-tab.menubar-action {
 }
 
 /* ---------- Transport (⏮ ⏸ ⏭), library sort, attendee search + pages ---------- */
-.transport {
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  margin: 0.2rem 0 0.8rem;
+/* Progress bar + timer on the first row; ⏮ ⏸ ⏭ centered under the bar and 🔁 under the
+   timer on the second row (same grid, so "centered" means centered on the bar). */
+.player-progress.with-transport {
+  row-gap: 0.7rem;
 }
 
-.transport .btn {
-  min-width: 2.6rem;
+.transport-main {
+  display: flex;
+  gap: 0.6rem;
+  justify-self: center;
+}
+
+.player-progress .transport-repeat {
+  justify-self: end;
+}
+
+.transport-main .btn,
+.transport-repeat {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.4rem;
+  min-height: 2.9rem;
+  padding: 0.4rem 0.8rem;
   font-family: var(--font-ui);
-  font-size: 17px;
+  font-size: 22px;
+}
+
+.transport-repeat svg {
+  width: 20px;
+  height: 20px;
 }
 
 .energy-toggle {
@@ -2645,15 +2662,7 @@ button.menubar-tab.menubar-action {
   background: var(--mint);
 }
 
-.transport .btn svg {
-  display: block;
-}
 
-.transport .btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
 
 .signin-banner {
   grid-column: 1 / -1;
@@ -2746,4 +2755,289 @@ button.menubar-tab.menubar-action {
   margin: 0.3rem 0 0;
   font-size: 12px;
   color: var(--ink-2);
+}
+
+/* ---------- Projector, crowd energy off: a quiet screen (song · QR · queue) ---------- */
+.stage-desktop.minimal {
+  grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr);
+}
+
+.stage-desktop.minimal .stage-col {
+  justify-content: center;
+}
+
+/* The song sits on top of the stage visuals (the background behind the crowd-energy number). */
+.stage-quiet .tv-screen {
+  display: grid;
+  place-items: center;
+}
+
+.stage-quiet .stage-song {
+  position: relative;
+  z-index: 1;
+}
+
+.stage-song {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: clamp(20px, 3vw, 48px);
+  align-items: center;
+  padding: clamp(12px, 2vw, 32px);
+}
+
+.stage-song-cover {
+  width: clamp(160px, 24vw, 400px);
+  aspect-ratio: 1;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--cream);
+  box-shadow: var(--shadow), 6px 6px 0 var(--line);
+}
+
+.stage-song-cover img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  image-rendering: auto;
+}
+
+.stage-song-cover span {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  font-size: clamp(4rem, 10vw, 9rem);
+  color: var(--muted);
+}
+
+.stage-song-meta {
+  min-width: 0;
+}
+
+.stage-song-title {
+  margin: 0.4rem 0 0.2rem;
+  font-size: clamp(1.8rem, 3.4vw, 4rem);
+  line-height: 1.08;
+  /* Break between words; only a single very long word may break inside. */
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.stage-song-artist {
+  margin: 0 0 1.2rem;
+  font-size: clamp(1.1rem, 2vw, 2rem);
+  color: var(--ink-2);
+}
+
+.stage-song .song-progress {
+  max-width: none;
+}
+
+@media (max-width: 900px) {
+  .stage-desktop.minimal {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .stage-song {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .stage-song .song-progress {
+    margin-inline: auto;
+  }
+}
+
+/* Spotify search results header with a ✕ to close them. */
+.results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.results-head .metric-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* "?" next to the Gemini buttons: the explanation pops up on hover / focus. */
+.info-tip {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--ink);
+  font: 12px var(--font-caps);
+  cursor: help;
+}
+
+.info-tip:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+
+.info-tip-text {
+  /* Anchored to the whole button row (not the tiny "?"), so it always fits in the window. */
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 30;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  box-shadow: var(--shadow), 3px 3px 0 var(--line);
+  font: 13px/1.4 var(--font-ui);
+  text-align: left;
+  text-transform: none;
+  visibility: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+  pointer-events: none;
+}
+
+.info-tip:hover .info-tip-text,
+.info-tip:focus-within .info-tip-text,
+.info-tip:focus .info-tip-text {
+  visibility: visible;
+  opacity: 1;
+}
+
+.ai-actions {
+  position: relative;
+}
+
+/* ---------- Projector: an eye-catching "Scan to vote" ---------- */
+.join-qr-hint .scan-cta {
+  display: inline-flex;
+  gap: 0.4rem;
+  align-items: center;
+  justify-self: start;
+  padding: 0.25rem 0.7rem;
+  border: 2px solid var(--line);
+  border-radius: 4px;
+  background: var(--butter);
+  box-shadow: 3px 3px 0 var(--line);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: clamp(26px, 2.6vw, 44px);
+  font-weight: 700;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.join-qr-hint .scan-arrow {
+  color: var(--ink);
+  font-size: 1em;
+  animation: scan-nudge 1.2s ease-in-out infinite;
+}
+
+.join-qr-hint .scan-sub {
+  margin: 0.35rem 0 0.2rem;
+  color: var(--ink);
+  font-size: clamp(15px, 1.25vw, 20px);
+}
+
+.join-qr-hint strong {
+  font-size: clamp(20px, 1.9vw, 30px);
+}
+
+/* A slow pulse around the code draws the eye from across the room. */
+.join-qr-code {
+  animation: qr-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes qr-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--pool) 0%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 10px color-mix(in srgb, var(--pool) 85%, transparent);
+  }
+}
+
+@keyframes scan-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .join-qr-code,
+  .join-qr-hint .scan-arrow {
+    animation: none;
+  }
+}
+
+/* Big-screen song timer (elapsed / length) beside the progress bar. */
+.stage-progress {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.8rem;
+  align-items: center;
+}
+
+.stage-timer {
+  font-family: var(--font-num);
+  font-size: clamp(20px, 1.8vw, 32px);
+  white-space: nowrap;
+}
+
+.stage-timer em {
+  font-style: normal;
+  font-family: var(--font-caps);
+  font-size: 0.5em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+.stage-song .stage-progress {
+  max-width: 38rem;
+}
+
+/* Songs search: optional title / artist / album fields. */
+.search-fields summary {
+  cursor: pointer;
+  margin: 0.35rem 0;
+  font-size: 13px;
+  text-decoration: underline;
+}
+
+.search-fields-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.search-fields-row input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px var(--font-ui);
+}
+
+@media (max-width: 560px) {
+  .search-fields-row {
+    grid-template-columns: 1fr;
+  }
 }
